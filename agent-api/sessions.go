@@ -186,6 +186,10 @@ type Sessions interface {
 	// Keys presses answer keys in the session's pane (sessionio.Injector.Keys),
 	// which refuses anything that is not an answer key before sending any.
 	Keys(osUser, session string, keys []string) error
+	// AnswerText pastes words into the field the pane's cursor is in, without
+	// pressing Enter (sessionio.Injector.AnswerText), which refuses blank
+	// words and line breaks before sending any.
+	AnswerText(osUser, session, text string) error
 }
 
 // errNoTranscript — the session has no transcript to read yet.
@@ -431,6 +435,10 @@ func (t *tmuxSessions) Answer(ctx context.Context, osUser, session string, req s
 // that user's own projects root is opened.
 func (t *tmuxSessions) Keys(osUser, session string, keys []string) error {
 	return t.in.Keys(osUser, session, keys)
+}
+
+func (t *tmuxSessions) AnswerText(osUser, session, text string) error {
+	return t.in.AnswerText(osUser, session, text)
 }
 
 func (t *tmuxSessions) TranscriptLines(osUser, session string) ([][]byte, error) {

@@ -244,7 +244,7 @@ func (s *Server) answerTask(c *call) (any, error) {
 	}
 
 	if now.Mod {
-		return s.answerModDialog(c, id, osUser, live.Name, now, req)
+		return s.answerModDialog(c, id, osUser, live.Name, now, req, text)
 	}
 
 	areq, err := answerFor(now, req, text)
@@ -363,11 +363,20 @@ const modAnswerVerify = 1500 * time.Millisecond
 
 // answerModDialog answers the mod's own permission or plan dialog by pressing
 // its row's digit, which the mod reads as the decision made in the terminal.
-// Words have nowhere to go: the dialog's free-text row is the mod's, and an
-// option is the whole answer.
-func (s *Server) answerModDialog(c *call, id, osUser, session string, q questionReading, req answerRequest) (any, error) {
-	if req.Option == nil {
+// Words go to a plan through the dialog's free-text row (answerModFeedback);
+// a permission is answered with an option, as the task's answer_with says.
+func (s *Server) answerModDialog(c *call, id, osUser, session string, q questionReading, req answerRequest, text string) (any, error) {
+	if req.Option == nil && (q.Kind != KindPlan || q.Free.Number == 0) {
 		return nil, unprocessable("this %s question is answered with an option: %s", q.Kind, rowList(q.Options))
+	}
+	if q.Free.Cursor {
+		// A digit would be typed into the field, and Enter would send
+		// whatever it holds.
+		return nil, conflict("the cursor is in the dialog's free-text row, so a key sent now would be typed " +
+			"into it; nothing was typed. Answer it in the terminal, or read the task again once the cursor has moved")
+	}
+	if req.Option == nil {
+		return s.answerModFeedback(c, id, osUser, session, q, text)
 	}
 	found := false
 	for _, o := range q.Options {
@@ -380,6 +389,74 @@ func (s *Server) answerModDialog(c *call, id, osUser, session string, q question
 		return nil, serverError("tmux did not take the answer for %s (%v); read the task again before retrying",
 			c.conversationID, err)
 	}
+	return s.awaitModDialogGone(id, osUser, session, q)
+}
+
+// answerModFeedback sends words to the mod's plan approval through its
+// free-text row: the row's digit puts the cursor in the field, the words are
+// pasted and read back off the row, and only then does Enter send them. The
+// mod denies ExitPlanMode with the words as the reason and Claude keeps
+// planning (claude-mod/hooks/lib/shape.ts, decisionFromLabel).
+//
+// Checked live on 2026-10-02 (CLI 2.1.287), and so are the two refusals: a
+// row already holding words sends them the moment its digit is pressed, so a
+// filled row is refused before any key, and words that do not show on the
+// row are never sent. The cursor is walked back off the field then, because a
+// digit sent while it is there is typed into the field.
+func (s *Server) answerModFeedback(c *call, id, osUser, session string, q questionReading, text string) (any, error) {
+	row := q.Free.Number
+	if !q.Free.empty() {
+		return nil, conflict("the dialog's free-text row already holds %q, and pressing its number would send "+
+			"those words; nothing was typed. Answer it in the terminal", strings.TrimSpace(q.Free.Shows))
+	}
+	if err := s.Sessions.Keys(osUser, session, []string{strconv.Itoa(row)}); err != nil {
+		return nil, serverError("tmux did not take the answer for %s (%v); read the task again before retrying",
+			c.conversationID, err)
+	}
+	if !s.awaitFree(osUser, session, row, func(f freeRow) bool { return f.Cursor && f.empty() }) {
+		return nil, serverError("row %d of the plan dialog did not take the cursor, so the words were not typed; "+
+			"read the task again", row)
+	}
+	if err := s.Sessions.AnswerText(osUser, session, text); err != nil {
+		return nil, serverError("tmux did not take the words for %s (%v); nothing was sent", c.conversationID, err)
+	}
+	if !s.awaitFree(osUser, session, row, func(f freeRow) bool { return f.Cursor && sameWords(f.Shows, text) }) {
+		// Off the field, so a later digit picks a row instead of being typed.
+		_ = s.Sessions.Keys(osUser, session, []string{"Up"})
+		return nil, serverError("the words were typed into row %d of the plan dialog but could not be read back "+
+			"off it, so they were not sent. They may still be in that row: answer in the terminal", row)
+	}
+	if err := s.Sessions.Keys(osUser, session, []string{"Enter"}); err != nil {
+		return nil, serverError("tmux did not take the Enter for %s (%v); the words are in the dialog's "+
+			"free-text row, unsent", c.conversationID, err)
+	}
+	return s.awaitModDialogGone(id, osUser, session, q)
+}
+
+// awaitFree polls the free-text row until ok holds for it or modAnswerVerify
+// runs out. The row is read wrapped: words longer than the field carry on
+// under it, indented, until the rule below it.
+func (s *Server) awaitFree(osUser, session string, row int, ok func(freeRow) bool) bool {
+	for deadline := time.Now().Add(modAnswerVerify); ; {
+		if pane, err := s.Sessions.Pane(osUser, session); err == nil && ok(readFreeRow(pane, row)) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// sameWords compares what a row shows with the words sent, ignoring the
+// whitespace a wrap adds or moves.
+func sameWords(shown, sent string) bool {
+	return strings.Join(strings.Fields(shown), " ") == strings.Join(strings.Fields(sent), " ")
+}
+
+// awaitModDialogGone waits for the dialog a key answered to leave the screen,
+// then moves the task on.
+func (s *Server) awaitModDialogGone(id, osUser, session string, q questionReading) (any, error) {
 	var warning string
 	for deadline := time.Now().Add(modAnswerVerify); ; {
 		if !sameQuestion(s.readQuestion(osUser, session), q) {

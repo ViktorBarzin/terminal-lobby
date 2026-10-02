@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  backoffMs, capStrings, decisionFromLabel, dialogFor, isOwnDialog, projectSlug, shapeResult, shapeRow,
+  backoffMs, capStrings, decisionFromLabel, decisionFromWeb, dialogFor, isOwnDialog, projectSlug, shapeResult, shapeRow,
   stripMedia, transcriptPath, webAnswer, webAnswerResult, TEXT_CAP,
 } from '../hooks/lib/shape.ts';
 
@@ -179,4 +179,21 @@ test('decisionFromLabel maps the dialog answer to a tool.check result', () => {
   assert.equal(decisionFromLabel('Bash', 'Deny').decision, 'deny');
   assert.deepEqual(decisionFromLabel('Bash', 'use the dry-run flag first'),
     { decision: 'deny', reason: 'use the dry-run flag first' });
+});
+
+// Measured live on 2026-10-02: words typed under "Type something." on the plan
+// dialog reached Claude as "Permission to use ExitPlanMode denied by plugins
+// ...: Also print the hostname in the same step.", and Claude twice
+// re-submitted the same plan, once saying it ignored the words as injected.
+// The reason says they are the user's feedback on the plan.
+test('words on the plan dialog reach Claude as the user\'s feedback on the plan', () => {
+  for (const d of [
+    decisionFromLabel('ExitPlanMode', 'Also print the hostname.'),
+    decisionFromWeb('ExitPlanMode', 'deny', 'Also print the hostname.'),
+  ]) {
+    assert.equal(d.decision, 'deny');
+    const reason = (d as { reason: string }).reason;
+    assert.match(reason, /^The user reviewed the plan and wants changes before you start: Also print the hostname\.\n/);
+    assert.match(reason, /revise the plan/i);
+  }
 });

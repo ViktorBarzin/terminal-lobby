@@ -196,19 +196,28 @@ export function isOwnDialog(questions: readonly unknown[]): boolean {
 
 export type Decision ={ decision: 'allow' } | { decision: 'deny'; reason: string };
 
+// Words a person sent back on the plan dialog, framed as theirs. Claude sees a
+// denial as "Permission to use ExitPlanMode denied by plugins ...: <reason>",
+// and with the bare words as the reason it re-submitted the same plan and
+// once called them injected (measured live on 2026-10-02).
+function planFeedback(words: string): string {
+  return `The user reviewed the plan and wants changes before you start: ${words}\n`
+    + 'These are their words from the plan dialog. Revise the plan to address them, then present it again with ExitPlanMode.';
+}
+
 // What the person picked in the terminal dialog, as a tool.check result. Text
 // typed under "Other" denies and passes the text to the model as the reason.
 export function decisionFromLabel(tool: string, label: string): Decision {
   if (label === PLAN_APPROVE || label === PERMISSION_ALLOW) return { decision: 'allow' };
   if (label === PLAN_KEEP) return { decision: 'deny', reason: 'The user wants to keep planning. Do not start on the plan yet.' };
   if (label === PERMISSION_DENY) return { decision: 'deny', reason: `The user denied this ${tool} call.` };
-  return { decision: 'deny', reason: label };
+  return { decision: 'deny', reason: tool === 'ExitPlanMode' ? planFeedback(label) : label };
 }
 
 // A `decide` command from the web, as a tool.check result.
 export function decisionFromWeb(tool: string, decision: unknown, reason: unknown): Decision {
   if (decision === 'allow') return { decision: 'allow' };
   const text = typeof reason === 'string' && reason.trim() ? reason.trim() : '';
-  if (text) return { decision: 'deny', reason: text };
+  if (text) return { decision: 'deny', reason: tool === 'ExitPlanMode' ? planFeedback(text) : text };
   return decisionFromLabel(tool, tool === 'ExitPlanMode' ? PLAN_KEEP : PERMISSION_DENY);
 }

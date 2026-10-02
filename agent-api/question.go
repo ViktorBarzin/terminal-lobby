@@ -17,9 +17,13 @@ package main
 // shows as an AskUserQuestion menu with fixed rows. Those two are recognised
 // by their header and rows and reported as permission and plan questions,
 // and a digit answers them: the mod reads the row picked in the terminal as
-// the decision (checked on a live pane on 2026-10-02).
+// the decision (checked on a live pane on 2026-10-02). The plan's question
+// carries the plan as the pane shows it, and words for a plan go into the
+// dialog's free-text row, which the mod reads as feedback.
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 
 	"terminal-lobby/sessionio"
@@ -65,6 +69,31 @@ type questionReading struct {
 	// Mod says the dialog is the terminal-lobby mod's own Allow / Deny or
 	// plan approval, answered by pressing its row's digit.
 	Mod bool
+	// Free is the mod dialog's free-text row, the "Type something." Claude
+	// Code adds under the mod's two rows. Read for the mod's dialogs only.
+	Free freeRow
+}
+
+// freeRow is the free-text row of a single-select menu as the pane draws it.
+//
+// Measured on the mod's plan approval on 2026-10-02 (CLI 2.1.287): the
+// row's digit puts the cursor in its field, a paste lands there, and Enter
+// sends what the field holds. With the cursor in the field a digit is typed
+// rather than picking a row, and the digit of a row that already holds
+// words sends those words at once.
+type freeRow struct {
+	// Number is the row's number, 0 when the pane draws no such row.
+	Number int
+	// Shows is what the row draws after its number: "Type something." while
+	// the field is empty, the words once something is typed.
+	Shows string
+	// Cursor says the cursor is on the row, which puts it in the field.
+	Cursor bool
+}
+
+// empty reports whether the field holds nothing.
+func (f freeRow) empty() bool {
+	return strings.TrimRight(strings.TrimSpace(f.Shows), ".") == "Type something"
 }
 
 // setQuestion stamps a reading on a task. Called with the store's lock held.
@@ -111,6 +140,22 @@ func parseQuestion(pane string) questionReading {
 		}
 		if kind, ok := modDialogKind(d); ok {
 			r.Kind, r.Mod, r.AnswerWith = kind, true, []string{answerOption}
+			r.Free = readFreeRow(pane, len(q.Options)+1)
+			if kind == KindPlan {
+				// The mod's question is the plan and then the approval line
+				// (claude-mod/hooks/lib/shape.ts, dialogFor), and the menu
+				// parser keeps only the last paragraph. The plan is what a
+				// caller is being asked to approve, so it is read off the
+				// pane, as much of it as the pane shows.
+				if plan := modPlanText(pane); plan != "" {
+					r.Text = plan
+				}
+				// Words go into the free-text row, which the mod reads as
+				// "keep planning, and here is why".
+				if r.Free.Number > 0 {
+					r.AnswerWith = []string{answerOption, answerText}
+				}
+			}
 		}
 		return r
 	}
@@ -199,4 +244,75 @@ func modDialogKind(d *sessionio.Dialog) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+var (
+	// A numbered menu row once the border is stripped: the cursor, if it is
+	// on the row, the number, and what the row draws.
+	reMenuRow = regexp.MustCompile(`^\s*([❯>])?\s*(\d+)\.\s+(.*?)\s*$`)
+	// The rule Claude Code draws above a dialog and between its rows.
+	reMenuRule = regexp.MustCompile(`^\s*[─━]{3,}\s*$`)
+	// The tab header of a one-question menu, " ☐ Plan".
+	reMenuHeader = regexp.MustCompile(`^\s*[☐☒]\s*\S`)
+	// The border down the left of a menu's question, and the space after it.
+	reMenuBorder = regexp.MustCompile(`^(\s*)[│┃] ?`)
+)
+
+// readFreeRow finds the row numbered n, which on a single-select menu is the
+// free-text row the CLI adds under the caller's options. Read from the
+// bottom, where the menu is, so a numbered line in the question above it is
+// not mistaken for it. Words longer than the field wrap onto indented lines
+// under the row, down to the rule below it, and are read with it.
+func readFreeRow(pane string, n int) freeRow {
+	lines := strings.Split(pane, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		m := reMenuRow.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		if got, err := strconv.Atoi(m[2]); err != nil || got != n {
+			continue
+		}
+		f := freeRow{Number: n, Shows: m[3], Cursor: m[1] != ""}
+		for _, l := range lines[i+1:] {
+			if !strings.HasPrefix(l, " ") || strings.TrimSpace(l) == "" ||
+				reMenuRule.MatchString(l) || reMenuRow.MatchString(l) {
+				break
+			}
+			f.Shows += " " + strings.TrimSpace(l)
+		}
+		return f
+	}
+	return freeRow{}
+}
+
+// modPlanText reads the mod's plan question off the pane: the lines between
+// the dialog's header (or the rule above it, or the top of the pane when a
+// long plan has pushed both off) and its first row, border stripped. Capped
+// at paneQuestionLimit from the end, so a plan too long for that keeps its
+// last lines and the approval line. Empty when the pane draws no first row.
+func modPlanText(pane string) string {
+	lines := strings.Split(pane, "\n")
+	first := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if m := reMenuRow.FindStringSubmatch(lines[i]); m != nil && m[2] == "1" && m[3] == "Approve plan" {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return ""
+	}
+	top := 0
+	for i := first - 1; i >= 0; i-- {
+		if reMenuRule.MatchString(lines[i]) || reMenuHeader.MatchString(lines[i]) {
+			top = i + 1
+			break
+		}
+	}
+	var out []string
+	for _, l := range lines[top:first] {
+		out = append(out, strings.TrimRight(reMenuBorder.ReplaceAllString(l, "$1"), " \t"))
+	}
+	return paneTail(strings.Join(out, "\n"), paneQuestionLimit)
 }

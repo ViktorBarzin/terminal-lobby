@@ -64,6 +64,9 @@ type fakeSessions struct {
 	// keys records Keys calls; onKeys runs (holding the lock) after one.
 	keys   [][]string
 	onKeys func(f *fakeSessions, key string)
+	// texts records AnswerText calls; onText runs (holding the lock) after one.
+	texts  []string
+	onText func(f *fakeSessions, key, text string)
 
 	// resumes and kills record the lifecycle verbs by "<osUser>/<session>".
 	// resumeErr and killErr are faults a test can arm.
@@ -468,6 +471,22 @@ func (f *fakeSessions) Keys(osUser, session string, keys []string) error {
 		f.onKeys(f, key(osUser, session))
 	}
 	return nil
+}
+
+func (f *fakeSessions) AnswerText(osUser, session, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.texts = append(f.texts, text)
+	if f.onText != nil {
+		f.onText(f, key(osUser, session), text)
+	}
+	return nil
+}
+
+func (f *fakeSessions) textCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.texts...)
 }
 
 func (f *fakeSessions) keyCalls() [][]string {
