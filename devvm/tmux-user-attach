@@ -124,7 +124,11 @@ resolve_cmd() {
     fi
     if [[ -z "$cmd" ]]; then
         case "$key" in
-            claude) cmd="claude" ;;
+            # Permission checks off, as start-claude.sh and wizard's own
+            # override start it: without the flag Claude opens in auto mode
+            # and asks about every other tool call (emo, 2026-10-02). The
+            # lobby's mode walk (sessionio/setmode.go) assumes the flag too.
+            claude) cmd="claude --dangerously-skip-permissions" ;;
             codex)  cmd="codex --yolo" ;;
             pi)     cmd="pi" ;;
             shell)  plain_shell=yes ;;
