@@ -64,15 +64,18 @@ export class EventQueue {
   take(limit = 200, maxChars = BATCH_CHARS): ModEvent[] {
     const out: ModEvent[] = [];
     let chars = 0;
-    while (this.#items.length > 0 && out.length < limit) {
-      const n = charsOf(this.#items[0]);
+    while (out.length < limit) {
+      const head = this.#items[0];
+      if (head === undefined) break;
+      const n = charsOf(head);
       if (n > MAX_EVENT_CHARS) {
         this.#items.shift();
         this.dropped++;
         continue;
       }
       if (out.length > 0 && chars + n > maxChars) break;
-      out.push(this.#items.shift() as ModEvent);
+      this.#items.shift();
+      out.push(head);
       chars += n;
     }
     return out;

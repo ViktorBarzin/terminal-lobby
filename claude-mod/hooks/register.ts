@@ -103,7 +103,7 @@ async function findTranscript($: EngineInterface, configDir: string, startCwd: s
   try {
     const root = `${configDir}/projects`;
     for (const d of await $.fs.list(root)) {
-      if (d.type !== 'dir') continue;
+      if (d.kind !== 'dir') continue;
       const p = `${root}/${d.name}/${sid}.jsonl`;
       if (await $.fs.exists(p)) return (foundTranscript = p);
     }
