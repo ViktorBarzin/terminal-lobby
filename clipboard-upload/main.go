@@ -1,9 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +15,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/clipstore"
 	"terminal-lobby/telemetry"
 )
 
@@ -44,18 +41,10 @@ const (
 	// real screenshot or photo, small enough that a stray path can't
 	// balloon the store.
 	maxRegister = 25 << 20 // 25MB
-	// attachPrefix marks a stored non-image attachment. The gallery lists by
-	// prefix, so this is what keeps a document out of a grid of thumbnails.
-	attachPrefix = "file-"
 	// Loopback by default: with no config file present, the identity header
 	// is all that authenticates a request, so the port must not be on the
 	// network until an operator says so (TL-3).
 	listenAddr = "127.0.0.1:7683"
-	// unsortedSession is the store bucket for writes that arrive without a
-	// (valid) session name. Nothing ties its contents to a session's
-	// lifetime, so the cleaner (devvm/clipboard-store-clean) ages it out on
-	// a fixed clock instead.
-	unsortedSession = "_unsorted"
 )
 
 // storeRoot is the per-(user, session) image store; mapPath is the
@@ -65,7 +54,7 @@ const (
 // next to a user's real screenshots. Same seam tmux-api/main.go uses for its
 // own mapPath. Production never reassigns them.
 var (
-	storeRoot = "/var/lib/clipboard-store"
+	storeRoot = clipstore.DefaultRoot
 	mapPath   = authuser.DefaultMapPath
 	// maxAttach bounds a non-image upload that joins the per-(user, session)
 	// store as a text-view attachment. Same number as maxRegister and for the
@@ -80,8 +69,9 @@ var (
 	maxAttach int64 = 25 << 20 // 25MB
 )
 
-// Session names: same charset as tmux-api and the frontend's NAME_RE.
-var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
+// Session names: same charset as tmux-api and the frontend's NAME_RE, and the
+// one agent-api writes the store under (terminal-lobby/clipstore).
+var sessionNameRe = clipstore.SessionNameRe
 
 // Stored image names as accepted by /img: strictly a clean basename ('/'
 // cannot match; '..' and leading dots are rejected separately in
@@ -174,7 +164,7 @@ func osUserKnown(name string) bool { return actAsGate.IsTarget(name) }
 // itself. Everything else in a store directory — today, a document attached to
 // a text-view message — is chat content, reachable by its own path and never
 // drawn as a thumbnail.
-var galleryPrefixes = []string{"pasted-", "displayed-"}
+var galleryPrefixes = []string{clipstore.PastedPrefix, clipstore.DisplayedPrefix}
 
 // isGalleryName reports whether a stored file belongs in the gallery listing.
 func isGalleryName(name string) bool {
@@ -184,16 +174,6 @@ func isGalleryName(name string) bool {
 		}
 	}
 	return false
-}
-
-// storeSession maps a client-supplied session name onto a store bucket:
-// valid names key their own directory, everything else (absent, oversize,
-// bad charset) collapses to the shared "_unsorted" bucket.
-func storeSession(name string) string {
-	if sessionNameRe.MatchString(name) {
-		return name
-	}
-	return unsortedSession
 }
 
 // handleUpload accepts a multipart POST with EITHER a generic "file" field
@@ -238,11 +218,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		if osUser == "" {
 			return
 		}
-		clean := sanitizeName(header.Filename)
 		if header.Size <= maxAttach {
-			session := storeSession(r.FormValue("session"))
-			name := fmt.Sprintf("%s%s-%s-%s", attachPrefix, stamp(), randToken(), clean)
-			path, err := saveToStore(osUser, session, name, file)
+			session := clipstore.Bucket(r.FormValue("session"))
+			path, err := clipstore.SaveToStore(storeRoot, osUser, session, clipstore.AttachName(header.Filename), file)
 			if err != nil {
 				log.Printf("save attachment for %s/%s failed: %v", osUser, session, err)
 				http.Error(w, "Failed to save", http.StatusInternalServerError)
@@ -255,8 +233,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			writeUpload(w, path, true)
 			return
 		}
-		name := fmt.Sprintf("%s-%s-%s", stamp(), randToken(), clean)
-		path, err := save(fileDir, name, file)
+		name := fmt.Sprintf("%s-%s-%s", clipstore.Stamp(), clipstore.RandToken(), clipstore.SanitizeName(header.Filename))
+		path, err := clipstore.Save(fileDir, name, file)
 		if err != nil {
 			http.Error(w, "Failed to save", http.StatusInternalServerError)
 			return
@@ -305,9 +283,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	session := storeSession(r.FormValue("session"))
-	name := fmt.Sprintf("pasted-%s-%s%s", stamp(), randToken(), imageExt(ct))
-	path, err := saveToStore(osUser, session, name, file)
+	session := clipstore.Bucket(r.FormValue("session"))
+	path, err := clipstore.SaveToStore(storeRoot, osUser, session, clipstore.PastedName(ct), file)
 	if err != nil {
 		log.Printf("save pasted image for %s/%s failed: %v", osUser, session, err)
 		http.Error(w, "Failed to save", http.StatusInternalServerError)
@@ -332,7 +309,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 // identity wins and the user field is ignored. The path must name an
 // absolute, existing, regular image file ≤ 25MB; paths already inside the
 // store are answered as-is (no duplicate copy), anything else is copied to
-// store/<user>/<session>/displayed-<timestamp>-<basename>. Responds
+// store/<user>/<session>/displayed-<timestamp>-<token>-<basename>. Responds
 // {"path": "..."} like /upload.
 func handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -378,7 +355,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	session := storeSession(r.FormValue("session"))
+	session := clipstore.Bucket(r.FormValue("session"))
 
 	src := filepath.Clean(r.FormValue("path"))
 	if !filepath.IsAbs(src) {
@@ -420,8 +397,12 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
-	name := fmt.Sprintf("displayed-%s-%s", stamp(), sanitizeName(filepath.Base(src)))
-	path, err := saveToStore(osUser, session, name, f)
+	// The token is what lets the same file be registered twice in one second:
+	// the store refuses to overwrite a name (clipstore.Save), and without it
+	// the second show-image would get a 500 where it used to get the copy.
+	name := fmt.Sprintf("%s%s-%s-%s", clipstore.DisplayedPrefix, clipstore.Stamp(), clipstore.RandToken(),
+		clipstore.SanitizeName(filepath.Base(src)))
+	path, err := clipstore.SaveToStore(storeRoot, osUser, session, name, f)
 	if err != nil {
 		log.Printf("register %s for %s/%s failed: %v", src, osUser, session, err)
 		http.Error(w, "Failed to save", http.StatusInternalServerError)
@@ -435,30 +416,15 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 // sniffContentType reports what the first 512 bytes of an upload actually
-// are, per http.DetectContentType, and rewinds so the caller can still copy
-// the whole part. /upload's image branch gates the store write on this.
+// are, per clipstore.Sniff, and rewinds so the caller can still copy the whole
+// part. /upload's image branch gates the store write on this.
 //
-// No filename-extension fallback, deliberately — unlike isImage below. The
-// extension is client-supplied exactly like the Content-Type header, so
-// honouring it would wave the same mislabelled bytes straight back in. The one
-// format that costs is SVG, which sniffs as text/xml: it could never render in
-// the gallery anyway (imageExt has no svg case, so it is stored as .png, and
-// /img re-sniffs on serve and hands the <img> tag text/xml).
-//
-// This answers "are these bytes an image", NOT "does this image decode". A
-// truncated PNG keeps its magic bytes and passes; image.DecodeConfig would
-// pass it too (the IHDR is complete by byte 33) while rejecting webp and avif
-// that browsers render fine. Files that pass here and still fail to paint are
-// handled by the gallery's onError fallback in
-// frontend-v2/src/components/Gallery.tsx.
-//
-// DetectContentType's table is also incomplete — it knows png/jpeg/gif/webp/
-// bmp/ico and nothing else — so the ISO-BMFF image brands are recognised
-// separately by isoBMFFImageType. Without that, a real AVIF sniffs as
-// application/octet-stream and this gate refuses a format every current
-// browser decodes.
+// clipstore.Sniff has the reasoning: no extension fallback (unlike isImage
+// below), and ISO-BMFF brands recognised so AVIF is not refused. Files that
+// pass here and still fail to paint are handled by the gallery's onError
+// fallback in frontend-v2/src/components/Gallery.tsx.
 func sniffContentType(f multipart.File) (string, error) {
-	head := make([]byte, 512)
+	head := make([]byte, clipstore.SniffLen)
 	n, err := f.Read(head)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
@@ -466,65 +432,7 @@ func sniffContentType(f multipart.File) (string, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
-	head = head[:n]
-	if ct := http.DetectContentType(head); strings.HasPrefix(ct, "image/") {
-		return ct, nil
-	}
-	if ct := isoBMFFImageType(head); ct != "" {
-		return ct, nil
-	}
-	return http.DetectContentType(head), nil
-}
-
-// isoBMFFImageBrands are the ISO base media file brands that mean "this is a
-// still image" — the AV1 (AVIF) and HEVC/HEIF families. Deliberately a closed
-// list rather than "any ftyp": the same container carries mp4 video, which is
-// not a gallery image.
-var isoBMFFImageBrands = map[string]bool{
-	"avif": true, "avis": true, // AV1 still image / image sequence
-	"heic": true, "heix": true, "heim": true, "heis": true, // HEVC still
-	"hevc": true, "hevx": true, "hevm": true, "hevs": true, // HEVC sequence
-	"mif1": true, "msf1": true, // generic HEIF still / sequence
-}
-
-// isoBMFFImageType reports the content type of an ISO base media file whose
-// major or compatible brands name a still-image format, or "" for anything
-// else. Layout: [4-byte box size]["ftyp"][major brand][minor version][compat
-// brands…], all brands four bytes.
-//
-// This exists because http.DetectContentType predates AVIF/HEIF and returns
-// application/octet-stream for both. Measured 2026-08-06: a 24x24 AVIF served
-// with that very content type still renders in chromium (naturalWidth 24) —
-// browsers decode images by content, not by the declared type — so refusing
-// the upload would break a format that works today. Dragging a downloaded
-// .avif into the terminal sets File.type "image/avif", which
-// frontend-v2/src/clipboard/upload.ts routes to the store branch.
-//
-// HEIF rides along on the same container check. Chromium does not decode it,
-// so such a tile falls to the gallery's onError placeholder — degraded, which
-// is what the client half is for, rather than refused.
-func isoBMFFImageType(head []byte) string {
-	if len(head) < 12 || string(head[4:8]) != "ftyp" {
-		return ""
-	}
-	// The box size bounds the brand list; clamp to what was actually read.
-	end := int(binary.BigEndian.Uint32(head[0:4]))
-	if end > len(head) || end <= 0 {
-		end = len(head)
-	}
-	brands := []string{string(head[8:12])} // major brand
-	for i := 16; i+4 <= end; i += 4 {      // compatible brands
-		brands = append(brands, string(head[i:i+4]))
-	}
-	for _, b := range brands {
-		if isoBMFFImageBrands[b] {
-			if strings.HasPrefix(b, "avi") {
-				return "image/avif"
-			}
-			return "image/heif"
-		}
-	}
-	return ""
+	return clipstore.Sniff(head[:n]), nil
 }
 
 // isImage sniffs the first 512 bytes (http.DetectContentType) and falls
@@ -713,7 +621,7 @@ func handleImage(w http.ResponseWriter, r *http.Request) {
 
 	ct := http.DetectContentType(head)
 	if !strings.HasPrefix(ct, "image/") {
-		if iso := isoBMFFImageType(head); iso != "" {
+		if iso := clipstore.ISOBMFFImageType(head); iso != "" {
 			ct = iso
 		} else {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -791,81 +699,6 @@ func handleStoredFile(w http.ResponseWriter, r *http.Request) {
 		mime.FormatMediaType(disposition, map[string]string{"filename": name}))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, "", info.ModTime(), f)
-}
-
-// saveToStore writes src into the per-(user, session) store directory,
-// creating it as needed, and returns the absolute path.
-func saveToStore(osUser, session, name string, src io.Reader) (string, error) {
-	dir := filepath.Join(storeRoot, osUser, session)
-	// 0755 (and 0644 files, via the unit's UMask=0022) is a decision, not a
-	// default: docs/adr/0005-session-image-store.md argues it from the org's
-	// shared-workstation read policy, and show-image has to keep working for
-	// a user who is not the account this service runs as. Tightening it is an
-	// ADR change first.
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-	return save(dir, name, src)
-}
-
-func save(dir, name string, src io.Reader) (string, error) {
-	dest := filepath.Join(dir, name)
-	f, err := os.Create(dest)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := io.Copy(f, src); err != nil {
-		os.Remove(dest)
-		return "", err
-	}
-	return dest, nil
-}
-
-// sanitizeName reduces an uploaded filename to a safe basename: directory
-// components stripped (handling both / and \ separators), only [A-Za-z0-9._-]
-// kept (others -> '_'), leading dots removed (no hidden files), length bounded.
-// Falls back to "file".
-func sanitizeName(name string) string {
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
-	name = strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '.', r == '_', r == '-':
-			return r
-		default:
-			return '_'
-		}
-	}, name)
-	name = strings.TrimLeft(name, ".")
-	if len(name) > 128 {
-		name = name[len(name)-128:]
-	}
-	if name == "" {
-		name = "file"
-	}
-	return name
-}
-
-func imageExt(ct string) string {
-	switch ct {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	default:
-		return ".png"
-	}
-}
-
-func stamp() string { return time.Now().Format("20060102-150405") }
-
-func randToken() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 func writePath(w http.ResponseWriter, path string) {

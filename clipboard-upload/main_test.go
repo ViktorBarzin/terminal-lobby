@@ -639,11 +639,11 @@ func TestUploadAcceptsTruncatedPNG(t *testing.T) {
 // mislabelled bytes straight back in).
 //
 // Nothing that worked is lost. An SVG on this path could never render: /upload
-// names it by imageExt(ct), which has no svg case and falls through to ".png",
+// names it by clipstore.ImageExt(ct), which has no svg case and falls through to ".png",
 // and /img re-sniffs on serve and hands the <img> tag "text/xml", which no
 // browser draws. Accepting SVG here only ever produced the dead tile this lane
 // is fixing. Reversing the decision means giving SVG a real path — an svg case
-// in imageExt and an explicit content type on serve — not loosening this check.
+// in clipstore.ImageExt and an explicit content type on serve — not loosening this check.
 func TestUploadRejectsSVGWhichCouldNeverRender(t *testing.T) {
 	withUserMap(t, "qa.tester=qauser\n")
 	root := withStore(t)
