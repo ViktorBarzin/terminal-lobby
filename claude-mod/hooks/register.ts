@@ -7,6 +7,7 @@ import { Link } from './lib/link.ts';
 import type { ModEvent } from './lib/queue.ts';
 import { Pending } from './lib/pending.ts';
 import { SeenCommands } from './lib/seen.ts';
+import { TranscriptStamp } from './lib/stamp.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
@@ -24,6 +25,9 @@ let link: Link | null = null;
 let mainTurn: string | null = null;
 let lastModel = '';
 let tmuxSession = '';
+// Where this session's transcript will be, and whether the last hello named it.
+let transcriptFile = async (): Promise<string> => '';
+const stamp = new TranscriptStamp();
 // Web answers for dialogs on screen, keyed by tool_use_id.
 const webAnswers = new Pending<Command>();
 // The mod's own terminal dialogs ($.ui.ask), keyed by question text. Each
@@ -67,6 +71,7 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
   const home = (await $.env.get('HOME')) || '';
   const configDir = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`;
   tmuxSession = await tmuxSessionName($, pane);
+  transcriptFile = async () => transcriptPath(configDir, startCwd, await $.session.id());
 
   const call = async (method: string, path: string, body?: unknown) => {
     const init: { method: string; headers?: Record<string, string>; body?: string } = { method };
@@ -100,7 +105,9 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
         cwd: await $.session.cwd(),
       };
       const transcript = transcriptPath(configDir, startCwd, sid);
-      if (await $.fs.exists(transcript)) hello.transcript = transcript;
+      const named = await $.fs.exists(transcript);
+      if (named) hello.transcript = transcript;
+      stamp.hello(named);
       hello.model = await $.session.model();
       hello.version = (await $.session.version()).version;
       hello.mod = MOD_VERSION;
@@ -316,6 +323,13 @@ export const register: Register = (on) => {
     const r = await next(e);
     if (link && r.message) {
       try { send(shapeRow(e, r, now())); } catch { /* never block a row */ }
+      // The first stored row is what creates the transcript: say hello again
+      // so session-events can stamp it while this first turn still runs.
+      if (stamp.pending) {
+        try {
+          if (stamp.appeared(await $.fs.exists(await transcriptFile()))) link.rehello();
+        } catch { /* reporting only */ }
+      }
     }
     return r;
   });

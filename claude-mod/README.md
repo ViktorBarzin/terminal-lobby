@@ -27,6 +27,7 @@ What it does, in short:
 | `hooks/lib/queue.ts` | the outgoing queue: delta merging and the cap |
 | `hooks/lib/shape.ts` | event shaping, media stripping, dialog text, answer shapes, backoff |
 | `hooks/lib/pending.ts` | dialogs waiting on a web answer |
+| `hooks/lib/stamp.ts` | whether session-events has been told where the transcript is |
 | `test/*.test.ts` | unit tests for `hooks/lib` |
 
 ## Loading it for a dev session
