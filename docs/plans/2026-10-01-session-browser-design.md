@@ -174,6 +174,7 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 | host → viewer | `control` | Who holds control (`holder`, a name, and `holderId`, a connection), since when, when it lapses |
 | host → viewer | `state` | `live`, `frozen`, `closed` |
 | host → viewer | `copied` | Text selected in the page, answering `copy` |
+| host → viewer | `cursor` | Where the mouse is on a tab: `tab`, `x` and `y` in the page's CSS pixels, `kind` (`move`, `down`, `up`, `click`). Sent to viewers watching that tab; a viewer that starts watching gets the last position as a `move` |
 | viewer → host | `subscribe` / `unsubscribe` | Start or stop frames for a tab |
 | viewer → host | `mouse`, `wheel`, `key`, `insertText` | Input, ignored unless this connection holds control |
 | viewer → host | `navigate`, `back`, `forward`, `reload`, `copy` | Same rule |
@@ -221,6 +222,24 @@ that 5-second check for 11 minutes, past the host's default 10-minute lapse,
 and is released the moment the share is revoked or turned ro. The relay's own
 filter drops `release` and `hello` from anything a viewer sends, before the
 host's rule does.
+
+The screencast carries no mouse pointer, so the host reports one, and there is
+one cursor per browser: the agent and a person in control move the same one.
+The agent's clicks and a person's input both reach Chrome as CDP mouse input,
+which pages receive as trusted pointer and click events. A context init
+script in every frame listens for `pointermove`, `pointerdown`, `pointerup`
+and `click` in the capture phase and calls a binding (`__tlBrowserCursor`)
+with the position. Pointer events rather than mouse events, because a page
+that cancels `pointerdown` suppresses `mousedown` and `mouseup`. The top frame
+reports positions as they are; a same-origin iframe adds each frame element's
+offset on its way up. A cross-origin iframe cannot read where its frame sits,
+so input inside one is not reported and the cursor stays where it last was.
+Moves leave a frame at most about 30 times a second, the latest one in a burst
+always arriving; presses and clicks are never held back. The script patches
+no prototype and catches its own errors. The host checks each report like any
+other outside input and passes on moves from a tab at most every 15 ms, since
+a page can call the binding itself. A move may be dropped for a viewer that
+has not caught up; a click never is.
 
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs

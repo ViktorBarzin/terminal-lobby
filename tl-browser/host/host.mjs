@@ -24,6 +24,7 @@ import { createConnection } from "@playwright/mcp";
 import { summarize } from "./lib/activity.mjs";
 import { BrowserSession, sandboxed, storageStatePath, VIEWPORT } from "./lib/browser.mjs";
 import { Control } from "./lib/control.mjs";
+import { CursorBoard } from "./lib/cursor.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
 import { checkChoice, dialogText, PopupBoard, selectOpens } from "./lib/popups.mjs";
@@ -147,6 +148,8 @@ async function serve() {
   let lastActivity = null;
   /** @type {PopupBoard<OpenPopup>} the popups open now, one per tab */
   const popups = new PopupBoard();
+  /** each tab's last cursor position, replayed to a viewer that starts watching it */
+  const cursors = new CursorBoard();
 
   const viewers = new ViewerServer({
     onHello: (v) => {
@@ -245,7 +248,9 @@ async function serve() {
           if (!session) return;
           const tabs = session.tabs.snapshot();
           viewers.broadcast({ t: "tabs", tabs, agentTab: session.tabs.agentTab });
-          for (const p of popups.prune(new Set(tabs.map((tab) => tab.id)))) letGo(p);
+          const open = new Set(tabs.map((tab) => tab.id));
+          for (const p of popups.prune(open)) letGo(p);
+          cursors.prune(open);
           reconcile();
         },
         onDialog: (tab, page, dialog) => {
@@ -274,6 +279,16 @@ async function serve() {
           if (control.holder === null || !session) return;
           session.cancelFileChooser(page, chooser);
           toController({ t: "popup", kind: "filechooser", tab });
+        },
+        onCursor: (tab, report) => {
+          const msg = cursors.report(tab, report);
+          if (!msg) return;
+          for (const v of viewers.viewers) {
+            if (!v.subscribed || v.shown !== tab) continue;
+            // A move the next one replaces may be dropped; a click never is.
+            if (msg.kind === "move") viewers.sendLatest(v, msg);
+            else viewers.send(v, msg);
+          }
         },
         onFrame: (tab, frame) => {
           for (const v of viewers.viewers)
@@ -488,6 +503,8 @@ async function serve() {
       wanted.add(tab);
       if (v.shown === tab) continue;
       v.shown = tab;
+      const cursor = cursors.last(tab);
+      if (cursor) viewers.send(v, cursor);
       void s.snapshot(tab).then((frame) => {
         if (frame && v.shown === tab) viewers.sendFrame(v, { t: "frame", tab, ...frame });
       });

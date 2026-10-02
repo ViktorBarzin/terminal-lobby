@@ -592,3 +592,82 @@ test("a person in control keeps it across a reconnect", {
   await back.view.next((m) => m.t === "copied", "input accepted on the new connection");
   assert.equal(back.view.seen.some((m) => m.t === "error"), false, JSON.stringify(back.view.seen));
 });
+
+const CURSOR_PAGE = `data:text/html,${encodeURIComponent(
+  "<title>Cursor</title><body style=margin:0>" +
+    '<button id="go" style="position:absolute;left:100px;top:200px;width:120px;height:40px"' +
+    " onclick=\"this.textContent='clicked'\">Go</button>" +
+    '<iframe srcdoc="<body style=margin:0><button>In frame</button></body>"' +
+    ' style="position:absolute;left:400px;top:300px;width:300px;height:150px;border:5px solid"></iframe>',
+)}`;
+
+test("the agent's clicks and a person's land on one cursor the viewers see", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: TEST_TIMEOUT_MS,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  const nav = await callTool("browser_navigate", { url: CURSOR_PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  const { view, send, hello } = await connectViewer(sockPath, "tester", true);
+  const tab = hello.agentTab;
+  send({ t: "subscribe", tab: null });
+  await view.next((m) => m.t === "frame", "a frame");
+
+  /**
+   * Waits for the cursor's click and returns it with the cursor messages
+   * that came before it.
+   * @param {string} what
+   */
+  const untilClick = async (what) => {
+    const click = await view.next((m) => m.t === "cursor" && m.kind === "click", what);
+    const before = view.seen.filter((m) => m.t === "cursor");
+    view.seen = view.seen.filter((m) => m.t !== "cursor");
+    return { click, before };
+  };
+
+  // The agent clicks the button: the cursor moves to its centre and clicks.
+  const clicked = await callTool("browser_click", { element: "Go button", target: "#go" });
+  assert.notEqual(clicked.isError, true, JSON.stringify(clicked));
+  const agent = await untilClick("the agent's click on the cursor");
+  assert.deepEqual(agent.click, { t: "cursor", tab, x: 160, y: 220, kind: "click" });
+  const moves = agent.before.filter((m) => m.kind === "move");
+  assert.ok(moves.length > 0, "the cursor moved to the button first");
+  assert.deepEqual([moves.at(-1)?.x, moves.at(-1)?.y], [160, 220], "the last move ends at its centre");
+  assert.deepEqual(
+    agent.before.filter((m) => m.kind !== "move").map((m) => m.kind),
+    ["down", "up"],
+  );
+
+  // A viewer that starts watching is shown where the cursor is.
+  const late = await connectViewer(sockPath, "watcher", false);
+  late.send({ t: "subscribe", tab: null });
+  assert.deepEqual(await late.view.next((m) => m.t === "cursor", "the last cursor on joining"), {
+    t: "cursor",
+    tab,
+    x: 160,
+    y: 220,
+    kind: "move",
+  });
+
+  // A person in control clicks: the same cursor, the same messages.
+  send({ t: "takeControl" });
+  await view.next((m) => m.t === "control" && m.holderId === hello.you, "control taken");
+  send({ t: "mouse", type: "click", x: 300, y: 100, button: "left", clickCount: 1 });
+  const person = await untilClick("the person's click on the cursor");
+  assert.deepEqual(person.click, { t: "cursor", tab, x: 300, y: 100, kind: "click" });
+  assert.deepEqual(
+    person.before.map((m) => [m.kind, m.x, m.y]),
+    [
+      ["move", 300, 100],
+      ["down", 300, 100],
+      ["up", 300, 100],
+    ],
+  );
+  await late.view.next((m) => m.t === "cursor" && m.kind === "click" && m.x === 300, "the watcher sees it too");
+
+  // Inside a same-origin iframe the position is still in the page's pixels.
+  send({ t: "mouse", type: "click", x: 420, y: 320, button: "left", clickCount: 1 });
+  const inFrame = await untilClick("a click inside the iframe");
+  assert.deepEqual(inFrame.click, { t: "cursor", tab, x: 420, y: 320, kind: "click" });
+});

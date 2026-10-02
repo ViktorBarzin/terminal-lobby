@@ -1,0 +1,213 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { CursorBoard, cursorInPage } from "../lib/cursor.mjs";
+
+/**
+ * A stand-in for a frame's window: listeners, a binding, a clock, and the
+ * frame element chain the script walks up.
+ * @param {{ frameElement?: object | null, parent?: object, top?: object }} [shape]
+ */
+function fakeWindow(shape = {}) {
+  /** @type {Map<string, (e: object) => void>} */
+  const listeners = new Map();
+  /** @type {object[]} */
+  const calls = [];
+  /** @type {{ at: number, fn: () => void }[]} */
+  const timers = [];
+  const clock = { t: 0 };
+  /** @type {Record<string, unknown>} */
+  const win = {
+    addEventListener: (/** @type {string} */ type, /** @type {(e: object) => void} */ fn, opts) => {
+      assert.deepEqual(opts, { capture: true, passive: true }, "listens in the capture phase, passively");
+      listeners.set(type, fn);
+    },
+    setTimeout: (/** @type {() => void} */ fn, /** @type {number} */ ms) => {
+      timers.push({ at: clock.t + ms, fn });
+      return timers.length;
+    },
+    performance: { now: () => clock.t },
+    __cursor: (/** @type {object} */ p) => calls.push(p),
+    ...shape,
+  };
+  if (!("top" in shape)) win.top = win;
+  if (!("parent" in shape)) win.parent = win;
+  /**
+   * @param {string} type
+   * @param {number} x
+   * @param {number} y
+   * @param {boolean} [trusted]
+   */
+  const fire = (type, x, y, trusted = true) =>
+    listeners.get(type)?.({ isTrusted: trusted, clientX: x, clientY: y });
+  /** @param {number} ms */
+  const advance = (ms) => {
+    clock.t += ms;
+    for (const timer of timers.splice(0).sort((a, b) => a.at - b.at)) {
+      if (timer.at <= clock.t) timer.fn();
+      else timers.push(timer);
+    }
+  };
+  return { win, calls, fire, advance, listeners };
+}
+
+const OPTS = { binding: "__cursor", intervalMs: 33 };
+
+test("the page reports moves, presses, releases and clicks where they land", () => {
+  const { win, calls, fire, listeners } = fakeWindow();
+  cursorInPage(OPTS, win);
+  assert.deepEqual([...listeners.keys()].sort(), ["click", "pointerdown", "pointermove", "pointerup"]);
+  fire("pointermove", 10, 20);
+  fire("pointerdown", 10, 20);
+  fire("pointerup", 10, 20);
+  fire("click", 10, 20);
+  assert.deepEqual(calls, [
+    { kind: "move", x: 10, y: 20 },
+    { kind: "down", x: 10, y: 20 },
+    { kind: "up", x: 10, y: 20 },
+    { kind: "click", x: 10, y: 20 },
+  ]);
+});
+
+test("moves are throttled, and the last one in a burst still arrives", () => {
+  const { win, calls, fire, advance } = fakeWindow();
+  cursorInPage(OPTS, win);
+  fire("pointermove", 1, 1);
+  advance(5);
+  fire("pointermove", 2, 2);
+  advance(5);
+  fire("pointermove", 3, 3);
+  assert.deepEqual(calls, [{ kind: "move", x: 1, y: 1 }], "the first goes at once");
+  advance(40);
+  assert.deepEqual(calls.at(-1), { kind: "move", x: 3, y: 3 }, "the latest goes at the end of the window");
+  assert.equal(calls.length, 2, "the ones in between are skipped");
+});
+
+test("a press is never held back: a waiting move goes first, then the press", () => {
+  const { win, calls, fire, advance } = fakeWindow();
+  cursorInPage(OPTS, win);
+  fire("pointermove", 1, 1);
+  advance(5);
+  fire("pointermove", 50, 60);
+  fire("pointerdown", 50, 60);
+  assert.deepEqual(calls, [
+    { kind: "move", x: 1, y: 1 },
+    { kind: "move", x: 50, y: 60 },
+    { kind: "down", x: 50, y: 60 },
+  ]);
+  advance(100);
+  assert.equal(calls.length, 3, "the flushed move is not sent again");
+});
+
+test("events a script made up do not move the cursor", () => {
+  const { win, calls, fire } = fakeWindow();
+  cursorInPage(OPTS, win);
+  fire("click", 5, 5, false);
+  assert.deepEqual(calls, []);
+});
+
+test("a same-origin iframe adds its frame's offsets, walking up to the top", () => {
+  const top = fakeWindow().win;
+  const middle = fakeWindow({
+    top,
+    parent: top,
+    frameElement: { getBoundingClientRect: () => ({ left: 100, top: 200 }), clientLeft: 2, clientTop: 3 },
+  }).win;
+  const inner = fakeWindow({
+    top,
+    parent: middle,
+    frameElement: { getBoundingClientRect: () => ({ left: 10, top: 20 }), clientLeft: 1, clientTop: 1 },
+  });
+  cursorInPage(OPTS, inner.win);
+  inner.fire("click", 5, 5);
+  assert.deepEqual(inner.calls, [{ kind: "click", x: 118, y: 229 }]);
+});
+
+test("a cross-origin iframe is skipped: its position in the page cannot be read", () => {
+  const top = fakeWindow().win;
+  // A cross-origin frame's frameElement is null.
+  const frame = fakeWindow({ top, parent: top, frameElement: null });
+  cursorInPage(OPTS, frame.win);
+  frame.fire("click", 5, 5);
+  assert.deepEqual(frame.calls, []);
+  // A same-origin frame inside a cross-origin one: reading the parent throws.
+  const blocked = {
+    get frameElement() {
+      throw new Error("SecurityError");
+    },
+  };
+  const nested = fakeWindow({
+    top,
+    parent: blocked,
+    frameElement: { getBoundingClientRect: () => ({ left: 0, top: 0 }), clientLeft: 0, clientTop: 0 },
+  });
+  cursorInPage(OPTS, nested.win);
+  nested.fire("click", 5, 5);
+  assert.deepEqual(nested.calls, []);
+});
+
+test("a page that removed or broke the binding is not broken by the script", () => {
+  const { win, fire } = fakeWindow();
+  cursorInPage(OPTS, win);
+  win.__cursor = () => {
+    throw new Error("nope");
+  };
+  assert.doesNotThrow(() => fire("click", 1, 1));
+  delete win.__cursor;
+  assert.doesNotThrow(() => fire("click", 1, 1));
+});
+
+test("the board turns a report into a cursor message for the tab", () => {
+  const board = new CursorBoard();
+  assert.deepEqual(board.report("t1", { kind: "click", x: 640.25, y: 400 }), {
+    t: "cursor",
+    tab: "t1",
+    x: 640.25,
+    y: 400,
+    kind: "click",
+  });
+});
+
+test("the board refuses a report that is not a cursor position", () => {
+  const board = new CursorBoard();
+  for (const bad of [
+    null,
+    "click",
+    { kind: "drag", x: 1, y: 1 },
+    { kind: "move", x: "1", y: 1 },
+    { kind: "move", x: 1 },
+    { kind: "move", x: Number.NaN, y: 1 },
+    { kind: "move", x: 1e9, y: 1 },
+  ])
+    assert.equal(board.report("t1", bad), null, JSON.stringify(bad));
+  assert.equal(board.last("t1"), null);
+});
+
+test("a newly watching viewer is given the last position, as a move", () => {
+  const board = new CursorBoard();
+  board.report("t1", { kind: "move", x: 1, y: 2 });
+  board.report("t1", { kind: "click", x: 30, y: 40 });
+  // Replayed as a move, so joining does not show a click that already happened.
+  assert.deepEqual(board.last("t1"), { t: "cursor", tab: "t1", x: 30, y: 40, kind: "move" });
+  assert.equal(board.last("t2"), null);
+});
+
+test("a closed tab's cursor is forgotten", () => {
+  const board = new CursorBoard();
+  board.report("t1", { kind: "move", x: 1, y: 2 });
+  board.report("t2", { kind: "move", x: 3, y: 4 });
+  board.prune(new Set(["t2"]));
+  assert.equal(board.last("t1"), null);
+  assert.notEqual(board.last("t2"), null);
+});
+
+test("a page flooding moves is cut down; presses always pass", () => {
+  let now = 0;
+  const board = new CursorBoard({ now: () => now });
+  assert.notEqual(board.report("t1", { kind: "move", x: 1, y: 1 }), null);
+  now += 1;
+  assert.equal(board.report("t1", { kind: "move", x: 2, y: 2 }), null);
+  assert.deepEqual(board.last("t1")?.x, 2, "the dropped move still counts as the last position");
+  assert.notEqual(board.report("t1", { kind: "down", x: 2, y: 2 }), null);
+  now += 50;
+  assert.notEqual(board.report("t1", { kind: "move", x: 3, y: 3 }), null);
+});

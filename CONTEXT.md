@@ -1365,6 +1365,13 @@ and a **Lens** only watch. Handing back tells the agent nothing.
 _Avoid_: takeover, remote control, drive (that word belongs to the terminal's
 **Watch mode**)
 
+**Browser cursor**:
+The one pointer a **Browser panel** draws over a **Session browser**'s page:
+where the mouse is in the tab it shows, with a ripple where a click lands. The
+agent and a person in **Control** move the same cursor; there is never one per
+person.
+_Avoid_: pointer (the viewer's own), agent cursor, mouse
+
 **Frozen** (session browser):
 A **Session browser** the agent left open but has not used for ten minutes,
 paused so it costs no processor time. Its pages are kept; the next agent

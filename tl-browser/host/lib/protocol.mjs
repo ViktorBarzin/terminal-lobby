@@ -38,11 +38,13 @@ import path from "node:path";
  *   | { t: "state", state: BrowserState | "closed" }
  *   | { t: "activity", tool: string, summary: string }
  *   | { t: "copied", text: string }
+ *   | import("./cursor.mjs").CursorMessage
  *   | { t: "error", message: string }
  *   | PopupMessage} HostMessage what the host sends a viewer. The hello's
  *   "you" is the id the host gave this connection; a control message's
  *   holderId names the connection in control, so a viewer holds control
- *   exactly when holderId equals its own "you"
+ *   exactly when holderId equals its own "you". A cursor message is where
+ *   the mouse is on a tab in its CSS pixels, sent to the viewers watching it
  *
  * @typedef {{ value: string, label: string, selected: boolean, disabled: boolean }} SelectOption
  * @typedef {{ x: number, y: number, w: number, h: number }} Rect in the page's CSS pixels

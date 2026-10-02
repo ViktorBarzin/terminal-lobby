@@ -136,6 +136,17 @@ export class ViewerServer {
     this.send(v, msg);
   }
 
+  /**
+   * For a message the next of its kind supersedes (a cursor move): dropped
+   * for a viewer that has not caught up.
+   * @param {Viewer} v
+   * @param {HostMessage} msg
+   */
+  sendLatest(v, msg) {
+    if (v.socket.writableLength > FRAME_BACKLOG) return;
+    this.send(v, msg);
+  }
+
   /** @param {HostMessage} msg */
   broadcast(msg) {
     for (const v of this.viewers) this.send(v, msg);
