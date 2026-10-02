@@ -139,8 +139,11 @@ func main() {
 		// The one thing a handler may do for minutes is WAIT on that
 		// goroutine, when a caller asks with ?wait= (wait.go), so the write
 		// side is sized to the longest wait; serverWriteTimeout has the
-		// arithmetic. The read side stays short: every body here is a small
-		// JSON object.
+		// arithmetic. The read side stays short, because every body but one is
+		// a small JSON object. The one is a multipart message with files,
+		// which lifts both deadlines for its own request after the bearer
+		// check (liftDeadlines, attach.go), so a 200 MB upload over a slow
+		// link is not cut at 30 s and an unauthenticated client still is.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      serverWriteTimeout,

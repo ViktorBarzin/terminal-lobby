@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"terminal-lobby/clipstore"
 	"terminal-lobby/sessionio"
 )
 
@@ -374,21 +375,43 @@ func (s *Server) postMessage(c *call) (any, error) {
 		return nil, err
 	}
 
-	var req messageRequest
-	if err := c.decode(&req); err != nil {
-		return nil, err
-	}
-	text := strings.TrimSpace(req.Text)
-	if text == "" {
-		return nil, badRequest("text is required")
-	}
-
-	live, err := s.find(c.id.OSUser, id)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.mayWrite(live, c.id.Header); err != nil {
-		return nil, err
+	var (
+		text string
+		live LiveSession
+	)
+	if c.multipart {
+		// Existence and ownership first, so a message this caller may not
+		// send costs it a 404 or 403 and never a file on disk.
+		if live, err = s.find(c.id.OSUser, id); err != nil {
+			return nil, err
+		}
+		if err := s.mayWrite(live, c.id.Header); err != nil {
+			return nil, err
+		}
+		// The CURRENT name, because that is what the store's cleaner checks
+		// for liveness and what the lobby's own uploads for this session use.
+		msg, err := s.readMultipartMessage(c, c.id.OSUser, clipstore.Bucket(live.Name))
+		if err != nil {
+			return nil, err
+		}
+		c.traceRequest = msg
+		if text = composePrompt(msg.Text, msg.Files); text == "" {
+			return nil, badRequest("a message needs text, at least one file part, or both")
+		}
+	} else {
+		var req messageRequest
+		if err := c.decode(&req); err != nil {
+			return nil, err
+		}
+		if text = strings.TrimSpace(req.Text); text == "" {
+			return nil, badRequest("text is required")
+		}
+		if live, err = s.find(c.id.OSUser, id); err != nil {
+			return nil, err
+		}
+		if err := s.mayWrite(live, c.id.Header); err != nil {
+			return nil, err
+		}
 	}
 
 	task := &Task{

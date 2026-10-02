@@ -144,23 +144,27 @@ func TestOpenAPIEveryRequestBodyHasAnExample(t *testing.T) {
 			bodies++
 			where := strings.ToUpper(method) + " " + path
 			content, _ := body["content"].(map[string]any)
-			media, _ := content["application/json"].(map[string]any)
-			if media == nil {
+			if content["application/json"] == nil {
 				t.Errorf("%s request body is not application/json", where)
 				continue
 			}
-			_, single := media["example"]
-			examples, multiple := media["examples"].(map[string]any)
-			if !single && (!multiple || len(examples) == 0) {
-				t.Errorf("%s request body carries no example", where)
-			}
-			for name, ex := range examples {
-				e, _ := ex.(map[string]any)
-				if _, has := e["value"]; !has {
-					t.Errorf("%s example %q has no value", where, name)
+			// Every media type a body takes, so the multipart form of the
+			// send route is held to the same bar as its JSON form.
+			for mediaType, raw := range content {
+				media, _ := raw.(map[string]any)
+				_, single := media["example"]
+				examples, multiple := media["examples"].(map[string]any)
+				if !single && (!multiple || len(examples) == 0) {
+					t.Errorf("%s %s request body carries no example", where, mediaType)
 				}
-				if s, _ := e["summary"].(string); strings.TrimSpace(s) == "" {
-					t.Errorf("%s example %q has no summary saying what it shows", where, name)
+				for name, ex := range examples {
+					e, _ := ex.(map[string]any)
+					if _, has := e["value"]; !has {
+						t.Errorf("%s %s example %q has no value", where, mediaType, name)
+					}
+					if s, _ := e["summary"].(string); strings.TrimSpace(s) == "" {
+						t.Errorf("%s %s example %q has no summary saying what it shows", where, mediaType, name)
+					}
 				}
 			}
 		}
@@ -514,6 +518,54 @@ func TestOpenAPIWaitAnswerAndKindMatchTheCode(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s %s does not document ?wait", c.method, c.path)
+		}
+	}
+}
+
+// The send route documents its multipart form: the two field names the
+// handler reads, the 413 it answers past a limit, and the limits themselves in
+// the words a caller reads, matching the numbers the code enforces.
+func TestOpenAPIDocumentsUploads(t *testing.T) {
+	doc := loadOpenAPI(t)
+	paths, _ := doc["paths"].(map[string]any)
+	item, _ := paths["/v1/conversations/{id}/messages"].(map[string]any)
+	op, _ := item["post"].(map[string]any)
+	body, _ := op["requestBody"].(map[string]any)
+	content, _ := body["content"].(map[string]any)
+	media, _ := content["multipart/form-data"].(map[string]any)
+	if media == nil {
+		t.Fatal("the send route does not document multipart/form-data")
+	}
+
+	schema, _ := media["schema"].(map[string]any)
+	if ref, _ := schema["$ref"].(string); ref != "" {
+		components, _ := doc["components"].(map[string]any)
+		schemas, _ := components["schemas"].(map[string]any)
+		schema, _ = schemas[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if text, _ := props["text"].(map[string]any); text["type"] != "string" {
+		t.Errorf("the multipart text field is not documented as a string: %v", props["text"])
+	}
+	file, _ := props["file"].(map[string]any)
+	items, _ := file["items"].(map[string]any)
+	if file["type"] != "array" || items["contentMediaType"] != "application/octet-stream" {
+		t.Errorf("file is not documented as repeatable binary parts: %v", file)
+	}
+	if len(props) != 2 {
+		t.Errorf("the multipart form documents %d fields; the handler reads exactly text and file", len(props))
+	}
+
+	responses, _ := op["responses"].(map[string]any)
+	if responses["413"] == nil {
+		t.Error("the send route does not document 413")
+	}
+
+	desc, _ := op["description"].(string)
+	l := defaultUploadLimits
+	for _, mb := range []int64{l.Image >> 20, l.File >> 20, l.Request >> 20} {
+		if !strings.Contains(desc, fmt.Sprintf("%d MB", mb)) {
+			t.Errorf("the send route's description does not state the %d MB limit", mb)
 		}
 	}
 }

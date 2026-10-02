@@ -13,3 +13,7 @@ replace terminal-lobby/sessionio => ../sessionio
 require terminal-lobby/telemetry v0.0.0
 
 replace terminal-lobby/telemetry => ../telemetry
+
+require terminal-lobby/clipstore v0.0.0
+
+replace terminal-lobby/clipstore => ../clipstore

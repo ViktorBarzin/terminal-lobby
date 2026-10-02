@@ -82,6 +82,16 @@ type Server struct {
 	// in milliseconds.
 	WaitUnit time.Duration
 	Now      func() time.Time
+
+	// StoreRoot is the clipboard store a message's files are written to;
+	// clipstore.DefaultRoot in production, a temp dir in tests.
+	StoreRoot string
+	// Limits bounds a multipart message; zero fields take
+	// defaultUploadLimits. A test shrinks them so it moves kilobytes.
+	Limits UploadLimits
+	// UploadTimeout is how long an authenticated upload may take to arrive;
+	// defaultUploadTimeout when zero. See attach.go.
+	UploadTimeout time.Duration
 }
 
 func (s *Server) now() time.Time {
@@ -168,11 +178,19 @@ func serverError(format string, args ...any) error {
 // produce. A handler reads id and body and fills the trace fields it knows
 // about; everything else the wrapper does.
 type call struct {
-	r  *http.Request
+	r *http.Request
+	// w is here for the one handler that streams: an upload needs it for
+	// http.MaxBytesReader and to lift the connection's deadlines. Every
+	// handler still answers by returning, never by writing to it.
+	w  http.ResponseWriter
 	id authuser.Identity
 	// body is the raw request body, verbatim, for a write route. The trace
 	// carries these exact bytes, which is what makes a replay a replay.
 	body []byte
+	// multipart is set when a route that takes uploads was sent
+	// multipart/form-data. The body is then left unread for the handler to
+	// stream, and body is nil.
+	multipart bool
 
 	// The three fields a handler contributes to the trace.
 	conversationID string
@@ -182,6 +200,11 @@ type call struct {
 	// so one request cannot write a megabyte into trace.jsonl. Left nil, the
 	// response body itself is recorded, which is right for everything small.
 	traceResponse any
+	// traceRequest overrides what the trace records as the request, for the
+	// same reason in the other direction: a multipart body can be 200 MB, so
+	// an upload records its text and the files' names and stored paths
+	// instead of the bytes.
+	traceRequest any
 	// status is the success status; 200 unless a handler says otherwise.
 	status int
 }
@@ -221,7 +244,7 @@ func (s *Server) Routes() http.Handler {
 	v1.Handle("POST /v1/conversations", s.handle("POST /v1/conversations", s.createConversation))
 	v1.Handle("GET /v1/conversations/{id}", s.handle("GET /v1/conversations/{id}", s.getConversation))
 	v1.Handle("GET /v1/conversations/{id}/transcript", s.handle("GET /v1/conversations/{id}/transcript", s.getTranscript))
-	v1.Handle("POST /v1/conversations/{id}/messages", s.handle("POST /v1/conversations/{id}/messages", s.postMessage))
+	v1.Handle("POST /v1/conversations/{id}/messages", s.handleUploads("POST /v1/conversations/{id}/messages", s.postMessage))
 	v1.Handle("GET /v1/tasks/{id}", s.handle("GET /v1/tasks/{id}", s.getTask))
 	v1.Handle("POST /v1/tasks/{id}/cancel", s.handle("POST /v1/tasks/{id}/cancel", s.cancelTask))
 	v1.Handle("POST /v1/tasks/{id}/answer", s.handle("POST /v1/tasks/{id}/answer", s.answerTask))
@@ -301,11 +324,23 @@ func bearerPresented(r *http.Request) bool {
 // handle wraps one handler: body capture, dispatch, JSON encoding, and the
 // trace line.
 func (s *Server) handle(verb string, h apiHandler) http.Handler {
+	return s.wrap(verb, h, false)
+}
+
+// handleUploads is handle for a route that also takes multipart/form-data.
+// Such a body is not read here: it can be 200 MB, so the handler streams it
+// to disk itself (attach.go). Any other body is read exactly as handle reads
+// it, so the JSON form of the route is unchanged.
+func (s *Server) handleUploads(verb string, h apiHandler) http.Handler {
+	return s.wrap(verb, h, true)
+}
+
+func (s *Server) wrap(verb string, h apiHandler, uploads bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := s.now()
 		id, _ := identityFrom(r.Context())
 
-		c := &call{r: r, id: id, status: http.StatusOK}
+		c := &call{r: r, w: w, id: id, status: http.StatusOK}
 		entry := TraceEntry{
 			TraceID: s.IDs.New(),
 			// The credential's NAME. authuser puts the token nowhere on the
@@ -314,15 +349,25 @@ func (s *Server) handle(verb string, h apiHandler) http.Handler {
 			Verb:  verb,
 		}
 
-		body, err := readBody(r)
-		if err != nil {
-			s.reply(w, c, entry, start, nil, err)
-			return
+		if uploads && isMultipart(r) {
+			c.multipart = true
+			// Replaced by the handler once it has read the parts; this is
+			// what a refusal before that point records.
+			entry.Request = marshalOrNote(map[string]string{"multipart": "not read"})
+		} else {
+			body, err := readBody(r)
+			if err != nil {
+				s.reply(w, c, entry, start, nil, err)
+				return
+			}
+			c.body = body
+			entry.Request = requestRecord(r, body)
 		}
-		c.body = body
-		entry.Request = requestRecord(r, body)
 
 		out, herr := h(c)
+		if c.traceRequest != nil {
+			entry.Request = marshalOrNote(c.traceRequest)
+		}
 		s.reply(w, c, entry, start, out, herr)
 	})
 }
