@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -274,5 +276,35 @@ func TestClearingATitleLeavesTheNameAlone(t *testing.T) {
 	}
 	if argv := recordedArgv(t, argvFile); strings.Contains(argv, "rename-session") {
 		t.Fatalf("clearing a title renamed the session:\n%s", argv)
+	}
+}
+
+// A rename onto a name whose image directory is real is refused before tmux is
+// touched. The cascade cannot merge two sessions' images, so it used to rename
+// the session anyway and leave its images behind, and from then on its uploads
+// landed in the other session's directory (measured live on 2026-10-02 with
+// rv-r4-sentinel: a conversation renamed onto it wrote there, and its DELETE
+// removed the sentinel's file).
+func TestRenameRefusesANameHoldingAnEarlierSessionsImages(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "authself="+osSelf+"\n")
+	withTempLayoutStore(t)
+	swapAssignmentStore(t)
+	swapTitleStore(t)
+	root := swapImageStore(t)
+	argvFile := withTmuxStub(t, "")
+	if err := os.MkdirAll(filepath.Join(root, osSelf, "rv-r4-sentinel"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	handleSessionByName(w, sessionReq(http.MethodPost, "/sessions/work/rename",
+		`{"name":"rv-r4-sentinel"}`, "authself"))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %q)", w.Code, w.Body)
+	}
+	if argv := recordedArgv(t, argvFile); strings.Contains(argv, "rename-session") {
+		t.Fatalf("renamed onto a name holding another session's images:\n%s", argv)
 	}
 }

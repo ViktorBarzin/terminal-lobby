@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,5 +91,59 @@ func TestBackfillSuffixesASecondSessionWithTheSameTitle(t *testing.T) {
 
 	if sessions[0].Name != "deploy" || sessions[1].Name != "deploy-2" {
 		t.Errorf("names = %q, %q; want deploy and deploy-2", sessions[0].Name, sessions[1].Name)
+	}
+}
+
+// A name whose image directory is real belongs to a session that holds it or
+// held it, so a derived name steps around it the way it steps around a live
+// one. Measured live on 2026-10-02: two conversations autotitled onto
+// image-word-identification and image-word-identification-2, both orphans of an
+// earlier round, so their uploads went into those directories and deleting the
+// conversations deleted them.
+func TestDerivedNameStepsAroundAnEarlierSessionsImages(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withTempLayoutStore(t)
+	swapAssignmentStore(t)
+	swapTitleStore(t)
+	root := swapImageStore(t)
+	argvFile := withTmuxStub(t, "")
+	for _, d := range []string{"image-word-identification", "image-word-identification-2"} {
+		if err := os.MkdirAll(filepath.Join(root, osSelf, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sessions := []Session{{Name: "6j0wjvxxf7e5", Title: "Image word identification"}}
+	backfillDerivedNames(osSelf, sessions)
+
+	if sessions[0].Name != "image-word-identification-3" {
+		t.Errorf("served name = %q, want image-word-identification-3", sessions[0].Name)
+	}
+	if argv := recordedArgv(t, argvFile); !strings.Contains(argv, "image-word-identification-3\n") {
+		t.Errorf("argv did not rename to the free name:\n%s", argv)
+	}
+}
+
+// A link left by a rename holds nothing of its own (renameImageDir replaces
+// it), so it does not push a derived name onto a suffix.
+func TestDerivedNameTakesANameThatIsOnlyALink(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withTempLayoutStore(t)
+	swapAssignmentStore(t)
+	swapTitleStore(t)
+	root := swapImageStore(t)
+	withTmuxStub(t, "")
+	if err := os.MkdirAll(filepath.Join(root, osSelf, "elsewhere"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("elsewhere", filepath.Join(root, osSelf, "deploy")); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := []Session{{Name: "6j0wjvxxf7e5", Title: "Deploy"}}
+	backfillDerivedNames(osSelf, sessions)
+
+	if sessions[0].Name != "deploy" {
+		t.Errorf("served name = %q, want deploy", sessions[0].Name)
 	}
 }

@@ -31,6 +31,8 @@ package main
 
 import (
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -113,6 +115,16 @@ func renameToDerivedNameAmong(osUser, name, title, client string, taken map[stri
 	if !ok {
 		return name
 	}
+	// The store is read only once a move is wanted, so the pass over every
+	// listing stays a map build when nothing changes.
+	if held := heldImageNames(osUser); len(held) > 0 {
+		for n := range taken {
+			held[n] = true
+		}
+		if newName, ok = derivedNameFor(name, title, held); !ok {
+			return name
+		}
+	}
 	out, err := tmuxCmd(osUser, "rename-session", "-t", exactSession(name), newName).CombinedOutput()
 	if err != nil {
 		// A duplicate here is a race with another session claiming the name
@@ -129,6 +141,25 @@ func renameToDerivedNameAmong(osUser, name, title, client string, taken map[stri
 		"tl.from": name, "tl.to": newName, "tl.client": client,
 	})
 	return newName
+}
+
+// heldImageNames is every name whose image directory is real, which a derived
+// name steps around exactly like a live one (clipstore.HoldsSession has why:
+// taking such a name sends this session's uploads into another session's
+// directory). Empty when the store cannot be read, which only means a
+// collision there is not seen, as before this check existed.
+func heldImageNames(osUser string) map[string]bool {
+	held := map[string]bool{}
+	entries, err := os.ReadDir(filepath.Join(sessionImageRoot, osUser))
+	if err != nil {
+		return held
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			held[e.Name()] = true
+		}
+	}
+	return held
 }
 
 // liveNames is every session name this user is running, which is what a

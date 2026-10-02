@@ -238,6 +238,12 @@ func (s *Server) createConversation(c *call) (any, error) {
 			return nil, conflict("conversation %q already exists; pick another name", name)
 		}
 	}
+	// A name can also be held by a session that is gone: its upload
+	// directory stays for the 30-day grace (ADR-0005). This conversation's
+	// files would land in that directory and its DELETE would remove it.
+	if clipstore.HoldsSession(s.storeRoot(), c.id.OSUser, name) {
+		return nil, conflict("name %q still holds the files of an earlier session with that name; pick another name", name)
+	}
 
 	// The Claude session id is chosen here rather than by Claude, so the
 	// transcript's path is known before Claude has written a line of it.

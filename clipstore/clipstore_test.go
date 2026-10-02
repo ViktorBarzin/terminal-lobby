@@ -452,3 +452,38 @@ func TestRemoveSessionTakesTheDirectoryAndTheLinksToIt(t *testing.T) {
 		t.Error("RemoveSession accepted a path")
 	}
 }
+
+// A name whose directory is real holds some session's files: the session that
+// has the name now, or one that had it and died inside the 30-day grace
+// (ADR-0005). Taking that name puts the newcomer's uploads in with them, and
+// agent-api's DELETE then removes them (measured live on 2026-10-02:
+// image-word-identification, an orphan from an earlier round, went when a
+// conversation autotitled onto it was deleted). A link is only a signpost a
+// rename left, and nothing at all is free.
+func TestHoldsSession(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "wizard")
+	if err := os.MkdirAll(filepath.Join(user, "earlier"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("earlier", filepath.Join(user, "moved-on")); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		user, session string
+		want          bool
+	}{
+		{"wizard", "earlier", true},
+		{"wizard", "moved-on", false},
+		{"wizard", "never-seen", false},
+		{"nobody-yet", "earlier", false},
+		// Not a name a session can have, so nothing can hold it.
+		{"wizard", "../wizard", false},
+		{"../x", "earlier", false},
+	}
+	for _, c := range cases {
+		if got := HoldsSession(root, c.user, c.session); got != c.want {
+			t.Errorf("HoldsSession(%q, %q) = %v, want %v", c.user, c.session, got, c.want)
+		}
+	}
+}

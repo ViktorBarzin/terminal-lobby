@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"terminal-lobby/clipstore"
 	"terminal-lobby/slug"
 	"terminal-lobby/telemetry"
 )
@@ -217,6 +218,13 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 	}
 	if newName == oldName {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Refused before tmux moves, because afterwards it is too late: the
+	// cascade cannot merge two sessions' images, so the session would carry
+	// the name while its uploads went into the other session's directory.
+	if clipstore.HoldsSession(sessionImageRoot, osUser, newName) {
+		http.Error(w, "target name still holds the images of an earlier session", http.StatusConflict)
 		return
 	}
 	if !renameTmuxSession(w, osUser, oldName, newName) {

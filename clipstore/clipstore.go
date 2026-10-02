@@ -342,6 +342,35 @@ func SecureOwnStore(root string) error {
 	return err
 }
 
+// HoldsSession reports whether <root>/<osUser>/<session> is a real directory,
+// which means some session's files are in it: the session that has the name
+// now, or one that had it and died inside ADR-0005's 30-day grace.
+//
+// A session taking such a name by a rename or a create would write its uploads
+// in with the other session's, and agent-api's DELETE, which removes the
+// directory under the live name, would then remove them. Measured live on
+// 2026-10-02: two conversations autotitled onto orphan directories of an
+// earlier round, and deleting them deleted those directories. So every path
+// that hands a session a name it did not have treats this as taken.
+//
+// A link is false: it is a signpost a rename left, which the next owner of the
+// name replaces (OpenStoreDir, tmux-api's renameImageDir). A failure to look
+// other than "nothing there" is true, since calling a name taken costs a
+// suffix and calling it free can cost another session's files.
+func HoldsSession(root, osUser, session string) bool {
+	if !safeElement(osUser) || !SessionNameRe.MatchString(session) {
+		return false
+	}
+	fi, err := os.Lstat(filepath.Join(root, osUser, session))
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	return fi.IsDir()
+}
+
 // RemoveSession deletes a session's store directory and every link a rename
 // left pointing at it, directly or through another such link. Nothing there
 // is not an error.

@@ -211,7 +211,12 @@ var errNoShareChange = errors.New("no share change")
 // A destination that is a real directory is left ALONE rather than merged:
 // another session held that name and its pictures are its own. That leaves the
 // images under the old name, which is the same outcome as before this function
-// existed — recoverable, where a merge would not be.
+// existed — recoverable, where a merge would not be. It is a backstop: the
+// session then carries a name whose directory is another session's, so its
+// uploads land there and agent-api's DELETE removes it (measured live on
+// 2026-10-02). The derived-name rule and POST /sessions/{name}/rename both
+// treat such a name as taken (clipstore.HoldsSession), so only a path that
+// does not ask first, such as the one-time id migration, reaches it.
 func renameImageDir(osUser, oldName, newName string) {
 	from := filepath.Join(sessionImageRoot, osUser, oldName)
 	to := filepath.Join(sessionImageRoot, osUser, newName)

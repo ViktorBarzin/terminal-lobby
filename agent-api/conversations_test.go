@@ -200,6 +200,29 @@ func TestCreateConversationDuplicateName(t *testing.T) {
 	h.decodeJSON(w, http.StatusConflict, nil)
 }
 
+// A name whose upload directory is real belongs to an earlier session that had
+// it (a person's killed session keeps its files for ADR-0005's 30-day grace).
+// A conversation created under it would write its files in with that
+// session's, and its DELETE would remove them, so the name counts as taken.
+func TestCreateConversationRefusesANameHoldingAnEarlierSessionsFiles(t *testing.T) {
+	h := newHarness(t)
+	code := filepath.Join(h.homeBase, testOSUser, "code")
+	earlier := filepath.Join(h.srv.StoreRoot, testOSUser, "rv-r4-sentinel")
+	if err := os.MkdirAll(earlier, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	w := h.call("POST", "/v1/conversations", `{"cwd":`+jsonString(code)+`,"name":"rv-r4-sentinel"}`)
+	var got map[string]string
+	h.decodeJSON(w, http.StatusConflict, &got)
+	if !strings.Contains(got["error"], "rv-r4-sentinel") {
+		t.Fatalf("error %q does not name the name", got["error"])
+	}
+	if calls := h.sessions.createCalls(); len(calls) != 0 {
+		t.Fatalf("a session was created under a name holding another session's files: %+v", calls)
+	}
+}
+
 // A conversation keeps its id after tmux-api renames its session, so that id
 // stays taken. Measured live on 2026-10-02: a second create under the id of a
 // renamed conversation answered 201, both then listed the same
