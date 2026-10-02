@@ -682,7 +682,7 @@ var errModGone = errors.New("the session's mod is not connected")
 func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
 	c.mu.Lock()
 	c.nextID++
-	cmd.ID = "c" + strconv.Itoa(c.nextID)
+	cmd.ID = "c" + strconv.Itoa(c.nextID) + "." + bootID
 	ch := make(chan modAck, 1)
 	c.acks[cmd.ID] = ch
 	c.cmds = append(c.cmds, cmd)
@@ -717,9 +717,15 @@ func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
 // cmdSeq is a command id's sequence number ("c12" is 12), which orders
 // commands sent again after a hello.
 func cmdSeq(id string) int {
-	n, _ := strconv.Atoi(strings.TrimPrefix(id, "c"))
+	seq, _, _ := strings.Cut(strings.TrimPrefix(id, "c"), ".")
+	n, _ := strconv.Atoi(seq)
 	return n
 }
+
+// bootID tells this process's command ids from the last one's. A mod outlives
+// a restart of this service and ignores an id it has already run, so an id
+// that started again at c1 would be taken for a repeat and never run.
+var bootID = newToken()[:8]
 
 // deliver hands an ack to the route waiting for it. A second ack for the same
 // command finds nobody and is dropped.

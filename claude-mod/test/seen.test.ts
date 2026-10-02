@@ -8,6 +8,20 @@ test('the first sight of an id runs it; a repeat does not', () => {
   assert.deepEqual(seen.repeat('c1'), { ok: true });
 });
 
+test('an id reused for a different command (a restarted server) runs it', () => {
+  const seen = new SeenCommands();
+  assert.equal(seen.repeat({ id: 'c1', op: 'prompt', text: 'count to 200' }), undefined);
+  seen.record('c1', { ok: true });
+  assert.equal(seen.repeat({ id: 'c1', op: 'prompt', text: 'after restart' }), undefined);
+  assert.deepEqual(seen.repeat({ id: 'c1', op: 'prompt', text: 'after restart' }), { ok: true });
+});
+
+test('a redelivered command matches whatever order its fields arrive in', () => {
+  const seen = new SeenCommands();
+  assert.equal(seen.repeat({ id: 'c9', op: 'answer', toolId: 't', answers: { 'Q?': 'A' } }), undefined);
+  assert.deepEqual(seen.repeat({ answers: { 'Q?': 'A' }, toolId: 't', op: 'answer', id: 'c9' }), { ok: true });
+});
+
 test('a repeat replays the recorded outcome, the latest one winning', () => {
   const seen = new SeenCommands();
   seen.repeat('c1');

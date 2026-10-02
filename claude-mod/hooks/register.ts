@@ -119,7 +119,7 @@ async function historyFields($: EngineInterface): Promise<{ messages: unknown; r
 }
 
 async function runCommand($: EngineInterface, c: Command): Promise<void> {
-  const repeated = seenCommands.repeat(c.id);
+  const repeated = seenCommands.repeat(c);
   if (repeated) {
     send({ type: 'ack', id: c.id, ...repeated });
     return;
