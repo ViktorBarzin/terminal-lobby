@@ -65,6 +65,8 @@ func main() {
 	defer stop()
 
 	injector := sessionio.NewInjector(self.Username)
+	// A Caller's session is recorded with tl.caller (callertag.go).
+	events.SetCallerRule(newCallerTags(injector).callerOf)
 	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
 	// The mod hub clears options in one tmux call; drill-ins nobody reads and
 	// connections whose mod went quiet are swept on a ticker.
