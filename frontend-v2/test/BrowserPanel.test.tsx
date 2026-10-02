@@ -740,7 +740,8 @@ describe("<BrowserPanel> cursor", () => {
 /**
  * One cursor for the person in control (Viktor, 2026-10-02). On a desktop
  * they saw their own pointer and the drawn cursor trailing it a round trip
- * later.
+ * later; on a phone a tap got its mark only from the host's echo, which never
+ * comes for a tap inside a cross-origin iframe.
  */
 describe("<BrowserPanel> the cursor of the person in control", () => {
   const driving = (phone = false) => {
@@ -833,5 +834,50 @@ describe("<BrowserPanel> the cursor of the person in control", () => {
     expect(r.container.querySelector<HTMLElement>(".tl-browser-cursor")!.style.transform).toBe(
       "translate(50px, 150px)",
     );
+  });
+
+  describe("on a phone", () => {
+    const tapAt = (stage: Element, clientX: number, clientY: number) => {
+      const at = { pointerId: 7, pointerType: "touch", clientX, clientY };
+      fireEvent.pointerDown(stage, at);
+      fireEvent.pointerUp(stage, at);
+    };
+
+    it("moves the cursor to a tap and rings at once, before any echo", () => {
+      const { stage, cursor, ripples, echo } = driving(true);
+      echo(100, 100);
+      tapAt(stage, 350, 340);
+      expect(cursor()!.style.transform).toBe("translate(320px, 300px)");
+      expect(cursor()).not.toHaveAttribute("data-glide");
+      expect(ripples()).toHaveLength(1);
+      expect((ripples()[0] as HTMLElement).style.left).toBe("320px");
+      // A phone has no pointer to hide.
+      expect(stage).not.toHaveAttribute("data-own-cursor");
+    });
+
+    it("keeps the tap's spot when no echo comes, as for a cross-origin frame", () => {
+      vi.useFakeTimers();
+      try {
+        const { stage, cursor, echo } = driving(true);
+        echo(100, 100);
+        tapAt(stage, 350, 340);
+        vi.advanceTimersByTime(5_000);
+        expect(cursor()!.style.transform).toBe("translate(320px, 300px)");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("lets the host's echo take over without a second ring", () => {
+      const { stage, cursor, ripples, echo } = driving(true);
+      tapAt(stage, 350, 340);
+      echo(640, 400, "down");
+      echo(640, 400, "up");
+      echo(640, 400, "click");
+      expect(ripples()).toHaveLength(1);
+      expect(cursor()!.style.transform).toBe("translate(320px, 300px)");
+      echo(700, 400);
+      expect(cursor()!.style.transform).toBe("translate(350px, 300px)");
+    });
   });
 });

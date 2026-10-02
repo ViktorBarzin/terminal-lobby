@@ -409,13 +409,26 @@ export interface CursorReport {
  */
 export type OwnPointer = { x: number; y: number } | "off" | null;
 
+/** Where a phone's tap put the cursor, until the host reports past `after`. */
+export interface TapMark {
+  tab: string;
+  x: number;
+  y: number;
+  /** The `seq` of the host's latest report when the tap landed. */
+  after: number;
+}
+
 /**
  * Where the panel draws the one Browser cursor, in page pixels, or null for
- * no cursor. The host's report on the shown tab, except while this viewer
- * holds control and its own pointer is over the stage: then its pointer, at
- * once and with the host's echo of it ignored, since the echo trails a round
- * trip behind. Beside the picture no input is sent and the real pointer
- * shows, so nothing is drawn.
+ * no cursor. The host's report on the shown tab, except:
+ *
+ * - While this viewer holds control and its own pointer is over the stage,
+ *   its pointer, at once and with the host's echo of it ignored: the echo
+ *   trails a round trip behind. Beside the picture no input is sent and the
+ *   real pointer shows, so nothing is drawn.
+ * - After a tap, the tap's spot, until the host reports anything newer. A tap
+ *   inside a cross-origin iframe is never echoed, and one that is arrives a
+ *   round trip late.
  *
  * `own` marks a position this viewer put there, which never glides (`seq`
  * -1, so the move back to the host's report does).
@@ -423,10 +436,13 @@ export type OwnPointer = { x: number; y: number } | "off" | null;
 export function drawnCursor(
   host: CursorReport | null,
   own: OwnPointer,
+  mark: TapMark | null,
   tab: string | null,
 ): (CursorReport & { own: boolean }) | null {
   if (tab === null || own === "off") return null;
   if (own) return { tab, x: own.x, y: own.y, seq: -1, own: true };
+  if (mark && mark.tab === tab && (host === null || host.seq <= mark.after))
+    return { tab, x: mark.x, y: mark.y, seq: -1, own: true };
   return host && host.tab === tab ? { ...host, own: false } : null;
 }
 
@@ -436,7 +452,7 @@ const OWN_ECHO_PX = 4;
 
 /**
  * Whether a host report is the echo of a press this viewer already rang for
- * (a desktop press): its down, up or click near the same
+ * (a desktop press, or a phone's tap): its down, up or click near the same
  * spot soon after. The panel rings for its own press at once, so the echo
  * does not ring again. While a person holds control the agent's input is
  * refused, so a press there in that time is theirs.

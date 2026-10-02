@@ -23,6 +23,7 @@ import {
   type ListPlacement,
   type OwnPointer,
   type PageRect,
+  type TapMark,
 } from "./browser.logic";
 import { BrowserPopups } from "./BrowserPopups";
 import {
@@ -276,16 +277,20 @@ export const BrowserPanel: Component<{
   // One cursor (Viktor, 2026-10-02). The host's echo of this viewer's input
   // trails it by a round trip, so while this viewer holds control the drawn
   // cursor follows its own pointer at once (browser.logic `drawnCursor`), and
-  // the real pointer is hidden over the page.
+  // the real pointer is hidden over the page. A phone's tap puts the cursor
+  // where it landed until the host reports something newer.
 
   /** This viewer's mouse or pen over the stage, while it holds control. */
   const [own, setOwn] = createSignal<OwnPointer>(null);
+  /** Where this viewer's last tap put the cursor. */
+  const [mark, setMark] = createSignal<TapMark | null>(null);
   /** This viewer's last press, already rung, so its echo does not ring again. */
   let ownPress: { x: number; y: number; at: number } | null = null;
   createEffect(
     on(inControl, (held) => {
       if (held) return;
       setOwn(null);
+      setMark(null);
     }),
   );
   /** A pointer that hovers and points precisely, unlike a finger. */
@@ -416,6 +421,11 @@ export const BrowserPanel: Component<{
       const p = point(e.clientX, e.clientY);
       if (!p) return;
       drive({ t: "mouse", type: "click", ...p, button: "left", clickCount: 1 });
+      // The cursor goes to the tap and rings now, not a round trip later,
+      // and still when the tap is inside a frame the host cannot see into.
+      const here = shownTab();
+      if (here) setMark({ tab: here, ...p, after: stream.cursor()?.seq ?? 0 });
+      ringOwn(p);
       // A tap on a field should raise the keyboard, and only a focused input
       // of this page's own can: what is typed there is sent on as text.
       ime?.focus({ preventScroll: true });
@@ -564,9 +574,10 @@ export const BrowserPanel: Component<{
   //
   // One cursor (CONTEXT.md "Browser cursor"): the host reports where the
   // mouse is in the tab, whether the agent or the person in control moved it,
-  // so a phone's tap comes back here as the same cursor and needs no touch
-  // mark of its own. It is drawn in the picture's own pixels, inside the
-  // canvas, so a zoomed page scrolls it with the picture.
+  // so a phone's tap comes back here as the same cursor. The tap's own mark
+  // is that cursor moved early, not a second one. It is drawn in the
+  // picture's own pixels, inside the canvas, so a zoomed page scrolls it with
+  // the picture.
 
   /** Bumped when the stage changes size, which moves the drawn picture. */
   const [layout, setLayout] = createSignal(0);
@@ -601,7 +612,7 @@ export const BrowserPanel: Component<{
     glide: boolean;
   }
   const cursorSpot = createMemo<CursorSpot | null>((prev) => {
-    const c = drawnCursor(stream.cursor(), own(), shownTab());
+    const c = drawnCursor(stream.cursor(), own(), mark(), shownTab());
     const f = stream.frame();
     const el = imgEl();
     zoom();

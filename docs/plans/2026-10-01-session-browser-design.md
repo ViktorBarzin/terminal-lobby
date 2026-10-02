@@ -424,7 +424,11 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
   (`cursor: none`), and a press rings when it happens. Over the letterbox
   beside the picture the real pointer shows and nothing is drawn. When the
   pointer leaves the page or control ends, the host drives the cursor again.
-  Other viewers always see the host's cursor.
+  On a phone, a tap by the viewer in control moves the cursor to the tap and
+  rings at once, since the host's echo arrives a round trip later and never
+  comes for a tap inside a cross-origin iframe. The cursor stays there until
+  the host reports anything newer, and an echo of the tap does not ring
+  again. Other viewers always see the host's cursor.
 
 ## Rollout
 

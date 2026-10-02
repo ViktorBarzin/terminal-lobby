@@ -613,32 +613,52 @@ describe("where a press ripples", () => {
 
 /**
  * One cursor (Viktor, 2026-10-02). The person in control on a desktop saw
- * their own pointer and the drawn one trailing it a round trip later.
+ * their own pointer and the drawn one trailing it a round trip later, and a
+ * phone's tap got its mark only from the host's echo, which never comes for a
+ * tap inside a cross-origin iframe.
  */
 describe("which position the panel draws the cursor at", () => {
   const host = { tab: "t1", x: 10, y: 20, seq: 4 };
 
   it("follows the host's report on the shown tab", () => {
-    expect(drawnCursor(host, null, "t1")).toEqual({ ...host, own: false });
-    expect(drawnCursor(host, null, "t2")).toBeNull();
-    expect(drawnCursor(null, null, "t1")).toBeNull();
-    expect(drawnCursor(host, null, null)).toBeNull();
+    expect(drawnCursor(host, null, null, "t1")).toEqual({ ...host, own: false });
+    expect(drawnCursor(host, null, null, "t2")).toBeNull();
+    expect(drawnCursor(null, null, null, "t1")).toBeNull();
+    expect(drawnCursor(host, null, null, null)).toBeNull();
   });
 
   it("follows this viewer's own pointer while it is over the page, ignoring the host", () => {
     const own = { x: 300, y: 200 };
-    expect(drawnCursor(host, own, "t1")).toEqual({
+    expect(drawnCursor(host, own, null, "t1")).toEqual({
       tab: "t1",
       x: 300,
       y: 200,
       seq: -1,
       own: true,
     });
-    expect(drawnCursor(null, own, "t1")).toMatchObject({ x: 300, y: 200, own: true });
+    expect(drawnCursor(null, own, null, "t1")).toMatchObject({ x: 300, y: 200, own: true });
   });
 
   it("draws nothing while its own pointer is beside the picture, where the real one shows", () => {
-    expect(drawnCursor(host, "off", "t1")).toBeNull();
+    expect(drawnCursor(host, "off", null, "t1")).toBeNull();
+  });
+
+  it.each([
+    ["no report since the tap", null, true],
+    ["only the report from before the tap", { tab: "t1", x: 10, y: 20, seq: 4 }, true],
+    ["a later report", { tab: "t1", x: 51, y: 61, seq: 5 }, false],
+    ["a later report on another tab", { tab: "t2", x: 51, y: 61, seq: 5 }, false],
+  ])("puts a tap's mark first while the host has sent %s", (_, report, marked) => {
+    const mark = { tab: "t1", x: 50, y: 60, after: 4 };
+    const drawn = drawnCursor(report, null, mark, "t1");
+    if (marked) expect(drawn).toEqual({ tab: "t1", x: 50, y: 60, seq: -1, own: true });
+    else if (report?.tab === "t1") expect(drawn).toEqual({ ...report, own: false });
+    else expect(drawn).toBeNull();
+  });
+
+  it("leaves a tap's mark on its own tab", () => {
+    const mark = { tab: "t1", x: 50, y: 60, after: 4 };
+    expect(drawnCursor(null, null, mark, "t2")).toBeNull();
   });
 });
 
