@@ -159,3 +159,102 @@ func TestStampBackgroundSubagentOfAnyDefinitionKeepsTheSessionRunning(t *testing
 		t.Fatalf("agents finishing writes %q", got)
 	}
 }
+
+// subagentToolRow is a background subagent's assistant row calling a tool.
+func subagentToolRow(agent, toolID string) sessionio.ModEvent {
+	return sessionio.ModEvent{Type: sessionio.ModRowEvent, Door: "response", AgentID: agent, Message: &sessionio.ModMessage{
+		Type: "assistant", Role: "assistant",
+		Content: json.RawMessage(`[{"type":"tool_use","id":"` + toolID + `","name":"Bash","input":{"command":"time sleep 40"}}]`),
+	}}
+}
+
+// A background subagent's permission prompt can open a moment before the
+// main turn ends. tool.check carries no agent id, so the permission event
+// looks like the main thread's. Measured live on 2026-10-02 (rv-r3reg-b):
+// permission at 13:11:20.742, main turn_end at 13:11:21.027, and the turn
+// end took the ask with it, leaving the dialog on screen behind a session
+// that read running and a Caller task nobody could answer.
+func TestStampSubagentPermissionSurvivesTheMainTurnEnd(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModTurnStartEvent, AgentID: "aefb"}, stampNow)
+	s.apply(subagentToolRow("aefb", "toolu_s"), stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModPermissionEvent, ToolID: "toolu_s"}, stampNow)
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent, Answer: "Started it in the background."}, stampNow)
+	if s.state != "awaiting" || s.ask != "toolu_s" {
+		t.Fatalf("after the main turn_end: state %s ask %q (writes %q)", s.state, s.ask, writeKeys(w))
+	}
+	if _, cleared := w.set["@claude_ask"]; cleared || containsName(w.unset, "@claude_ask") || w.set["@claude_state"] != "" {
+		t.Fatalf("main turn_end rewrote the open ask: %q", writeKeys(w))
+	}
+	// The agent list that follows every turn_end must not move it either.
+	s.apply(sessionio.ModEvent{Type: sessionio.ModAgentsEvent, Agents: []sessionio.ModAgent{
+		{ID: "aefb", Type: "general-purpose", Status: "running"},
+	}}, stampNow)
+	if s.state != "awaiting" || s.ask != "toolu_s" {
+		t.Fatalf("after the agent list: state %s ask %q", s.state, s.ask)
+	}
+	w = s.apply(sessionio.ModEvent{Type: sessionio.ModSettledEvent, ToolID: "toolu_s"}, stampNow)
+	if got := writeKeys(w); got != "-@claude_ask @claude_state=running" {
+		t.Fatalf("settled writes %q", got)
+	}
+}
+
+// The same race when the subagent's row has not been seen yet: an ask that
+// no row places, opened while a subagent loop is active, could be the
+// subagent's, so the main turn end leaves it standing.
+func TestStampUnplacedAskWithASubagentActiveSurvivesTheMainTurnEnd(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModTurnStartEvent, AgentID: "aefb"}, stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModPermissionEvent, ToolID: "toolu_x"}, stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent}, stampNow)
+	if s.state != "awaiting" || s.ask != "toolu_x" {
+		t.Fatalf("state %s ask %q", s.state, s.ask)
+	}
+	// The subagent's own turn ending is the safety net for its asks.
+	s.apply(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent, AgentID: "aefb"}, stampNow)
+	if s.ask != "" || s.state != "done" {
+		t.Fatalf("after the subagent's turn_end: state %s ask %q", s.state, s.ask)
+	}
+}
+
+// A main-thread ask is still cleared by the main turn end, which is the
+// safety net for a dialog whose settled event never arrived.
+func TestStampMainThreadAskIsClearedByTheMainTurnEnd(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModRowEvent, Door: "response", Message: &sessionio.ModMessage{
+		Type: "assistant", Role: "assistant",
+		Content: json.RawMessage(`[{"type":"tool_use","id":"toolu_m","name":"Bash","input":{}}]`),
+	}}, stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModTurnStartEvent, AgentID: "aefb"}, stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModPermissionEvent, ToolID: "toolu_m"}, stampNow)
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent}, stampNow)
+	if s.ask != "" || !containsName(w.unset, "@claude_ask") {
+		t.Fatalf("main ask survived the main turn_end: ask %q writes %q", s.ask, writeKeys(w))
+	}
+}
+
+// Two dialogs open at once: settling one shows the other.
+func TestStampTwoOpenAsksSettleIndependently(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	s.apply(subagentToolRow("a1", "toolu_a"), stampNow)
+	s.apply(subagentToolRow("a2", "toolu_b"), stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModPermissionEvent, ToolID: "toolu_a"}, stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModPermissionEvent, ToolID: "toolu_b"}, stampNow)
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModSettledEvent, ToolID: "toolu_b"}, stampNow)
+	if s.state != "awaiting" || s.ask != "toolu_a" || w.set["@claude_ask"] != "toolu_a" {
+		t.Fatalf("state %s ask %q writes %q", s.state, s.ask, writeKeys(w))
+	}
+}
+
+func containsName(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}

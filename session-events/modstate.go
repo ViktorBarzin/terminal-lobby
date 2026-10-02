@@ -41,8 +41,18 @@ const replyCap = 1000
 // stampState is one session's view of its options, so only changes are
 // written.
 type stampState struct {
-	state    string
-	ask      string
+	state string
+	// ask is @claude_ask: the newest of asks.
+	ask string
+	// asks are the dialogs open now, oldest first. More than one can stand:
+	// a background subagent's permission prompt and the main thread's, or two
+	// subagents'.
+	asks []string
+	// owner places a tool call: the agent whose row called it, "" for the
+	// main thread, from the rows the mod forwards, until its result. tool.check
+	// carries no agent id, so this is how a permission event is told apart
+	// from the main thread's.
+	owner    map[string]string
 	tool     string
 	bg       string
 	turnOpen bool
@@ -73,6 +83,10 @@ func (w *stampWrite) put(name, value string) {
 
 func (w stampWrite) empty() bool { return len(w.set) == 0 && len(w.unset) == 0 }
 
+// ownerCap bounds owner: entries leave with their tool's result, and a
+// session whose results never came starts the map over rather than growing.
+const ownerCap = 1024
+
 // apply folds one mod event into the state and returns the writes it implies.
 func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	var w stampWrite
@@ -88,23 +102,29 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 			s.active[ev.AgentID] = true
 		}
 		s.bg = bgTokens(s.agents, s.active)
-		if !s.turnOpen && s.ask == "" {
+		if !s.turnOpen {
 			s.state = s.idleState()
 		}
 	}
 	switch ev.Type {
 	case sessionio.ModRowEvent:
-		if !main || ev.Message == nil {
+		if ev.Message == nil {
 			break
 		}
-		if ev.Door == "prompt" && ev.Message.Role == "user" {
-			s.turnOpen, s.ask, s.tool = true, "", ""
+		if main && ev.Door == "prompt" && ev.Message.Role == "user" {
+			// A person typed: no main-thread dialog can still be up.
+			s.dropAsks(s.mainEnded)
+			s.turnOpen, s.tool = true, ""
 			s.state = sessionio.StateRunning
 			w.put(optActivity, strconv.FormatInt(now.Unix(), 10))
 			break
 		}
 		for _, bl := range blocksOf(ev.Message.Content) {
 			if bl.Type != "tool_use" || bl.ID == "" {
+				continue
+			}
+			s.place(bl.ID, ev.AgentID)
+			if !main {
 				continue
 			}
 			s.tool = bl.ID
@@ -120,28 +140,48 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	case sessionio.ModTurnStartEvent:
 		if main {
 			s.turnOpen = true
-			if s.ask == "" {
-				s.state = sessionio.StateRunning
-			}
+			s.state = sessionio.StateRunning
 		}
 	case sessionio.ModResultEvent:
 		if main && s.tool == ev.ToolID {
 			s.tool = ""
 		}
+		if ev.ToolID != "" {
+			// A tool that has a result is not waiting on anyone.
+			s.dropAsks(func(id string) bool { return id == ev.ToolID })
+			delete(s.owner, ev.ToolID)
+		}
 	case sessionio.ModAskEvent, sessionio.ModPlanEvent, sessionio.ModPermissionEvent:
-		if main && ev.ToolID != "" {
-			s.ask, s.state = ev.ToolID, sessionio.StateAwaiting
+		if ev.ToolID != "" {
+			if !main {
+				s.place(ev.ToolID, ev.AgentID)
+			}
+			s.dropAsks(func(id string) bool { return id == ev.ToolID })
+			s.asks = append(s.asks, ev.ToolID)
 		}
 	case sessionio.ModSettledEvent:
-		if s.ask != "" && (ev.ToolID == "" || ev.ToolID == s.ask) {
-			s.ask = ""
-			s.state = s.idleState()
+		if ev.ToolID == "" {
+			if n := len(s.asks); n > 0 {
+				s.asks = s.asks[:n-1]
+			}
+		} else {
+			s.dropAsks(func(id string) bool { return id == ev.ToolID })
 		}
 	case sessionio.ModTurnEndEvent:
 		if !main {
+			// A subagent's loop ended, so none of its dialogs stand, nor one
+			// nothing placed once no loop at all could have asked it.
+			s.dropAsks(func(id string) bool {
+				who, placed := s.owner[id]
+				if placed {
+					return who == ev.AgentID
+				}
+				return !s.turnOpen && len(s.active) == 0
+			})
 			break
 		}
-		s.turnOpen, s.ask, s.tool = false, "", ""
+		s.turnOpen, s.tool = false, ""
+		s.dropAsks(s.mainEnded)
 		s.state = s.idleState()
 		w.put(optActivity, strconv.FormatInt(now.Unix(), 10))
 		if strings.TrimSpace(ev.Answer) != "" {
@@ -150,7 +190,7 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	case sessionio.ModAgentsEvent:
 		s.agents = ev.Agents
 		s.bg = bgTokens(s.agents, s.active)
-		if !s.turnOpen && s.ask == "" {
+		if !s.turnOpen {
 			s.state = s.idleState()
 		}
 	case sessionio.ModByeEvent:
@@ -158,6 +198,16 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 		w.unset = []string{sessionio.OptionState, sessionio.OptionBackground, sessionio.OptionAsk, sessionio.OptionTool}
 		w.from, w.to = prev.state, ""
 		return w
+	}
+	// An open dialog outranks everything above: whatever the event, a
+	// session with a dialog up is awaiting, and the newest dialog is the one
+	// @claude_ask names.
+	s.ask = ""
+	if n := len(s.asks); n > 0 {
+		s.ask = s.asks[n-1]
+		s.state = sessionio.StateAwaiting
+	} else if s.state == sessionio.StateAwaiting {
+		s.state = s.idleState()
 	}
 	diff := func(name, was, now string) {
 		if was == now {
@@ -175,6 +225,38 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	diff(sessionio.OptionBackground, prev.bg, s.bg)
 	w.from, w.to = prev.state, s.state
 	return w
+}
+
+// place records which agent called a tool.
+func (s *stampState) place(toolID, agentID string) {
+	if s.owner == nil || len(s.owner) >= ownerCap {
+		s.owner = map[string]string{}
+	}
+	s.owner[toolID] = agentID
+}
+
+// mainEnded reports whether a dialog is over once the main thread's turn has
+// ended or a person has typed a prompt. The main thread's own dialogs are,
+// which is the safety net for a settled event that never came. A subagent's
+// are not: a background subagent goes on after the main turn, and its
+// permission prompt can open half a second before that turn ends. A dialog
+// no row placed could be either, and is kept while a subagent loop is active.
+func (s *stampState) mainEnded(toolID string) bool {
+	if who, placed := s.owner[toolID]; placed {
+		return who == ""
+	}
+	return len(s.active) == 0
+}
+
+// dropAsks removes the open dialogs gone reports, keeping the order.
+func (s *stampState) dropAsks(gone func(toolID string) bool) {
+	kept := s.asks[:0:0]
+	for _, id := range s.asks {
+		if !gone(id) {
+			kept = append(kept, id)
+		}
+	}
+	s.asks = kept
 }
 
 // idleState is the state once nothing waits on a person: still running while

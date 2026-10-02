@@ -242,6 +242,9 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 	// holding this turn's answer yet; bgSince is when the turn first came to
 	// rest with background work outstanding.
 	var doneSince, bgSince time.Time
+	// unknownSince is when the state first read awaiting over a pane no
+	// parser recognises, in this needs_input episode.
+	var unknownSince time.Time
 
 	for {
 		select {
@@ -271,7 +274,7 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 		switch state {
 		case sessionio.StateRunning:
 			sawRunning, asked = true, false
-			doneSince = time.Time{}
+			doneSince, unknownSince = time.Time{}, time.Time{}
 			s.Tasks.Update(t.ID, StatusRunning, nil)
 
 		case sessionio.StateAwaiting:
@@ -281,8 +284,23 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 				// Read the pane once per episode, not once per poll: a
 				// capture is a fork, and the question does not change while
 				// the dialog stands.
-				asked = true
 				q := s.readQuestion(t.OSUser, live.Name)
+				if q.Kind == KindUnknown {
+					// The state is stamped when Claude asks, and the dialog
+					// is drawn a moment after: read in between, the pane
+					// shows the spinner. Measured live on 2026-10-02
+					// (rv-r3reg-b): that read went out as needs_input with
+					// kind unknown and no options. So an unrecognised pane is
+					// read again on each poll, the task left as it was, and
+					// reported as unknown only once the start grace has run.
+					if unknownSince.IsZero() {
+						unknownSince = s.now()
+					}
+					if s.now().Sub(unknownSince) < s.startGrace() {
+						break
+					}
+				}
+				asked = true
 				s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
 			} else if v, _ := s.Tasks.Get(t.ID); v.Status == StatusRunning {
 				// Answered through POST /v1/tasks/{id}/answer, which put the
