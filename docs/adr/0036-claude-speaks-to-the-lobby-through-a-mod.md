@@ -14,6 +14,14 @@ drivers for dialogs.
 
 pi and codex sessions are unchanged. Mods exist only in Claude Code.
 
+```mermaid
+flowchart TD
+  tv["Text view"] <-->|"SSE + POST"| se["session-events"]
+  se <-->|"events + poll"| mod["mod in each Claude"]
+  mod ~~~ tmux["tmux options"]
+  se -->|"state"| tmux
+```
+
 ## What it replaces
 
 | Before | With the mod |
@@ -180,6 +188,16 @@ Every command is answered with an `ack` event.
   the pane parsers and key drivers for it. On a session with the mod it meets
   the mod's Allow / Deny or plan dialog, which is drawn as a question, and can
   answer it as one. Moving agent-api onto the mod is a separate change.
+
+## What the rollout showed (2026-10-02)
+
+- Running Claudes pick up a managed plugin when the managed settings change:
+  about 25 sessions said hello within a minute without a restart. The safe
+  restart was needed for 5.
+- A running Claude older than 2.1.287 also tries, fails, and records one
+  "hooks module did not load" notice in its conversation (seen from 2.1.282).
+  It has no mod afterwards, so it is restarted on the user's current CLI once
+  it is safe to.
 
 ## What the live test settled
 
