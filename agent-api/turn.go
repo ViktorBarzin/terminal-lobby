@@ -67,6 +67,9 @@ func (s *Server) runTurn(t *Task) {
 	if t.uncleared {
 		send = s.Sessions.PromptUncleared
 	}
+	// Taken before the paste, so every record this turn writes is stamped
+	// at or after it (the transcript and this clock are the same machine's).
+	t.sentAt = s.now()
 	// A dialog that took the input box's place at the Enter leaves the pane
 	// unable to say whether the message went (sessionio.ErrSubmitUnconfirmed).
 	// The transcript can, and the watcher below reads it: a turn that never
@@ -201,6 +204,14 @@ func (s *Server) awaitReady(t *Task, cancelled <-chan struct{}) (int, bool) {
 	switch {
 	case err == nil:
 		return len(lines), true
+	case errors.Is(err, errNoTranscript) && strings.TrimSpace(live.State) != "":
+		// A Claude has already run a turn here (something stamped its
+		// state), so there IS history; only the stamp saying where it is
+		// is missing. Measured live on 2026-10-02: the mod could not name
+		// the transcript during a conversation's first turn, and reading
+		// this as an empty history handed the second message the first
+		// one's answer. Unknown, not zero.
+		return unknownMark, true
 	case errors.Is(err, errNoTranscript):
 		// Nothing written yet, which for a conversation created a moment ago
 		// is the normal state. The whole file, when it appears, is this turn.
@@ -227,6 +238,10 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 
 	sawRunning := false
 	asked := false // the pane has been read for this needs_input episode
+	// doneSince is when the state last turned "done" without the transcript
+	// holding this turn's answer yet; bgSince is when the turn first came to
+	// rest with background work outstanding.
+	var doneSince, bgSince time.Time
 
 	for {
 		select {
@@ -252,10 +267,12 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 		switch strings.TrimSpace(live.State) {
 		case sessionio.StateRunning:
 			sawRunning, asked = true, false
+			doneSince = time.Time{}
 			s.Tasks.Update(t.ID, StatusRunning, nil)
 
 		case sessionio.StateAwaiting:
 			sawRunning = true
+			doneSince = time.Time{}
 			if !asked {
 				// Read the pane once per episode, not once per poll: a
 				// capture is a fork, and the question does not change while
@@ -281,16 +298,70 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			// The race this whole function exists for. "done" before the hook
 			// has stamped this turn is the PREVIOUS turn's state, so it is
 			// only believed once the turn has visibly started — or once the
-			// transcript proves it did.
-			if sawRunning || s.transcriptGrew(t, live.Name, mark) {
-				s.finish(t, live.Name, mark)
+			// transcript proves it did. And started is not finished: the
+			// answer is read from this turn's own records, and only once one
+			// has been written after the last thing said to Claude.
+			lines, readErr := s.Sessions.TranscriptLines(t.OSUser, live.Name)
+			if readErr == nil && mark != unknownMark && mark > len(lines) {
+				// The transcript shrank, which means it was rotated or
+				// replaced under us. Anything read now belongs to a
+				// different conversation.
+				s.fail(t, "the transcript for %s was replaced while the turn ran; "+
+					"the answer cannot be attributed to this message", t.ConversationID)
 				return
 			}
-			if s.now().After(graceEnd) {
-				s.fail(t, "the message was sent to %s but no turn started within %s "+
-					"(is a Claude running in that session?)", t.ConversationID, s.startGrace())
+			var turn [][]byte
+			if readErr == nil {
+				turn = turnLines(lines, mark, t.sentAt)
+			}
+			answer, settled := turnAnswer(turn)
+			started := sawRunning ||
+				(readErr == nil && mark != unknownMark && len(lines) > mark) ||
+				(mark == unknownMark && answer != "")
+			if !started {
+				if s.now().After(graceEnd) {
+					s.fail(t, "the message was sent to %s but no turn started within %s "+
+						"(is a Claude running in that session?)", t.ConversationID, s.startGrace())
+					return
+				}
+				break
+			}
+			if !settled {
+				// The state can say done a moment before the answer's line
+				// is on disk, and a turn can end without one (an abort). A
+				// grace tells the two apart.
+				if doneSince.IsZero() {
+					doneSince = s.now()
+				}
+				if s.now().Sub(doneSince) > s.startGrace() {
+					if readErr != nil {
+						s.fail(t, "the turn in %s finished but its transcript could not be read: %v",
+							t.ConversationID, readErr)
+					} else {
+						s.fail(t, "the turn in %s finished without an assistant message", t.ConversationID)
+					}
+					return
+				}
+				break
+			}
+			// Background work this turn started re-enters the session when it
+			// ends (a <task-notification> starts a new turn), and that turn
+			// carries the real answer. Measured live on 2026-10-02: settling
+			// here handed a Caller "I'm waiting for the background command"
+			// as the result.
+			if bg := backgroundOutstanding(turn); len(bg) > 0 {
+				if bgSince.IsZero() {
+					bgSince = s.now()
+				}
+				if s.now().Sub(bgSince) < s.backgroundHold() {
+					s.Tasks.Update(t.ID, StatusRunning, nil)
+					break
+				}
+				s.settle(t, answer, true)
 				return
 			}
+			s.settle(t, answer, false)
+			return
 
 		default:
 			// Unstamped. sessionio is firm that this is not "finished" — it
@@ -312,47 +383,12 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 	}
 }
 
-// transcriptGrew reports whether anything has been written since mark.
-//
-// An unknown mark answers no. This is the guard against believing a "done"
-// left over from the previous turn, and a count compared against a number we
-// never had would defeat it.
-func (s *Server) transcriptGrew(t *Task, session string, mark int) bool {
-	if mark == unknownMark {
-		return false
-	}
-	lines, err := s.Sessions.TranscriptLines(t.OSUser, session)
-	return err == nil && len(lines) > mark
-}
-
-// finish reads this turn's answer out of the transcript.
-func (s *Server) finish(t *Task, session string, mark int) {
-	lines, err := s.Sessions.TranscriptLines(t.OSUser, session)
-	if err != nil {
-		s.fail(t, "the turn in %s finished but its transcript could not be read: %v",
-			t.ConversationID, err)
-		return
-	}
-	from := mark
-	switch {
-	case mark == unknownMark:
-		// The history was unreadable when the turn started, so the whole file
-		// is all there is to go on. The last assistant message in it is still
-		// this turn's answer, because this turn is the one that just ended.
-		from = 0
-	case mark > len(lines):
-		// The transcript shrank, which means it was rotated or replaced under
-		// us. Anything read now belongs to a different conversation.
-		s.fail(t, "the transcript for %s was replaced while the turn ran; "+
-			"the answer cannot be attributed to this message", t.ConversationID)
-		return
-	}
-	result := lastAssistantText(lines[from:])
-	if result == "" {
-		s.fail(t, "the turn in %s finished without an assistant message", t.ConversationID)
-		return
-	}
-	s.Tasks.Update(t.ID, StatusDone, func(tk *Task) { tk.Result = result })
+// settle records this turn's answer.
+func (s *Server) settle(t *Task, answer string, background bool) {
+	s.Tasks.Update(t.ID, StatusDone, func(tk *Task) {
+		tk.Result = answer
+		tk.BackgroundRunning = background
+	})
 }
 
 // paneTail is the last of a pane's visible text, trimmed of the blank lines a

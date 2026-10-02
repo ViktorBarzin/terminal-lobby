@@ -53,6 +53,12 @@ const (
 	// the ceiling that stops one wedged conversation leaking a goroutine and
 	// a task for the life of the process.
 	defaultTurnTimeout = 6 * time.Hour
+	// defaultBackgroundHold is how long a turn that came to rest with
+	// background work outstanding is kept running, waiting for the turn that
+	// work's completion starts. A background command can be a server that
+	// never ends, so the hold is bounded; past it the task settles with what
+	// the turn said and background_running set.
+	defaultBackgroundHold = 30 * time.Minute
 )
 
 // Server is the whole service.
@@ -77,6 +83,8 @@ type Server struct {
 	StartGrace   time.Duration
 	ReadyTimeout time.Duration
 	TurnTimeout  time.Duration
+	// BackgroundHold overrides defaultBackgroundHold.
+	BackgroundHold time.Duration
 	// WaitUnit is how long one second of a caller's ?wait= lasts. A second in
 	// production; a test shrinks it so a wait that cannot finish still ends
 	// in milliseconds.
@@ -139,6 +147,13 @@ func (s *Server) waitUnit() time.Duration {
 		return s.WaitUnit
 	}
 	return time.Second
+}
+
+func (s *Server) backgroundHold() time.Duration {
+	if s.BackgroundHold > 0 {
+		return s.BackgroundHold
+	}
+	return defaultBackgroundHold
 }
 
 func (s *Server) turnTimeout() time.Duration {

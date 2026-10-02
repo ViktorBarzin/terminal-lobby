@@ -108,7 +108,14 @@ type Task struct {
 	Options    []TaskOption
 	AnswerWith []string
 	Result     string
-	Error      string
+	// BackgroundRunning is set on done when the turn settled with background
+	// work it started still running, after the hold (turn.go).
+	BackgroundRunning bool
+	Error             string
+
+	// sentAt is when the message was pasted. A transcript record older than
+	// it cannot be this turn's answer. Set by runTurn, read by the watcher.
+	sentAt time.Time
 
 	Created time.Time
 	Updated time.Time
@@ -148,6 +155,10 @@ type TaskView struct {
 	AnswerWith []string `json:"answer_with,omitempty"`
 	// Result is set on done only: the agent's final message.
 	Result string `json:"result,omitempty"`
+	// BackgroundRunning is set on done only, when the turn settled while
+	// background work it started was still running: the conversation may
+	// speak again when that work ends.
+	BackgroundRunning bool `json:"background_running,omitempty"`
 	// Error is set on failed only.
 	Error string `json:"error,omitempty"`
 	// DetailURL is the full turn, tool calls included. Set on every status
@@ -253,6 +264,7 @@ func (t *Task) view() TaskView {
 		v.AnswerWith = append([]string(nil), t.AnswerWith...)
 	case StatusDone:
 		v.Result = t.Result
+		v.BackgroundRunning = t.BackgroundRunning
 	case StatusFailed:
 		v.Error = t.Error
 	}
