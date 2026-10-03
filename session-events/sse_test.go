@@ -532,3 +532,27 @@ func TestSSELegacyOpenAnnouncesNoEpoch(t *testing.T) {
 		t.Fatalf("a legacy client was sent an epoch frame:\n%s", rec.Body.String())
 	}
 }
+
+// Viktor's iPhone reaches the lobby through Cloudflare when it is off the home
+// network, and that was when the Text view stayed blank most often
+// (2026-10-03): Traefik handed each stream 26-48 KB that never drew. A proxy
+// may buffer a response it means to recompress, and nginx-style proxies buffer
+// any proxied response, so a stream says it must reach the reader as written.
+func TestSSETellsProxiesNotToHoldTheStream(t *testing.T) {
+	for _, enc := range []string{"", "gzip, deflate, br"} {
+		src := &fakeSource{live: make(chan sessionio.Event)}
+		close(src.live)
+		r := httptest.NewRequest("GET", "/events/demo", nil)
+		if enc != "" {
+			r.Header.Set("Accept-Encoding", enc)
+		}
+		w := httptest.NewRecorder()
+		writeSSE(w, r, src, nil, time.Hour)
+		if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") || !strings.Contains(cc, "no-transform") {
+			t.Errorf("Accept-Encoding %q: Cache-Control = %q, want no-cache and no-transform", enc, cc)
+		}
+		if b := w.Header().Get("X-Accel-Buffering"); b != "no" {
+			t.Errorf("Accept-Encoding %q: X-Accel-Buffering = %q, want no", enc, b)
+		}
+	}
+}

@@ -290,7 +290,13 @@ func openSSE(w http.ResponseWriter, r *http.Request) (*sseSink, bool) {
 		return nil, false
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	// no-transform: a proxy that recompresses a response buffers it to do so,
+	// and Cloudflare sits between the lobby and any device off the home
+	// network. X-Accel-Buffering: nginx-style proxies buffer every proxied
+	// response unless told not to. Either one holds a stream's frames back
+	// until a buffer fills, which a small stream may never do (2026-10-03).
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Connection", "keep-alive")
 
 	sink := &sseSink{w: w, fl: fl}
