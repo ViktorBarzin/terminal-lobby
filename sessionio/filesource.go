@@ -29,8 +29,11 @@ const maxTranscriptLine = 8 << 20
 // directly rather than normalizing and un-normalizing.
 type FileSource struct {
 	session string
-	path    string
-	poll    time.Duration
+	// path is read through Path: a mod source learns it after it is built
+	// (SetPath), while requests are reading it.
+	pathMu sync.Mutex
+	path   string
+	poll   time.Duration
 
 	mu      sync.Mutex
 	seq     int64
@@ -109,7 +112,20 @@ func NewAgentFileSource(session, path string, poll time.Duration, r Reader) *Fil
 // Path is the transcript this source is tailing. Callers cache sources by tmux
 // session NAME, which outlives the Claude session that claimed it, so this is
 // how they tell a cached source apart from a stale one.
-func (f *FileSource) Path() string { return f.path }
+func (f *FileSource) Path() string {
+	f.pathMu.Lock()
+	defer f.pathMu.Unlock()
+	return f.path
+}
+
+// SetPath gives a mod source the transcript Claude is writing, which the mod
+// can name only once the first row has created the file: its first hello comes
+// before that. Pictures and full results are read back from it.
+func (f *FileSource) SetPath(p string) {
+	f.pathMu.Lock()
+	defer f.pathMu.Unlock()
+	f.path = p
+}
 
 // Append assigns the next global ID, records the event, and fans out to live
 // subscribers. Slow subscribers are dropped (they resync via Replay on reconnect).
@@ -405,7 +421,7 @@ func (f *FileSource) WorthWatching() bool {
 // TailOnce consumes whatever the transcript has gained since the last read.
 // Run calls it on a ticker; tests call it directly.
 func (f *FileSource) TailOnce() {
-	lines, next, err := f.reader.ReadFrom(f.path, f.offset)
+	lines, next, err := f.reader.ReadFrom(f.Path(), f.offset)
 	if err != nil {
 		return // transcript may not exist yet; try again next tick
 	}
@@ -435,10 +451,11 @@ func (f *FileSource) FullResult(toolID string) (string, json.RawMessage, error) 
 	if s, ok := f.modFullResult(toolID); ok {
 		return s, nil, nil
 	}
-	if f.mod != nil && f.path == "" {
+	path := f.Path()
+	if f.mod != nil && path == "" {
 		return "", nil, errNoResult
 	}
-	return f.reader.FullResult(f.path, toolID)
+	return f.reader.FullResult(path, toolID)
 }
 
 // ImageBlock reads one picture back off disk, through the source's reader: a
@@ -447,7 +464,7 @@ func (f *FileSource) FullResult(toolID string) (string, json.RawMessage, error) 
 // immutable cache header is what keeps a picture from being read twice by the
 // same device.
 func (f *FileSource) ImageBlock(addr ImageAddr) (ImageData, error) {
-	return f.reader.ImageBlock(f.path, addr)
+	return f.reader.ImageBlock(f.Path(), addr)
 }
 
 // ResultAgent names the subagent whose own transcript holds toolID's result,

@@ -172,23 +172,21 @@ func (rg *registry) sweepEvery(ctx context.Context, every time.Duration) {
 // startMod builds the source a mod feeds and the session's agent watch, under
 // a context of their own so this one session can be stopped without taking
 // down the rest of the process. transcript is where Claude is writing, which
-// the agent watch lists beside and pictures are read back from; "" when the
-// mod could not find it, which leaves both without a directory to read.
+// the agent watch lists beside and pictures are read back from; "" until the
+// mod can name it, which a later hello does (see modHub.hello).
 func (rg *registry) startMod(session, transcript string, reader sessionio.Reader, agents sessionio.AgentReader) *liveSource {
 	ctx, stop := context.WithCancel(rg.ctx)
 	done := make(chan struct{})
-	var aw *agentWatch
+	dir := ""
 	if transcript != "" {
-		aw = newAgentWatch(sessionio.SessionDir(transcript), agents)
-		aw.every = rg.agentEvery
-		go func() {
-			defer close(done)
-			aw.run(ctx)
-		}()
-	} else {
-		aw = newAgentWatch("", agents)
-		close(done)
+		dir = sessionio.SessionDir(transcript)
 	}
+	aw := newAgentWatch(dir, agents)
+	aw.every = rg.agentEvery
+	go func() {
+		defer close(done)
+		aw.run(ctx)
+	}()
 	fs := sessionio.NewModSource(session, transcript, reader)
 	return &liveSource{fs: fs, agents: aw, drills: newDrills(), ctx: ctx, stop: stop, done: done}
 }
