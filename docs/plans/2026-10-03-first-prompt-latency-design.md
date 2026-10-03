@@ -100,8 +100,8 @@ appears. The name and attributes are the ones the journey telemetry design
 (the prompt's length), plus `tl.hidden`. That design emits from the browser; the
 first-prompt arm emits from session-events instead, because after a create the
 browser usually has no Text view open to see the row. Each part is measured on
-one clock, and the only time left out is the request's own trip to the server,
-a few milliseconds.
+one clock. What it leaves out is the request's one-way trip to the server: a
+few milliseconds on the house network, half a round trip on a phone's link.
 
 ## Verification
 
@@ -161,6 +161,26 @@ have shipped the browser-only changes first and measured; the other measured
 that only the claim reaches the phone targets. The ADR is
 `docs/adr/0038-a-new-sessions-slot-is-claimed-at-send.md`.
 
+## Phase 2 result
+
+Deployed in 0.99.0 at 17:46 and checked through the deployed SPA, on desktop and
+on the shared Android emulator behind a shaped link (+150ms each way, 1 Mbit/s).
+
+| create | claim | prompt accepted, browser | terminal WebSocket open | `prompt.landed` Accepted / Shown |
+|---|---|---|---|---|
+| desktop | 89ms after Send, answered at 232ms | 577ms | 154ms | 552 / 803ms |
+| phone, slow link, terminal code not cached | 606ms after the tap | 1,534ms | 4,474ms | 655 / 899ms |
+| phone, slow link, cached | 523ms after the tap | 1,828ms | 1,970ms | 980 / 1,648ms |
+
+In all three the claim at Send won the rename, 343ms to 1.7s before the browser's
+attach, and the attach found the session already there. The phone's session
+was 47x18 with no `window-size` pin. On the first phone create the terminal did
+not open its WebSocket until 4.5s after the tap; before this change the prompt
+could not land until after that. The 520-600ms between the synthetic tap and the
+first request comes before the composer's Send handler runs: the Send-to-request
+time it reported was about 13ms. It is likely the emulator turning a touch into
+a click, and it falls outside `prompt.landed`.
+
 ## Open questions
 
 - The 0.6 to 1.2s for Claude's own record is from a measurement on 2026-08-18.
@@ -171,4 +191,6 @@ that only the claim reaches the phone targets. The ADR is
   never shown a terminal sends none, and its first reply wraps at 80 columns
   until the attach.
 - The iPhone could not be checked on 2026-10-03: the rig's Mac did not answer
-  ssh. Phone checks ran on the shared Android emulator with a shaped link.
+  ssh. Phone checks ran on the shared Android emulator with a shaped link, so
+  real Safari on a real mobile network is still unmeasured; `prompt.landed`
+  will show it from the next creates on Viktor's phone.
