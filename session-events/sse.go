@@ -463,7 +463,12 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 				sink.flush()
 			}
 		case <-ticker.C:
-			sink.print(": hb\n\n")
+			// The heartbeat names the newest event held, so the client can
+			// tell a quiet session from a stream that stopped delivering
+			// (frontend-v2 telemetry/stale.ts). A named frame rather than
+			// the ": hb" comment, which EventSource never surfaces.
+			head, _ := src.Head()
+			sinkFrame(sink, "head", map[string]int64{"head": head})
 			sink.flush()
 		}
 	}

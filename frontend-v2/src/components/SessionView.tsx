@@ -75,7 +75,9 @@ import { panelLayout } from "./browser.logic";
 import type { BrowserCardHost } from "./BrowserCard";
 import type { BrowserState } from "../lib/browser-stream";
 import { track } from "../telemetry/track";
-import { watchBlank } from "../telemetry/blank";
+import { blankCause, watchBlank } from "../telemetry/blank";
+import { watchStale } from "../telemetry/stale";
+import { effectiveTier } from "../diagnostics/connection";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -943,17 +945,36 @@ export const SessionView: Component<{
   // that exist and never reach the screen are one of the things this exists
   // to tell apart.
   let textSection: HTMLElement | undefined;
+  const textWatched = () => onScreen() && mode() === "text" && !preloading() && !windowAway();
+  /** Facts both watches report: the link tier and whether this is the home-screen app. */
+  const pageAttrs = () => {
+    const nav = typeof navigator !== "undefined" ? navigator : undefined;
+    return {
+      "tl.tier": effectiveTier(),
+      "tl.standalone":
+        (nav as { standalone?: boolean } | undefined)?.standalone === true ||
+        (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches),
+    };
+  };
   watchBlank({
     get session() {
       return session();
     },
-    watching: () => onScreen() && mode() === "text" && !preloading() && !windowAway(),
+    watching: textWatched,
     drawn: () => textSection?.querySelectorAll("[data-eid], [data-eids]").length ?? 0,
     closed: () => store.status() === "closed",
     attrs: () => {
       const f = store.frames();
-      const nav = typeof navigator !== "undefined" ? navigator : undefined;
       return {
+        "tl.cause": blankCause({
+          tool: props.tool?.() ?? "",
+          sse: store.status(),
+          starting: store.starting(),
+          noMod: store.noMod(),
+          exited: store.claudeExited(),
+          ready: f.ready,
+          events: store.events.length,
+        }),
         "tl.sse": store.status(),
         "tl.started": store.started(),
         "tl.parked": store.parked(),
@@ -972,11 +993,32 @@ export const SessionView: Component<{
         "tl.rows": rows().length,
         "tl.claude": props.claudeState?.() ?? "",
         "tl.tool": props.tool?.() ?? "",
-        "tl.standalone":
-          (nav as { standalone?: boolean } | undefined)?.standalone === true ||
-          (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches),
+        ...pageAttrs(),
       };
     },
+    track,
+  });
+
+  // A Text view that shows rows but has stopped receiving them
+  // (telemetry/stale.ts): behind the server's head, or hearing no heartbeat.
+  watchStale({
+    get session() {
+      return session();
+    },
+    watching: textWatched,
+    head: store.head,
+    cursor: store.cursor,
+    open: () => store.status() === "open",
+    attrs: () => ({
+      "tl.sse": store.status(),
+      "tl.cursor": store.cursor(),
+      "tl.head": store.head()?.head ?? 0,
+      "tl.events": store.events.length,
+      "tl.claude": props.claudeState?.() ?? "",
+      "tl.f_live": store.frames().live,
+      "tl.f_err": store.frames().errors,
+      ...pageAttrs(),
+    }),
     track,
   });
   const pending = createMemo(() => pendingPermissions(store.events));

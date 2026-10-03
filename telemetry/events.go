@@ -91,7 +91,8 @@ var knownEvents = map[string]bool{
 	// The auto-title rule (tmux-api/autotitle.go) taking Claude Code's own
 	// conversation summary as the session's title, or running out of window
 	// without one. tl.session, tl.delay_ms since creation, tl.outcome =
-	// titled|gave_up.
+	// titled|gave_up|titled_late. titled_late is a summary adopted after the
+	// window, which can follow a gave_up for the same session.
 	"session.autonamed": true,
 	"session.moved":     true, // between projects / reordered (tl.from, tl.to)
 	"session.killed":    true,
@@ -297,6 +298,11 @@ var knownEvents = map[string]bool{
 	// own cause. blank_ended says how long it lasted and why it ended.
 	"text.blank":       true,
 	"text.blank_ended": true,
+	// A Text view with rows that stopped receiving them: behind the server's
+	// heartbeat head (tl.why=behind, tl.gap) or hearing no heartbeat
+	// (tl.why=silent). stale_ended: caught-up | left, with tl.ms.
+	"text.stale":       true,
+	"text.stale_ended": true,
 
 	// -- server-side health -------------------------------------------------
 	"api.error":    true, // an unexpected server failure (tl.kind)

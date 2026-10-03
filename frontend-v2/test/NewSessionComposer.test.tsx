@@ -362,6 +362,26 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     m.store.dispose();
   });
 
+  // The project list is empty until the first layout fetch lands, so a prompt
+  // sent in that gap resolved to Ungrouped and then wrote Ungrouped back as
+  // the remembered project.
+  it("waits for the layout when Enter beats it, and creates into the remembered project", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "beta" } }));
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(api.puts.length).toBe(1));
+    const put = api.puts[0]!;
+    expect(put.projects.map((p) => p.name)).toEqual(["alpha", "beta"]);
+    expect(put.projects.find((p) => p.name === "beta")!.sessions).toHaveLength(1);
+    expect(put.ungrouped).toEqual([]);
+    expect(m.prefs.prefs().session.newProject).toBe("beta");
+    m.store.dispose();
+  });
+
   it("falls back to Ungrouped when the remembered project is gone", async () => {
     // Deleting a project must not send the next create into a group that no
     // longer exists; the PREF is left alone, so recreating it brings it back.

@@ -1143,6 +1143,7 @@ src/
     healer.ts            Its controller: poll own served bytes, TOP-owned reload
   telemetry/track.ts     Batched usage events → tmux-api /telemetry (ADR-0006)
   telemetry/blank.ts     Reports a Text view left on screen with no rows (text.blank)
+  telemetry/stale.ts     Reports a Text view whose stream stopped delivering (text.stale)
   telemetry/device.ts    Per-installation id stamped on every event, mirrored to IndexedDB for sw.js
   telemetry/diag.ts      Typed seam onto the shared frontend/diag.js core (ADR-0008)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)

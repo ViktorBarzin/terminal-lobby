@@ -138,6 +138,13 @@ export interface LobbyStore {
    * the first prompt, upload attachments into its bucket, or link to it.
    */
   create(text: string, group: string, kind?: CreateKind): Promise<string>;
+  /**
+   * Resolve once `layout` holds the server's document rather than the empty
+   * placeholder it starts as, fetching it if no poll has yet. false = it could
+   * not be loaded. A caller that reads `layout()` to decide something, like
+   * which project a create lands in, waits on this first.
+   */
+  ensureLayout(): Promise<boolean>;
   /** write or clear layout.dock (the Ctrl+J scratch shell); undefined un-docks. */
   setDock(next: DockState | undefined): Promise<boolean>;
   /** Retitle a session. The tmux name is derived from the title again
@@ -366,6 +373,17 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   // a fresh object every 5s, and a bare signal would call that a change and
   // rebuild the whole sidebar under the user.
   const [layout, setLayout] = createSignal<Layout>(emptyLayout(), { equals: sameLayout });
+  /**
+   * Whether `layout` holds the server's document yet, rather than the empty
+   * placeholder it starts as.
+   *
+   * PUT /layout replaces the whole document, so a write built on the
+   * placeholder erases every project the user has. Measured 2026-10-03: a
+   * prompt sent from the composer before the first fetch landed did exactly
+   * that, and filed the session in Ungrouped.
+   */
+  let layoutKnown = false;
+  let layoutFetch: Promise<boolean> | null = null;
   const [sessions, setSessions] = createStore<Session[]>([]);
   const [pending, setPending] = createSignal<Session[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -833,6 +851,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       lastWritten = null;
       setLayout(lRes.value);
     }
+    if (lRes.status === "fulfilled") layoutKnown = true;
     setLoading(false);
     return outcome;
   }
@@ -934,8 +953,40 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     lastWritten = null;
   }
 
+  /**
+   * Make sure `layout` is the server's document before anything builds a write
+   * on it, fetching it now if no poll has landed one yet. false = it could not
+   * be loaded, and nothing may be written.
+   *
+   * Concurrent callers share one fetch. A poll landing the same document in
+   * the meantime is harmless: both set the same value.
+   */
+  function ensureLayout(): Promise<boolean> {
+    if (layoutKnown) return Promise.resolve(true);
+    layoutFetch ??= api
+      .getLayout()
+      .then((l) => {
+        if (!layoutKnown) {
+          setLayout(l);
+          layoutKnown = true;
+        }
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        layoutFetch = null;
+      });
+    return layoutFetch;
+  }
+
   /** PUT the layout; false when the write did not land (local state rolled back). */
   async function saveLayout(next: Layout): Promise<boolean> {
+    // The backstop for every write path: a document derived from the
+    // placeholder would replace the user's real one wholesale.
+    if (!layoutKnown) {
+      showToast("Couldn't save layout");
+      return false;
+    }
     const prev = layout();
     applyLocalLayout(next);
     try {
@@ -1160,6 +1211,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * but the session itself is still started by the attach.
    */
   async function create(text: string, group: string, kind: CreateKind = "prompt"): Promise<string> {
+    // The layout write below builds on `layout()`, so it has to be the
+    // server's document. A failed load falls through to saveLayout's refusal.
+    await ensureLayout();
     const t = kind === "name" ? cleanTitle(text) : firstPromptLine(text);
     const n = freshSessionName();
     // Creation is a lobby-only act: tmux-api never sees it, so this is the only
@@ -2057,6 +2111,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     select,
     deselect,
     create,
+    ensureLayout,
     setDock,
     rename,
     kill,

@@ -225,7 +225,7 @@ wherever it is present, with `session_created` the fallback for every
 session that predates it. It is what the sidebar's Created ordering sorts
 on, and so the answer to "which of these did I just make"; it also seeds
 **Last driven** until a first driver is seen, and dates the window the
-auto-title rule watches in.
+auto-title rule reports against.
 _Avoid_: session start, birth time, and anything that suggests it is tmux's
 `session_created`
 

@@ -110,9 +110,9 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	// A session is created with an opaque id for a name, and nobody types a
 	// title any more. Claude Code's own conversation summary arrives in the pane
 	// title a few seconds after the first prompt, and this is where it becomes
-	// the session's title (autotitle.go). Runs AFTER clearDeadStates, so a
-	// claude that died at launch leaves its session untitled rather than taking
-	// whatever the dead pane last wrote.
+	// the session's title (autotitle.go). Runs AFTER clearDeadStates and
+	// annotateTools, so a claude that died at launch leaves its session
+	// untitled rather than taking whatever the dead pane last wrote.
 	autoTitleSessions(osUser, sessions, time.Now())
 	// …and the title carries the tmux NAME with it (ADR-0022), so `tmux ls` and
 	// the status bar read as words. autoTitleSessions renames what it titles;

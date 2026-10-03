@@ -374,6 +374,15 @@ export const NewSessionComposer: Component<{
    * the toaster rather than back into a field that is no longer on screen.
    */
   const submit = async (text: string, attached: readonly DraftAttachment[]): Promise<boolean> => {
+    // The project list is empty until the first layout fetch lands, so a
+    // prompt sent in that gap would resolve to Ungrouped and then write
+    // Ungrouped back as the remembered project. Waited on before anything
+    // below hands the warm slot or the held files over, so a refusal here
+    // leaves the composer exactly as it was.
+    if (!(await props.store.ensureLayout())) {
+      showToast("The lobby is still loading. Try again in a moment.", "warning");
+      return false;
+    }
     handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
