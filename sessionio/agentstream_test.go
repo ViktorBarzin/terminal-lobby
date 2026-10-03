@@ -79,32 +79,37 @@ func TestNormalizeSettlesATurnOnAToolResultThatEndsIt(t *testing.T) {
 		`{"type":"user","isSidechain":true,"agentId":"m1","timestamp":"2026-09-24T06:00:05Z","toolEndsTurn":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_so","content":"Structured output provided successfully"}]}}`,
 		`{"type":"attachment","isSidechain":true,"agentId":"m1","timestamp":"2026-09-24T06:00:06Z","attachment":{"type":"hook_success","hookName":"SubagentStop"}}`,
 	}
-	for _, c := range []struct {
-		name string
-		n    *Normalizer
-	}{
-		{"read as the agent's own transcript", NewAgentNormalizer("demo")},
-		{"read by the session's normalizer", NewNormalizer("demo")},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			var out []Event
-			for _, ln := range member {
-				out = append(out, c.n.Line([]byte(ln))...)
-			}
-			ends := 0
-			for i, e := range out {
-				if e.Kind != KindTurnEnd {
-					continue
-				}
-				ends++
-				if i == 0 || out[i-1].Kind != KindToolResult {
-					t.Fatalf("the turn ended somewhere other than on the result: %v", kinds(out))
-				}
-			}
-			if ends != 1 {
-				t.Fatalf("want exactly one turn_end, got %d: %v", ends, kinds(out))
-			}
-		})
+	var out []Event
+	n := NewAgentNormalizer("demo")
+	for _, ln := range member {
+		out = append(out, n.Line([]byte(ln))...)
+	}
+	ends := 0
+	for i, e := range out {
+		if e.Kind != KindTurnEnd {
+			continue
+		}
+		ends++
+		if i == 0 || out[i-1].Kind != KindToolResult {
+			t.Fatalf("the turn ended somewhere other than on the result: %v", kinds(out))
+		}
+	}
+	if ends != 1 {
+		t.Fatalf("want exactly one turn_end, got %d: %v", ends, kinds(out))
+	}
+
+	// The same records in the session's own stream are a member finishing,
+	// not the main thread: ending the main turn there took the working row
+	// away while the main thread was still busy (2026-10-03).
+	out = nil
+	n = NewNormalizer("demo")
+	for _, ln := range member {
+		out = append(out, n.Line([]byte(ln))...)
+	}
+	for _, e := range out {
+		if e.Kind == KindTurnEnd {
+			t.Fatalf("a member's result ended the session's turn: %v", kinds(out))
+		}
 	}
 }
 

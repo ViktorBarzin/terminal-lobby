@@ -269,3 +269,71 @@ func TestModFeedEpochIsTheSourcesOwn(t *testing.T) {
 		t.Fatal("two mod sources for one transcript share an epoch; a client would resume across them")
 	}
 }
+
+// A background subagent's records arrive in the main thread's stream: its
+// prompt while the main turn is still open, and its tool calls after the main
+// reply has ended the turn. Measured on a live session, 2026-10-03: the prompt
+// opened t2 and the first tool call after the reply opened t3, so the Text view
+// drew a live "Working…" turn holding the subagent's commands and the picture it
+// read, none of it under the Agent call that spawned it. A subagent's work never
+// opens or closes a turn of the main thread.
+func TestModFeedSubagentNeverMovesTheMainTurn(t *testing.T) {
+	sub := func(ev ModEvent) ModEvent { ev.AgentID = "a596"; return ev }
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "launch it"}}))
+	fs.Feed(modRow(t, "assistant", "assistant", "response", []map[string]any{
+		{"type": "tool_use", "id": "toolu_agent", "name": "Agent", "input": map[string]any{"prompt": "run ls", "run_in_background": true}},
+	}))
+	fs.Feed(sub(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "run ls"}})))
+	fs.Feed(modRow(t, "user", "user", "tool-result", []map[string]any{
+		{"type": "tool_result", "tool_use_id": "toolu_agent", "content": "Async agent launched successfully."},
+	}))
+	fs.Feed(sub(modRow(t, "assistant", "assistant", "response", []map[string]any{
+		{"type": "tool_use", "id": "toolu_ls", "name": "Bash", "input": map[string]any{"command": "ls"}},
+	})))
+	fs.Feed(modRow(t, "assistant", "assistant", "response", []map[string]any{{"type": "text", "text": "LAUNCHED"}}))
+	fs.Feed(ModEvent{Type: ModTurnEndEvent, TurnID: "c1"})
+	// Everything below is the subagent working after the main turn ended.
+	fs.Feed(sub(modRow(t, "user", "user", "tool-result", []map[string]any{
+		{"type": "tool_result", "tool_use_id": "toolu_ls", "content": "red.png"},
+	})))
+	fs.Feed(sub(modRow(t, "assistant", "assistant", "response", []map[string]any{
+		{"type": "tool_use", "id": "toolu_read", "name": "Read", "input": map[string]any{"file_path": "red.png"}},
+	})))
+	fs.Feed(sub(modRow(t, "user", "user", "tool-result", []map[string]any{
+		{"type": "tool_result", "tool_use_id": "toolu_read", "content": []map[string]any{{"type": "text", "text": "image"}}},
+	})))
+	fs.Feed(sub(modRow(t, "assistant", "assistant", "response", []map[string]any{{"type": "text", "text": "DONE"}})))
+	fs.Feed(sub(ModEvent{Type: ModTurnEndEvent, TurnID: "c2"}))
+
+	if fs.TurnOpen() {
+		t.Error("the subagent's work reopened the main turn")
+	}
+	ends := 0
+	for _, e := range fs.Replay(0) {
+		if e.TurnID != "t1" {
+			t.Errorf("%s (sidechain=%v %q) in turn %q, want t1", e.Kind, e.Sidechain, e.Body, e.TurnID)
+		}
+		if e.Kind == KindTurnEnd {
+			ends++
+		}
+		if e.Sidechain && e.Kind == KindTurnEnd {
+			t.Errorf("a subagent's record ended the main turn")
+		}
+	}
+	if ends != 1 {
+		t.Errorf("turn_end count = %d, want 1", ends)
+	}
+	// The subagent's prompt still travels, marked as its own: the renderer
+	// pairs it with the call that spawned the agent.
+	var prompt *Event
+	for _, e := range fs.Replay(0) {
+		if e.Kind == KindUser && e.Sidechain {
+			e := e
+			prompt = &e
+		}
+	}
+	if prompt == nil || prompt.Body != "run ls" || prompt.AgentID != "a596" {
+		t.Errorf("subagent prompt = %+v, want a sidechain user event naming a596", prompt)
+	}
+}

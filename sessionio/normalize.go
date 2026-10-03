@@ -28,6 +28,8 @@ import (
 //   - work that appears after a turn closed without a new prompt (a Stop hook
 //     continuing the agent) opens a fresh turn, so it is never filed under a
 //     turn the renderer has already settled.
+//   - a subagent's records (isSidechain) do none of the above: they are filed
+//     under whatever turn the main thread is on and never open or close one.
 type Normalizer struct {
 	session     string
 	seq         int64
@@ -265,6 +267,13 @@ func (n *Normalizer) conversation(rec Record) []Event {
 
 // said is conversation past the prompt a Stop took back.
 func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []Event {
+	// A subagent's records reach the main thread's stream, and none of them is
+	// the main thread starting or finishing anything: its prompt arrives while
+	// the main turn is open and its work carries on after the main reply has
+	// ended the turn. Let them move the turn and the Text view drew a live turn
+	// of the subagent's work, outside the call that spawned it (2026-10-03).
+	// In an agent's own file the flag only says whose file it is.
+	sub := rec.IsSidechain && !n.agent
 
 	// An interrupt is the transcript reporting a key press, not a prompt: it
 	// settles the turn it landed in instead of opening one.
@@ -272,7 +281,7 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 		e := n.emit(KindState, at)
 		e.Body = notice
 		out := []Event{e}
-		if !n.turnDone {
+		if !n.turnDone && !sub {
 			n.turnDone, n.doneMsg = true, ""
 			out = append(out, n.emit(KindTurnEnd, at))
 		}
@@ -318,7 +327,7 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 			// called (see harnessRow). For /compact the receipt arrives 2.5
 			// minutes later, so the turn stays open for as long as the
 			// compaction actually runs, which is honest.
-			if settles && !n.turnDone {
+			if settles && !n.turnDone && !sub {
 				n.turnDone, n.doneMsg = true, ""
 				out = append(out, n.emit(KindTurnEnd, at))
 			}
@@ -376,9 +385,13 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 	}
 
 	// isPrompt: the human actually said something (see the turn model above).
-	// isMeta lines are skill/system text injected as if the user typed it.
-	isPrompt := role == "user" && !rec.IsMeta && hasBlock(blocks, "text")
+	// isMeta lines are skill/system text injected as if the user typed it. A
+	// subagent's prompt is typed in the same shape and still renders as one,
+	// but it is the subagent's, so it opens nothing here.
+	typed := role == "user" && !rec.IsMeta && hasBlock(blocks, "text")
+	isPrompt := typed && !sub
 	switch {
+	case sub:
 	case isPrompt:
 		n.startTurn()
 		n.opened(rec, blocks, at)
@@ -410,7 +423,7 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 		case "text":
 			k := KindText
 			body := bl.Text
-			if isPrompt {
+			if typed {
 				k = KindUser // rendered as a plain bubble, never as markdown
 				// A slash command is recorded as markup rather than as the line
 				// the operator typed; unwrapped here so the chat shows the
@@ -520,7 +533,7 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 	// Subagent work shares the transcript with the main thread; the renderer
 	// nests it rather than interleaving it, under the call of the agent the
 	// record names. In the agent's own file it is the thread itself.
-	if rec.IsSidechain && !n.agent {
+	if sub {
 		for i := range out {
 			out[i].Sidechain, out[i].AgentID = true, rec.AgentID
 		}
@@ -530,14 +543,14 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 	// answer through StructuredOutput and writes no end_turn record at all (37
 	// of the 38 members of one real run), so without this its turn stays open
 	// for good.
-	if rec.ToolEndsTurn && !n.turnDone {
+	if rec.ToolEndsTurn && !n.turnDone && !sub {
 		n.turnDone, n.doneMsg = true, ""
 		out = append(out, n.emit(KindTurnEnd, at))
 	}
 
 	// One turn_end per turn: Claude splits a single reply across several lines
 	// (thinking, then text) that all repeat the same terminal stop_reason.
-	if role == "assistant" && !n.turnDone && EndsTurn(rec.Message.StopReason) {
+	if role == "assistant" && !n.turnDone && !sub && EndsTurn(rec.Message.StopReason) {
 		n.turnDone, n.doneMsg = true, rec.Message.ID
 		end := n.emit(KindTurnEnd, at)
 		end.Usage = rec.Message.Usage
