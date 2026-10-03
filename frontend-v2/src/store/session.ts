@@ -416,7 +416,17 @@ function defaultTranscriptCache(): TranscriptCache {
   return sharedCache;
 }
 
-export function createSessionStore(session: string, opts: SessionStoreOptions = {}): SessionStore {
+export function createSessionStore(
+  name: string | Accessor<string>,
+  opts: SessionStoreOptions = {},
+): SessionStore {
+  /**
+   * The session's name NOW, read at each request rather than once. A view
+   * outlives its session's rename (store/keepalive.ts `keyOf`), which lands
+   * seconds after a create; a stream already open keeps going, and the next
+   * connect, prompt or cancel addresses the session by the name it has.
+   */
+  const session: Accessor<string> = typeof name === "function" ? name : () => name;
   const [events, setEvents] = createStore<Event[]>([]);
   const [status, setStatus] = createSignal<SseStatus>("connecting");
   // A fresh open backfills a bounded number of BYTES (session-events
@@ -562,7 +572,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     // The number this whole design exists to move, and one nothing recorded
     // before: stream open to first row on screen.
     track("text.first_paint", {
-      "tl.session": session,
+      "tl.session": session(),
       "tl.ms": Date.now() - openedAt,
       "tl.count": events.length,
     });
@@ -611,7 +621,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       // 2026-08-28 and 2026-09-11 every write here threw DataCloneError into a
       // catch and stored nothing. The unwrap lives in transcript-cache.ts so
       // that it covers this call and every future one.
-      void cache.save(session, cachedEpoch, events, cursor);
+      void cache.save(session(), cachedEpoch, events, cursor);
     };
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => number })
       .requestIdleCallback;
@@ -784,7 +794,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     // is stored describes a transcript that no longer exists, so it goes too.
     // Keeping it would mean seeding the same wrong ids on the next open.
     cachedEpoch = "";
-    void cache.drop(session);
+    void cache.drop(session());
     pending = [];
     backfill = [];
     seen.clear();
@@ -817,8 +827,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   };
 
   const client = new SseClient({
-    session,
-    url: eventsUrl,
+    session: session(),
+    url: (_name, lastEventId) => eventsUrl(session(), lastEventId),
     onReset: reset,
     onEvent: (e: Event) => {
       streamWork = afterEvent(streamWork, e);
@@ -895,7 +905,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       if (!openReported) {
         openReported = true;
         track("text.open", {
-          "tl.session": session,
+          "tl.session": session(),
           "tl.cache": seededFromCache > 0 ? "hit" : "miss",
           "tl.cached": seededFromCache,
           "tl.fetched": Math.max(0, events.length + shed - seededFromCache),
@@ -929,7 +939,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
    * soft — no cache, or a slow one, and this is exactly the open it always was.
    */
   const startWithCache = async (): Promise<void> => {
-    const cached = await cache.read(session);
+    const cached = await cache.read(session());
     if (closed) return;
     // A copy with no cursor cannot say where paging back starts, and the
     // oldest id held is no stand-in for it (CachedTranscript.cursor), so it
@@ -1107,7 +1117,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       const keepalive = new TextEncoder().encode(body).length <= KEEPALIVE_MAX_BYTES;
       const post = () =>
         trackPrompt(
-          fetchWithDeadline(promptUrl(session), {
+          fetchWithDeadline(promptUrl(session()), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body,
@@ -1198,7 +1208,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     };
     try {
       const res = await fetchWithDeadline(
-        cancelUrl(session),
+        cancelUrl(session()),
         restoring || returning
           ? {
               method: "POST",
@@ -1236,7 +1246,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
 
   const answer = async (keys: string[]): Promise<boolean> => {
     try {
-      const res = await fetchWithDeadline(keysUrl(session), {
+      const res = await fetchWithDeadline(keysUrl(session()), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keys }),
@@ -1255,7 +1265,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   // landed in the field.
   const answerText = async (text: string): Promise<boolean> => {
     try {
-      const res = await fetchWithDeadline(answerTextUrl(session), {
+      const res = await fetchWithDeadline(answerTextUrl(session()), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -1283,11 +1293,11 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
    * raises the one case that is genuinely a failure, a null.
    */
   const answerOne = (req: AnswerRequest): Promise<AnswerResponse | null> =>
-    sendAnswer(session, req);
+    sendAnswer(session(), req);
 
   const search = async (q: string): Promise<SearchHit[]> => {
     try {
-      const res = await fetchWithDeadline(searchUrl(session, q));
+      const res = await fetchWithDeadline(searchUrl(session(), q));
       if (!res.ok) return [];
       return ((await res.json()) as SearchHit[] | null) ?? [];
     } catch {
@@ -1305,11 +1315,11 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
    * it got (store/catalogue.ts carries the measurement).
    */
   const commands = (): Promise<Catalogue> =>
-    readCatalogue(() => fetchWithDeadline(commandsUrl(session)));
+    readCatalogue(() => fetchWithDeadline(commandsUrl(session())));
 
   const pane = async (): Promise<{ pane: string; state: string } | null> => {
     try {
-      const res = await fetchWithDeadline(paneUrl(session));
+      const res = await fetchWithDeadline(paneUrl(session()));
       if (!res.ok) return null;
       return (await res.json()) as { pane: string; state: string };
     } catch {
@@ -1320,7 +1330,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   const fullResult = async (toolId: string): Promise<string | null> => {
     try {
       const res = await fetchWithDeadline(
-        resultUrl(session, toolId),
+        resultUrl(session(), toolId),
         undefined,
         TRANSCRIPT_READ_TIMEOUT_MS,
       );
@@ -1354,7 +1364,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     const ask = bytes ?? EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
     try {
       const res = await fetchWithDeadline(
-        earlierUrl(session, before, ask),
+        earlierUrl(session(), before, ask),
         undefined,
         TRANSCRIPT_READ_TIMEOUT_MS,
       );
@@ -1376,7 +1386,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       // size and should not make the next glance upward expensive.
       if (bytes === undefined) step++;
       track("text.window_grew", {
-        "tl.session": session,
+        "tl.session": session(),
         "tl.count": fresh.length,
         "tl.bytes": ask,
         "tl.reason": bytes === undefined ? "scroll" : "jump",

@@ -1,7 +1,6 @@
 import {
   createMemo,
   createSignal,
-  For,
   onCleanup,
   Show,
   type Accessor,
@@ -20,6 +19,7 @@ import { UNGROUPED_KEY } from "../store/collapse";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { track } from "../telemetry/track";
 import { SessionCard } from "./SessionCard";
+import { SessionsByIdentity } from "./SessionsByIdentity";
 import { StateDot } from "./StateDot";
 import {
   attachSessionList,
@@ -359,19 +359,19 @@ export const ProjectGroup: Component<{
             })
           }
         >
-          <For each={rendered()}>
+          <SessionsByIdentity each={rendered()} me={props.store.me()}>
             {(s) => (
               <SessionCard
                 isUnseen={props.isUnseen}
                 store={props.store}
-                session={s}
+                session={s()}
                 groupName={isUngrouped() ? "" : props.group.name}
                 tick={props.tick}
                 badge={props.badge}
                 showLastActive={props.showLastActive}
               />
             )}
-          </For>
+          </SessionsByIdentity>
         </div>
       </Show>
     </div>

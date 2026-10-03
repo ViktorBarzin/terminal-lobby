@@ -32,25 +32,25 @@ contract, the push tag. Unique within one OS user's tmux server, so a
 cross-user reference needs the owner too. It is what `tmux ls`, the status
 bar and the terminal window title show, which is why it reads as words;
 ADR-0022 has the reasoning, and ADR-0019 has the interval when it did not.
-Because it moves, anything recording a session across time keys by tmux's
-own `session_id` instead, which a rename does not change. That only serves
-something which has SEEN the session, and the first rename lands seconds
-after creation — often before any poll has listed the session under the id
-the browser minted. So the first rename away from an id also records that id
-as the session's **birth name**, which is what lets a browser holding the
-name it minted find the session under the name it has now.
+Because it moves, the lobby knows a session by its **birth name**, which a
+rename does not change, and a record kept server-side across time keys by
+tmux's own `session_id`. The first rename lands seconds after creation,
+often before any poll has listed the session under the id the browser
+minted, so only the birth name is known to both the browser and the server
+from the first moment.
 _Avoid_: label; and any surface that shows a name where it could show a
 **title**
 
 **Birth name**:
 The minted id a session was created with, kept on the session (the `@tl_born`
-tmux option, served as `bornAs`) once the first title has renamed it away from
-that id. Written once and only for an id: a session renamed from a readable
-**name** has been listed under it all along, and overwriting would replace the
-one name a stranded browser is holding. Present only on a session that has
-been renamed, which is why nothing may treat it as the session's identity —
-`session_id` is that. It answers one question: *what is the session that used
-to be called this?*
+tmux option, served as `bornAs`) from the moment it is created. What the lobby
+knows a session by: its terminal, its sidebar card, and the attach that finds
+the session again after a rename all key by it, so a rename changes the label
+and nothing else. Written once and never moved. A session without one, made
+from a shell or older than the rule, is known by its **name** instead. It
+answers *which session is this?* across a rename, and *what is the session
+that used to be called this?* for a browser still holding the old name.
+Server-side records kept across time key by tmux's `session_id`.
 _Avoid_: original name, old name, alias
 
 **Title**:

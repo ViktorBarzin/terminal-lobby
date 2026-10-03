@@ -30,6 +30,7 @@ import {
 } from "../dnd/sidebar";
 import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
+import { SessionsByIdentity } from "./SessionsByIdentity";
 import { SessionCard, SidebarWorkspacesContext, type SidebarWorkspaces } from "./SessionCard";
 import { createMobileFlip } from "../mobile/pointer";
 import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
@@ -317,19 +318,19 @@ export const Sidebar: Component<{
               })
             }
           >
-            <For each={originCards(p.group)}>
+            <SessionsByIdentity each={originCards(p.group)} me={store.me()}>
               {(s) => (
                 <SessionCard
                   isUnseen={unseenOf}
                   store={store}
-                  session={s}
+                  session={s()}
                   groupName={key()}
                   tick={tick}
                   badge={badge}
                   showLastActive={showLastActive}
                 />
               )}
-            </For>
+            </SessionsByIdentity>
           </div>
         </Show>
       </div>

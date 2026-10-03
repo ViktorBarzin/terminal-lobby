@@ -7,12 +7,13 @@
  * entry object makes `<For>` rebuild the row it belongs to. So the tests below
  * pin identity as hard as they pin the TTL.
  */
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import {
   EMPTY_KEEP,
   KEEP_TTL_MS,
   keepSelected,
   keyOf,
+  noteBirthNames,
   pruneKept,
   type KeepState,
 } from "../src/store/keepalive";
@@ -80,7 +81,7 @@ describe("dropping a mount", () => {
 
   it("drops a session the lobby no longer lists, even a fresh one", () => {
     const state = visited(["killed", "alive"]);
-    const next = pruneKept(state, null, T0 + 1, KEEP_TTL_MS, new Set(["alive"]));
+    const next = pruneKept(state, null, T0 + 1, KEEP_TTL_MS, new Set([keyOf({ name: "alive" })]));
     expect(next.list.map((k) => k.name)).toEqual(["alive"]);
   });
 
@@ -91,7 +92,7 @@ describe("dropping a mount", () => {
 
   it("returns the same state when there is nothing to drop", () => {
     const state = visited(["alpha", "beta"]);
-    expect(pruneKept(state, null, T0 + 1, KEEP_TTL_MS, new Set(["alpha", "beta"]))).toBe(state);
+    expect(pruneKept(state, null, T0 + 1, KEEP_TTL_MS, new Set([keyOf({ name: "alpha" }), keyOf({ name: "beta" })]))).toBe(state);
   });
 });
 
@@ -115,5 +116,61 @@ describe("keyOf's separator", () => {
 
   it("cannot be forged by a name that contains the separator's printed form", () => {
     expect(keyOf({ name: "\\u0000alpha" })).not.toBe(keyOf({ name: "alpha" }));
+  });
+});
+
+/**
+ * A session is renamed seconds after it is created, when its first title lands
+ * (ADR-0022). Its key is what decides whether the lobby keeps the terminal it
+ * already has or builds a new one, so the key follows the session's birth name
+ * and a rename leaves it where it was.
+ */
+describe("a session's key across a rename", () => {
+  beforeEach(() => noteBirthNames([], "wizard"));
+
+  it("is the same before and after the title renames it", () => {
+    noteBirthNames([{ name: "bw8k5gt9v314", bornAs: "bw8k5gt9v314" }], "wizard");
+    const before = keyOf({ name: "bw8k5gt9v314" });
+    noteBirthNames([{ name: "deploy-the-thing", bornAs: "bw8k5gt9v314" }], "wizard");
+    expect(keyOf({ name: "deploy-the-thing" })).toBe(before);
+    // A tab still holding the id it minted asks with the old name.
+    expect(keyOf({ name: "bw8k5gt9v314" })).toBe(before);
+  });
+
+  it("is the minted id before any poll has listed the session", () => {
+    noteBirthNames([{ name: "deploy-the-thing", bornAs: "bw8k5gt9v314" }], "wizard");
+    expect(keyOf({ name: "fresh0000000" })).toBe(`${String.fromCharCode(0)}fresh0000000`);
+  });
+
+  it("is the name for a session that has no birth name", () => {
+    noteBirthNames([{ name: "beads" }], "wizard");
+    expect(keyOf({ name: "beads" })).toBe(`${String.fromCharCode(0)}beads`);
+  });
+
+  it("keeps an own session and somebody else's of the same name apart", () => {
+    noteBirthNames(
+      [
+        { name: "deploy", owner: "emo", bornAs: "emo000000000" },
+        { name: "deploy", owner: "wizard" },
+      ],
+      "wizard",
+    );
+    expect(keyOf({ name: "deploy" })).toBe(`${String.fromCharCode(0)}deploy`);
+    expect(keyOf({ name: "deploy", owner: "emo" })).toBe(`emo${String.fromCharCode(0)}emo000000000`);
+  });
+
+  it("does not add a second mount when the selection follows the rename", () => {
+    noteBirthNames([{ name: "bw8k5gt9v314", bornAs: "bw8k5gt9v314" }], "wizard");
+    const state = keepSelected(EMPTY_KEEP, { name: "bw8k5gt9v314" }, T0);
+    noteBirthNames([{ name: "deploy-the-thing", bornAs: "bw8k5gt9v314" }], "wizard");
+    const next = keepSelected(state, { name: "deploy-the-thing" }, T0 + 1);
+    expect(next.list).toBe(state.list);
+  });
+
+  it("keeps a renamed session's mount when it is not the one on screen", () => {
+    const state = keepSelected(EMPTY_KEEP, { name: "bw8k5gt9v314" }, T0);
+    noteBirthNames([{ name: "deploy-the-thing", bornAs: "bw8k5gt9v314" }], "wizard");
+    const live = new Set([keyOf({ name: "deploy-the-thing" })]);
+    expect(pruneKept(state, null, T0 + 1, KEEP_TTL_MS, live)).toBe(state);
   });
 });

@@ -36,14 +36,17 @@ import {
   type KeptSession,
   type Selected,
 } from "../store/keepalive";
+import { promptLineFor } from "../store/prompt-line";
 import { createPreloadStore } from "../store/preload";
 import { createWorkspacesStore } from "../store/workspaces";
 import {
   autoArrange,
+  hasLeaf,
   leaf,
   leafKeys,
   parseTreeNode,
   removeAt,
+  replaceAt,
   sessionOf,
   setFractions,
   splitAt,
@@ -576,6 +579,14 @@ export function reconcileTree(
   let tree: TreeNode | null = stored;
   for (const key of leafKeys(stored)) {
     if (wanted.has(key)) continue;
+    // A tree stored before keys were birth names holds a renamed session
+    // under its name. Asked again, the same name gives the session's key now,
+    // and the tile keeps its place under it.
+    const now = keyOf(sessionOf(key));
+    if (now !== key && wanted.has(now) && tree && !hasLeaf(tree, now)) {
+      tree = replaceAt(tree, key, now);
+      continue;
+    }
     tree = removeAt(tree, key);
     if (!tree) break; // the last tile it held has gone
   }
@@ -1408,23 +1419,18 @@ export const App: Component = () => {
    */
   const [workspaceDoc, setWorkspaceDoc] = createSignal<Workspaces>(emptyWorkspaces());
 
-  /** Live session names, or null before the first poll has ANSWERED — which is
-   *  a different question from `loading()`, since loading goes false even when
-   *  /sessions rejected and every member looks dead in that window. */
-  const liveNames = (): ReadonlySet<string> | null =>
-    store.polls() > 0 ? new Set(store.sessions.map((s) => s.name)) : null;
-
   /**
-   * The same answer as keepalive KEYS, which is what a workspace member is
-   * compared by.
+   * The live sessions as keepalive KEYS, or null before the first poll has
+   * ANSWERED — which is a different question from `loading()`, since loading
+   * goes false even when /sessions rejected and every member looks dead in
+   * that window. What a workspace member and a kept mount are compared by.
    *
-   * A SEPARATE QUESTION FROM `liveNames`, not a spelling of it. Membership
-   * carries an owner (types/lobby.ts, `WorkspaceMember`) so a session emo
-   * shared with you can be a tile, and `auth` of your own and emo's `auth` are
-   * two terminals: asked by name, emo's tile would look alive because YOU have
-   * a session of that name, and killing yours would strike emo's off. Keepalive
-   * still prunes by name, because its list is this tab's mounts and every entry
-   * there already carries its own owner.
+   * Keys, not names. Membership carries an owner (types/lobby.ts,
+   * `WorkspaceMember`) so a session emo shared with you can be a tile, and
+   * `auth` of your own and emo's `auth` are two terminals: asked by name, emo's
+   * tile would look alive because YOU have a session of that name. And a key
+   * is a birth name, so a mount kept under a session's minted id is still live
+   * after the title has renamed it.
    *
    * Your own session is keyed with NO owner even though `/sessions` stamps one
    * on it, which is the convention `SessionCard` selects under
@@ -2062,7 +2068,7 @@ export const App: Component = () => {
   /**
    * Drop what is not worth holding: a day unvisited, or gone from the lobby.
    *
-   * `liveNames()` for the same reason the tiles memo reads it — undefined means
+   * `liveKeys()` for the same reason the tiles memo reads it — undefined means
    * "the lobby has not answered", and a list that never arrived is not a list
    * of everything that died. Asked as `loading()`, a reload during a tmux-api
    * restart unmounted every session in the tab except the selected one, taking
@@ -2070,7 +2076,7 @@ export const App: Component = () => {
    */
   const prune = () =>
     setKept((state) =>
-      pruneKept(state, selectedSession(), Date.now(), KEEP_TTL_MS, liveNames() ?? undefined),
+      pruneKept(state, selectedSession(), Date.now(), KEEP_TTL_MS, liveKeys() ?? undefined),
     );
   createEffect(() => {
     // Re-run whenever the list changes, so a session killed from another device
@@ -2673,7 +2679,18 @@ export const App: Component = () => {
                         : { name: s.name },
                     ) === k.key,
                 );
-              const label = () => sessionLabel(tileSession() ?? { name: k.name });
+              /**
+               * The session's name NOW. The slot is keyed by birth name and
+               * outlives a rename (store/keepalive.ts `keyOf`), so `k.name` is
+               * the name it was mounted under, which the title rename seconds
+               * after a create leaves behind. Before the first poll lists the
+               * session there is no row, and the mounted name is the only one.
+               */
+              const name = () => tileSession()?.name ?? k.name;
+              // With no row yet, the line the person typed stands in, as it
+              // does on the card (store/prompt-line.ts).
+              const label = () =>
+                sessionLabel(tileSession() ?? { name: name(), title: promptLineFor(name()) ?? undefined });
               return (
                 <div
                   class="tl-session-slot"
@@ -2747,7 +2764,7 @@ export const App: Component = () => {
                       // cross the 4px slop and LIFT THE TILE out of its split,
                       // mid-rename.
                       if (on?.closest(".tl-tile-header") && on.closest("button, input")) return;
-                      if (!focused()) store.select(k.name, k.owner);
+                      if (!focused()) store.select(name(), k.owner);
                       // A TILE IS DRAGGED BY ITS HEADER, which is also the strip
                       // that names it, so the press that focuses a tile and the
                       // press that lifts it are one press until the pointer
@@ -2772,9 +2789,9 @@ export const App: Component = () => {
                       declined claim cannot disagree. */}
                   <Show when={rect()}>
                     <TileHeader
-                      session={tileSession() ?? { name: k.name }}
+                      session={tileSession() ?? { name: name() }}
                       focused={focused()}
-                      watching={resolvedWatchFor(k.name) === true}
+                      watching={resolvedWatchFor(name()) === true}
                       onClose={() => closeTile(k.key)}
                       // A double click on the strip retitles the session, the
                       // sidebar card's own gesture on the surface a person is
@@ -2787,7 +2804,7 @@ export const App: Component = () => {
                       // question "is this mine to retitle". `store.rename` puts
                       // the same PUT out that the card does, and the poll
                       // brings the new title back to both surfaces at once.
-                      onRename={k.owner ? undefined : (title) => void store.rename(k.name, title)}
+                      onRename={k.owner ? undefined : (title) => void store.rename(name(), title)}
                       // THE KILL WINDOW, drawn where the person is standing.
                       // Killing a tiled session dims the sidebar card and
                       // counts it down; until these four props were passed the
@@ -2796,17 +2813,17 @@ export const App: Component = () => {
                       // saying nothing about the eight seconds they have
                       // (design, "Death and restore"). All four are optional on
                       // the header, so the gap typechecked and drew nothing.
-                      killing={store.killing(k.name)}
-                      killingUntil={store.killingUntil(k.name)}
+                      killing={store.killing(name())}
+                      killingUntil={store.killingUntil(name())}
                       // The workspace's one clock, armed by the kill itself.
                       // Not a second interval per tile — see `killTick`.
                       tick={killTick}
-                      onUndoKill={() => void undoTileKill(k.name)}
+                      onUndoKill={() => void undoTileKill(name())}
                     />
                   </Show>
                   <TileFocusContext.Provider value={focused}>
                     <SessionView
-                      session={k.name}
+                      session={name()}
                       label={label()}
                       // THE BAR IS NOT PART OF THIS SLOT. Passed to every
                       // mount, because any of them can become the focused one
@@ -2822,13 +2839,13 @@ export const App: Component = () => {
                       // Only the slot this describes is listening; the store
                       // checks the key before it acts on either answer.
                       onPreload={(state) => {
-                        const sel = { name: k.name, owner: k.owner };
+                        const sel = { name: name(), owner: k.owner };
                         if (state === "landed") preload.markLanded(sel);
                         else preload.markFailed(sel);
                       }}
                       otherSessions={() =>
                         flatSessionOrder(store.model())
-                          .filter((o) => o.name !== k.name)
+                          .filter((o) => o.name !== name())
                           .map((o) => ({
                             ...o,
                             // Titled sessions read by their title here too.
@@ -2901,13 +2918,13 @@ export const App: Component = () => {
                         </Show>
                       }
                       driven={() =>
-                        store.sessions.some((s) => s.name === k.name && s.driven === true)
+                        store.sessions.some((s) => s.name === name() && s.driven === true)
                       }
-                      background={() => store.sessions.find((s) => s.name === k.name)?.bg}
+                      background={() => store.sessions.find((s) => s.name === name())?.bg}
                       // The header's subtitle starts with it. BY KEY, for the
                       // reason `tileSession` exists.
                       project={() =>
-                        projectNameFor(store.layout(), k.name) ??
+                        projectNameFor(store.layout(), name()) ??
                         (tileSession()?.project || undefined)
                       }
                       // The hook-stamped state, which the Text view's Stop
@@ -2923,7 +2940,7 @@ export const App: Component = () => {
                       // lookup exists: your `auth` and emo's `auth` are two
                       // rows in one list.
                       suspended={() => tileSession()?.state === SUSPENDED}
-                      resume={() => store.resume(k.name)}
+                      resume={() => store.resume(name())}
                       // The session's browser, and how far this caller may
                       // drive it. BY KEY, through `tileSession`, for the
                       // reason that lookup exists.
@@ -2960,8 +2977,8 @@ export const App: Component = () => {
                       dir={focused() ? selectedDir() : undefined}
                       newCommand={newCommand}
                       newLaunch={newLaunch}
-                      tool={() => store.sessions.find((s) => s.name === k.name)?.tool}
-                      cwd={() => store.sessions.find((s) => s.name === k.name)?.cwd}
+                      tool={() => store.sessions.find((s) => s.name === name())?.tool}
+                      cwd={() => store.sessions.find((s) => s.name === name())?.cwd}
                       // What a pi session stamped about its model, which is
                       // all its chip has to read. By key, like the size above.
                       piStamp={() => {

@@ -692,6 +692,8 @@ src/
     Sidebar.tsx          Identity, new-session row, groups, Shared-with-me
     ProjectGroup.tsx     One project group header + its cards (DnD, menu)
     SessionCard.tsx      One session row: dot, tool mark, timer, inline rename
+    SessionsByIdentity.tsx  The card list, one card per session birth name, so
+                         a rename relabels a card instead of rebuilding it
     StateDot.tsx         Claude state dot (running / awaiting / done)
     TerminalNative.tsx   THE terminal, and the only one since the iframe was
                          deleted (2026-09-05). Mounts xterm (a lazy import, so

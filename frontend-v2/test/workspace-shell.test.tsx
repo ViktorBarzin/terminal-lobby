@@ -36,7 +36,7 @@ import type { SessionView as RealSessionView } from "../src/components/SessionVi
 import type { ConnectionControl } from "../src/diagnostics/status-store";
 import type { Layout, Session, Whoami } from "../src/types/lobby";
 import { emptyLayout, emptyWorkspaces } from "../src/types/lobby";
-import { keyOf } from "../src/store/keepalive";
+import { keyOf, noteBirthNames } from "../src/store/keepalive";
 import { DOCK_RATIO_DEFAULT } from "../src/store/dock.logic";
 import { WORKSPACES_KEY } from "../src/store/workspaces";
 import {
@@ -985,6 +985,22 @@ describe("reconcileTree", () => {
     const stored = split("row", [leaf(A), leaf(B)], [0.7, 0.3]);
     expect(reconcileTree(stored, [A, B])).toBe(stored);
     expect(reconcileTree(stored, [B, A])).toBe(stored); // order is the server's, not ours
+  });
+
+  // A tree stored before sessions were keyed by birth name holds a renamed
+  // session under its NAME. Read back, that key is no longer the session's, and
+  // closing the tile and splitting it back in at the bottom would throw away
+  // where the person had put it.
+  it("keeps a renamed session's tile where it was, stored under its old key", () => {
+    const oldKey = `${String.fromCharCode(0)}fix-the-deploy`;
+    const stored = split("row", [leaf(oldKey), leaf(B)], [0.7, 0.3]);
+    noteBirthNames([{ name: "fix-the-deploy", bornAs: "bw8k5gt9v314" }], "wizard");
+    try {
+      const born = keyOf({ name: "fix-the-deploy" });
+      expect(reconcileTree(stored, [born, B])).toEqual(split("row", [leaf(born), leaf(B)], [0.7, 0.3]));
+    } finally {
+      noteBirthNames([], "wizard");
+    }
   });
 
   it("closes a departed member's tile and leaves the rest alone", () => {

@@ -24,6 +24,15 @@ describe("sessionLabel", () => {
     expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "Fix the deploy" })).toBe("Fix the deploy");
   });
 
+  // The placeholder a person picked (2026-10-03): with no prompt line to stand
+  // in, the directory the session runs in says more than "New session".
+  it("falls back to the directory name for an untitled minted id", () => {
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", cwd: "/home/wizard/code/tripit" })).toBe("tripit");
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", cwd: "/home/wizard/code/tripit/" })).toBe("tripit");
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", cwd: "/" })).toBe(NEW_SESSION_LABEL);
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "Fix it", cwd: "/x/tripit" })).toBe("Fix it");
+  });
+
   // Names that were never minted here keep reading: sessions from before the
   // migration, and a shell somebody named by hand.
   it("keeps a readable name readable", () => {

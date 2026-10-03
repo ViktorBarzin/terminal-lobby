@@ -17,6 +17,7 @@ import {
   opensOnContent,
   relativeTime,
   removeSessionFromLayout,
+  renameSessionInLayout,
   renameProject,
   reorderGroups,
   sameLayout,
@@ -503,6 +504,34 @@ describe("project CRUD", () => {
     expect(out.projects.map((p) => p.name)).toEqual(["b"]);
     expect(out.ungrouped).toEqual(["u", "s1"]);
     expect(out.ungroupedIndex).toBe(1); // shifted left past the removed project
+  });
+});
+
+// A rename lands seconds after a create, inside the window where this tab
+// ignores the server's layout. Carried here, the session keeps the place the
+// create gave it instead of being filed at the bottom as a leftover.
+describe("renameSessionInLayout", () => {
+  it("keeps the session where it was, in a project or ungrouped", () => {
+    let l = addSessionToGroup(emptyLayout(), "older", "");
+    l = addSessionToGroup(l, "k7m2q9x4tp0v", "");
+    const out = renameSessionInLayout(l, "k7m2q9x4tp0v", "deploy-the-thing");
+    expect(out.ungrouped).toEqual(["deploy-the-thing", "older"]);
+  });
+
+  it("follows a rename inside a project and the dock", () => {
+    const l = {
+      ...emptyLayout(),
+      projects: [{ name: "p", sessions: ["a", "k7m2q9x4tp0v"] }],
+      dock: { session: "k7m2q9x4tp0v", visible: true },
+    };
+    const out = renameSessionInLayout(l, "k7m2q9x4tp0v", "words");
+    expect(out.projects[0]!.sessions).toEqual(["a", "words"]);
+    expect(out.dock?.session).toBe("words");
+  });
+
+  it("returns the same layout when the name is not in it", () => {
+    const l = addSessionToGroup(emptyLayout(), "a", "");
+    expect(renameSessionInLayout(l, "zzz", "words")).toBe(l);
   });
 });
 

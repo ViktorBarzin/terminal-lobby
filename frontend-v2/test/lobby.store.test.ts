@@ -205,6 +205,26 @@ describe("lobby store", () => {
     });
   });
 
+  // The title rename lands 3-5 s after a create, often before any poll has
+  // listed the minted id, and inside the window where this tab ignores the
+  // server's layout. The card must stay where the create put it, under its new
+  // name, with nothing left behind under the id.
+  it("create: a rename no poll saw keeps the card first and leaves no card under the id", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("older")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["older"] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("Fix the deploy", "");
+
+      api.sessionsVal = [sess("older"), { ...sess("fix-the-deploy"), id: "$7", bornAs: id }];
+      await store.refresh();
+
+      expect(names(store)).toEqual(["fix-the-deploy", "older"]);
+      expect(store.selected()?.name).toBe("fix-the-deploy");
+    });
+  });
+
   it("create: a NAME is stamped as the title, because nothing will summarise a shell", async () => {
     // Choosing `shell` in the composer turns the box back into a name box: a
     // shell has no conversation, so no summary is ever coming and the typed

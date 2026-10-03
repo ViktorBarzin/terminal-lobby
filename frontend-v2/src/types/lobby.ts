@@ -83,16 +83,16 @@ export interface Session {
    *  survive a tmux server restart, which is why it is not the session's name.
    *  Absent from a server that predates it. */
   id?: string;
-  /** The name this session was FIRST created with, present only once it has
-   *  been renamed away from a minted id (tmux-api sessionio.OptionBornAs).
+  /** The session's birth name: the minted id it was created with
+   *  (sessionio.OptionBornAs), stamped at creation by devvm/tmux-user-attach.
+   *  Older sessions carry it only once a title has renamed them away from the id.
    *
-   *  It is what makes a rename followable when `id` cannot help. A session is
-   *  renamed as soon as its first title lands (ADR-0022) — seconds in — and the
-   *  session list is behind a 5-second cache, so a tab that created the session
-   *  routinely never sees it under the id it minted. With no previous row to
-   *  match an id against, this is the only link between the name that tab is
-   *  holding and the session it belongs to. Absent for a session that never
-   *  moved, and from a server that predates the field. */
+   *  It is what the lobby keys a session's terminal and card by
+   *  (store/keepalive.ts `keyOf`), so the rename seconds after a create
+   *  (ADR-0022) changes a label rather than which terminal is which. It is also
+   *  the link between the id a tab is still holding and the session it belongs
+   *  to when the session list never showed it under that id. Absent for a
+   *  session someone named by hand, and from a server that predates the field. */
   bornAs?: string;
   /** The display title a person chose — arbitrary text, up to 64 code points,
    *  from the session's @title option. Absent means the session has no title
@@ -280,9 +280,13 @@ export const NEW_SESSION_LABEL = "New session";
  * `title` as the poll lands (store/prompt-line.ts), so every surface that shows
  * a title shows it, and this stays a pure function of the wire shape.
  */
-export function sessionLabel(s: Pick<Session, "name" | "title">): string {
+export function sessionLabel(s: Pick<Session, "name" | "title"> & Partial<Pick<Session, "cwd">>): string {
   if (s.title && s.title.length > 0) return s.title;
-  return isSessionId(s.name) ? NEW_SESSION_LABEL : s.name;
+  if (!isSessionId(s.name)) return s.name;
+  // An id says nothing, so with no title the directory the session runs in
+  // stands in for one (2026-10-03), and "New session" when even that is unknown.
+  const dir = s.cwd?.replace(/\/+$/, "").split("/").pop();
+  return dir ? dir : NEW_SESSION_LABEL;
 }
 
 /**

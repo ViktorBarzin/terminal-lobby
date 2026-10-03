@@ -64,7 +64,7 @@ answers each one.
 | six stores keyed by the name | `carryRenameAcrossStores`, which stayed in the tree for the migration and repins the grid hooks tmux itself holds |
 | a collision with nobody to ask | `slug.Free`'s suffix walk, backed by tmux refusing duplicates |
 | the terminal iframe re-navigating mid-turn | `followRenamedSelection` moves the selection by tmux session id, which a rename does not change, or by `bornAs` when no poll ever saw the old name |
-| the phantom-session trap | narrowed, not closed. See below. |
+| the phantom-session trap | closed for the owner's own attach on 2026-10-03. See below. |
 
 **The phantom-session trap is the one that stays open.** A tab holding
 `?arg=<old name>` reconnects through `tmux new-session -A -s <name>`, which
@@ -112,6 +112,47 @@ watch choice has to, rather than merely wanting to: the automatic rule reads
 `driven`, which counts this client's own attach, so a view remounting under the
 new name would resolve a session it is itself driving as one somebody else is
 driving.
+
+### A rename no longer rebuilds the terminal, and the trap closes (2026-10-03)
+
+Viktor, 2026-10-03: *"today we reuse the warm session and then we rename it.
+but this causes a flicker in the UI which is not good UX."*
+
+The flicker was this ADR's own rename, not the warm-slot claim. The claim
+renames a slot to the minted id about 9 ms after the terminal socket opens, and
+the lobby never lists a slot, so nobody sees it. The title rename 3-5 s later
+is the one that showed: the browser kept each mounted terminal under its
+owner and name, so the new name read as a different terminal, and the lobby
+disposed the live one and attached a fresh one while Claude's first reply
+streamed. The sidebar card was rebuilt the same way, and could drop to the
+bottom of its group when the rename landed inside the 4 s layout grace window.
+The open socket never needed replacing: its tmux client is attached to the
+session, not to the name.
+
+So the browser now knows a session by its birth name. `@tl_born` is stamped at
+creation by `tmux-user-attach`, on the warm-slot claim and on the cold path,
+for a minted id only, and `keyOf` (store/keepalive.ts) keys a session's
+terminal, card, tile and preload by it. A rename changes the label; the
+socket stays open and its next connect uses the new name. The view and the
+transcript store read the session's name when they act rather than once at
+mount. The local layout follows a rename the way the other per-browser records
+do, and the optimistic card and the listed row share a key, so neither the
+first listing nor the rename rebuilds the card.
+
+The phantom-session trap above closes for the owner's own attach. A minted id
+that no live session is called is looked up among birth names in
+`tmux-user-attach` before `new-session -A`, and the session born as it is
+attached instead of an empty one being created. A session that really has the
+name still wins. Shared viewers and preloads were never exposed to the trap:
+they attach with `-t =name`, which fails rather than creates.
+
+Only a minted id becomes a birth name, for the reason the 2026-09-06 section
+gives: a hand-picked name can be reused after a rename, and two sessions
+answering to one birth name would be one session twice. A hand-named session
+is still known by its name, and an explicit retitle of one still remounts its
+terminal.
+
+Design: `docs/plans/2026-10-03-session-birth-identity-design.md`.
 
 ## Considered options
 

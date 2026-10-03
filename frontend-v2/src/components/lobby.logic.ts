@@ -618,6 +618,28 @@ export function removeSessionFromLayout(layout: Layout, name: string): Layout {
   return stripEverywhere(layout, name);
 }
 
+/**
+ * The same layout with one session renamed in place, wherever it is listed.
+ *
+ * tmux-api renames the session in its own copy (rename_cascade.go). This is
+ * the browser's copy, which a create has just written and which ignores the
+ * server's for LAYOUT_GRACE_MS, so a rename landing inside that window would
+ * otherwise leave the new name unlisted and file it at the bottom of its group.
+ */
+export function renameSessionInLayout(layout: Layout, was: string, now: string): Layout {
+  const swap = (names: string[]) => (names.includes(was) ? names.map((n) => (n === was ? now : n)) : names);
+  const projects = layout.projects.map((p) => {
+    const sessions = swap(p.sessions);
+    return sessions === p.sessions ? p : { ...p, sessions };
+  });
+  const ungrouped = swap(layout.ungrouped);
+  const dock = layout.dock?.session === was ? { ...layout.dock, session: now } : layout.dock;
+  const same =
+    ungrouped === layout.ungrouped && dock === layout.dock && projects.every((p, i) => p === layout.projects[i]);
+  if (same) return layout;
+  return { ...layout, projects, ungrouped, ...(dock ? { dock } : null) };
+}
+
 function sameList(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }

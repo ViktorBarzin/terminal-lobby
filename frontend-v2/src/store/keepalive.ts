@@ -30,10 +30,14 @@
  *     array and leaves the DOM alone.
  */
 
+import { createSignal } from "solid-js";
+
 /** One kept session's identity. Created once, then never replaced. */
 export interface KeptSession {
-  /** identity across owners: `owner\u0000name` */
+  /** identity across owners: `keyOf`, so it survives a rename */
   key: string;
+  /** the name it was kept under, which a rename leaves behind: read the
+   *  session's current name from the list by `key` */
   name: string;
   owner?: string;
 }
@@ -55,10 +59,64 @@ export interface Selected {
 
 export const EMPTY_KEEP: KeepState = { list: [], seen: {} };
 
-/** A session's identity. The owner is part of it: two people can have a session
- *  of the same name, and they are different terminals. */
+const rawKey = (owner: string | undefined, name: string): string =>
+  `${owner ?? ""}\u0000${name}`;
+
+/**
+ * Each listed session's birth name, by its current key, for the sessions whose
+ * birth name is not already their name.
+ *
+ * A signal because `keyOf` runs inside memos (the selected key, the tiles, the
+ * workspace members), and a rename has to re-run them under the same answer.
+ */
+const [births, setBirths] = createSignal<ReadonlyMap<string, string>>(new Map());
+
+/**
+ * Record each session's birth name from a fresh session list. The lobby store
+ * calls this on every poll, before anything reads the new list.
+ *
+ * An own session is keyed with NO owner even though `/sessions` stamps one on
+ * it, the convention every caller of `keyOf` already follows, so `me` is
+ * needed to strip it.
+ */
+export function noteBirthNames(
+  rows: ReadonlyArray<{ name: string; owner?: string; bornAs?: string }>,
+  me: string,
+): void {
+  const next = new Map<string, string>();
+  for (const s of rows) {
+    if (!s.bornAs || s.bornAs === s.name) continue;
+    const owner = s.owner && s.owner !== me ? s.owner : undefined;
+    next.set(rawKey(owner, s.name), s.bornAs);
+  }
+  setBirths(next);
+}
+
+/**
+ * A session's identity. The owner is part of it: two people can have a session
+ * of the same name, and they are different terminals.
+ *
+ * The name part is the session's BIRTH NAME when it has one (CONTEXT.md), not
+ * its current name. A session is renamed seconds after it is created, when its
+ * first title lands (ADR-0022), and a key that moved with it read as a
+ * different terminal: the lobby disposed the live one and attached a fresh one,
+ * a blank pane for most of a second while Claude's first reply streamed. Keyed
+ * by birth name, the rename changes the label and nothing else. Asked with the
+ * old name, as a tab still holding the id it minted does, the answer is the
+ * same key, because the old name is the birth name.
+ */
 export function keyOf(sel: Selected): string {
-  return `${sel.owner ?? ""}\u0000${sel.name}`;
+  const born = births().get(rawKey(sel.owner, sel.name));
+  return rawKey(sel.owner, born ?? sel.name);
+}
+
+/**
+ * A listed session's key. An own session is keyed with NO owner even though
+ * `/sessions` stamps one on it, which is the convention the selection and the
+ * workspace members are written in.
+ */
+export function sessionKey(s: { name: string; owner?: string }, me: string): string {
+  return keyOf(s.owner && s.owner !== me ? { name: s.name, owner: s.owner } : { name: s.name });
 }
 
 /**
@@ -86,8 +144,9 @@ export function keepSelected(
  * sessions the lobby no longer lists (killed elsewhere, or gone with their tmux
  * server). The selected one always survives — it is the view on screen.
  *
- * `live` is the set of session names the lobby currently knows about; pass
- * undefined while the list is unknown, which keeps everything.
+ * `live` is the set of session KEYS (`keyOf`) the lobby currently knows about,
+ * so a session renamed since it was kept is still live; pass undefined while
+ * the list is unknown, which keeps everything.
  */
 export function pruneKept(
   state: KeepState,
@@ -100,7 +159,7 @@ export function pruneKept(
   const list = state.list.filter((k) => {
     if (k.key === selKey) return true;
     if (now - (state.seen[k.key] ?? 0) > ttl) return false;
-    if (live && !live.has(k.name)) return false;
+    if (live && !live.has(k.key)) return false;
     return true;
   });
   if (list.length === state.list.length) return state;

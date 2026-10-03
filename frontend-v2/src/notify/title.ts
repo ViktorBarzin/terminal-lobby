@@ -19,6 +19,7 @@
  * unseen) is what a caller without a visit store gets.
  */
 import { sessionLabel, type SessionTool } from "../types/lobby";
+import { promptLineFor } from "../store/prompt-line";
 
 export type TitleSession = {
   name: string;
@@ -88,9 +89,10 @@ export function composeTitle(p: TitleParts): string {
   // The tab speaks in titles like every other surface, through the one function
   // that decides what an untitled session reads as (types/lobby.ts). A session
   // the poll has not caught up with is looked up as a bare name, which is
-  // exactly the shape sessionLabel takes.
+  // exactly the shape sessionLabel takes, with the line the person typed
+  // standing in for a title as it does on the card.
   const labelFor = (name: string): string =>
-    sessionLabel(p.sessions.find((x) => x.name === name) ?? { name });
+    sessionLabel(p.sessions.find((x) => x.name === name) ?? { name, title: promptLineFor(name) ?? undefined });
   const attention = p.attentionSession ? "● " + labelFor(p.attentionSession) + " " : "";
   const active =
     p.activeSession != null ? p.sessions.find((s) => s.name === p.activeSession) : undefined;

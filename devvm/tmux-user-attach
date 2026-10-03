@@ -23,6 +23,11 @@ NAME_RE='^[a-zA-Z0-9_-]{1,32}$'
 name="${1:-}"
 [[ "$name" =~ $NAME_RE ]] || name="$(id -un)"
 
+# A name the browser minted (ADR-0019), as opposed to one a person picked. Only
+# a minted id becomes a session's birth name; see "birth name" below. Must be
+# the same pattern as tmux-api's mintedNameRe, which a test there checks.
+MINTED_RE='^[0-9a-hjkmnp-tv-z]{12}$'
+
 # Resolve this user's home from the password database rather than trusting
 # $HOME, the same way tmux-user-dirlist does. `sudo -H` at every in-repo call
 # site and `Defaults env_reset` in /etc/sudoers both set HOME to the target
@@ -431,6 +436,35 @@ if [[ "$warm" == 1 ]]; then
     exit 0
 fi
 
+# ---- birth name ------------------------------------------------------------
+# The lobby knows a session by the id it minted for it, its birth name
+# (@tl_born), and not by its current name: ADR-0022 renames a fresh session to
+# words seconds after it starts, and a browser keying by name would read that as
+# a different terminal and rebuild it mid-reply. So every session created here
+# under a minted id carries the id from its first moment, stamped on the claim
+# and on the cold path below.
+#
+# The other half is an attach that arrives HOLDING the id after the rename — a
+# tab whose socket dropped before it saw the new name. `new-session -A` would
+# create the id as an empty session and leave the person in a blank shell while
+# their conversation runs on under the new name (the phantom-session trap). So a
+# minted id that no live session is called is looked up among birth names
+# first, and the session born as it is attached instead. This runs ahead of the
+# claim on purpose: the session already exists, so no warm slot is owed.
+#
+# A session called the id still wins, because that is the session the id names
+# right now. Only minted ids, because only they are birth names: a name someone
+# picked can be reused after a rename, and resolving it would send them into a
+# session they did not ask for.
+if [[ "$name" =~ $MINTED_RE ]] && ! tmux has-session -t "=$name" 2>/dev/null; then
+    renamed="$(tmux list-sessions -F '#{@tl_born} #{session_name}' 2>/dev/null \
+        | awk -v id="$name" '$1 == id { print $2; exit }' || true)"
+    if [[ -n "$renamed" && "$renamed" =~ $NAME_RE ]]; then
+        logger -t tmux-user-attach "born-as: '$name' is now '$renamed'"
+        name="$renamed"
+    fi
+fi
+
 # ---- claim a pre-warmed slot ---------------------------------------------
 # `tmux rename-session` is atomic and refuses a name already in use, which is
 # the entire concurrency story. Two attaches racing for one new session cannot
@@ -448,7 +482,7 @@ fi
 # re-flagged — so a create that asked for either must not claim one. It takes
 # the cold path instead, which is the cheaper of the two: ~2.4s to boot with the
 # flags against ~9ms to claim and then ~4s driving the picker to the same place.
-if [[ "$cmd_key" == claude && -z "$model$effort" ]]; then
+if [[ "$cmd_key" == claude && -z "$model$effort" && -z "${renamed:-}" ]]; then
     slot="$(pool_slot_name "$start_dir")"
     # A slot warmed under another mod is dropped, not claimed, and this create
     # takes the cold path while the refill boots one on the installed mod. A
@@ -497,6 +531,10 @@ if [[ "$cmd_key" == claude && -z "$model$effort" ]]; then
         # them. A WARM slot still carries no origin at all, on purpose: it is not
         # in anybody's list until this rename makes it one.
         tmux set-option -t "=$name:" @tl_origin user >/dev/null 2>&1 || true
+        # And the name it was born with, for the reason "birth name" above gives.
+        if [[ "$name" =~ $MINTED_RE ]]; then
+            tmux set-option -t "=$name:" @tl_born "$name" >/dev/null 2>&1 || true
+        fi
         logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'${was_speculative:+ (was speculative)}"
         # Re-warm for whoever comes next — but only a STANDING slot. A
         # speculative one was a guess about a single create, and replacing it
@@ -558,6 +596,9 @@ logger -t tmux-user-attach "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\
 stamp_origin=()
 if ! tmux has-session -t "=$name" 2>/dev/null; then
     stamp_origin=(';' set-option -t "=$name:" @tl_origin user)
+    if [[ "$name" =~ $MINTED_RE ]]; then
+        stamp_origin+=(';' set-option -t "=$name:" @tl_born "$name")
+    fi
 fi
 
 if [[ "$scope_ok" == yes ]]; then

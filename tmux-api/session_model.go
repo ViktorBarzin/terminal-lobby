@@ -87,12 +87,13 @@ type Session struct {
 	// pane title carries none. Server only: what reaches a browser is the
 	// Title it becomes.
 	Summary string `json:"-"`
-	// BornAs is the name this session was FIRST created with, present only on
-	// a session that has since been renamed (sessionio.OptionBornAs). It is
-	// how a client that never saw the session under its original name still
-	// finds it: ADR-0022 renames a fresh session seconds after creation, often
-	// before any poll has listed it, and a browser holding the name it minted
-	// has nothing else to match on. Empty for a session that never moved.
+	// BornAs is the minted id this session was created with
+	// (sessionio.OptionBornAs): stamped at creation by tmux-user-attach, or at
+	// the first rename for a session older than that. The lobby keys a
+	// session's terminal and card by it, so the rename ADR-0022 makes seconds
+	// after creation changes a label and not which terminal is which; and a
+	// browser holding the id it minted finds the session by it after the
+	// rename. Empty for a session someone named by hand.
 	BornAs string `json:"bornAs,omitempty"`
 	// Tool is WHICH command the session runs — "claude", "codex", "pi" or
 	// "shell" — resolved from the pane's process tree (proc.go), never from

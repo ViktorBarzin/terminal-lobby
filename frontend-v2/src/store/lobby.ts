@@ -15,6 +15,7 @@ import {
   moveSessionToAnchor,
   removeSessionFromLayout,
   renameProject,
+  renameSessionInLayout,
   reorderGroups,
   sameLayout,
   stabilizeModel,
@@ -60,6 +61,7 @@ import { carryDraft } from "./drafts";
 import { lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
 import { lsGet, lsSet } from "../lib/storage";
+import { noteBirthNames } from "./keepalive";
 
 export interface SelectedSession {
   name: string;
@@ -778,12 +780,24 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (sRes.status === "fulfilled") {
       const list = withPromptLines(sRes.value);
       trackStates(list);
+      // Before anything reads the new list: a renamed session keeps the key it
+      // was mounted under only if its birth name is known by the time the
+      // selection follows it (store/keepalive.ts `keyOf`).
+      noteBirthNames(sRes.value, me());
       // Before setSessions, which is what makes `sessions` the OLD list here.
-      // The carry runs FIRST: moving the selection is what mounts a view under
-      // the new name, and that view reads the records this call moves.
+      // The carry runs FIRST: the view reads the records this call moves.
       const moves = renamesWithSelection(sessions, sRes.value);
       carryRenamedRecords(moves);
       followRenamedSelection(moves, sRes.value);
+      // This tab's own copy of the layout, which a create has just written and
+      // which ignores the server's for LAYOUT_GRACE_MS. tmux-api renamed its
+      // copy already; without this one the new name is unlisted here and files
+      // itself at the bottom of its group until the grace runs out.
+      if (moves.length > 0) {
+        const carry = (l: Layout) => moves.reduce((acc, [was, now]) => renameSessionInLayout(acc, was, now), l);
+        setLayout(carry(layout()));
+        if (lastWritten) lastWritten = carry(lastWritten);
+      }
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
       // <For> re-creates every group and card (taking open menus with it).
@@ -792,7 +806,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       setPolls((n) => n + 1);
       // drop optimistic pending that the server now knows about
       const known = new Set(sRes.value.map((s) => s.name));
-      const stillPending = pending().filter((p) => !known.has(p.name));
+      // A birth name counts as known too. A session renamed before any poll
+      // listed its minted id is the pending card's session under another name,
+      // and keeping the card would show it twice until the tab reloaded.
+      const born = new Set(
+        sRes.value.filter((s) => s.bornAs && (!s.owner || s.owner === me())).map((s) => s.bornAs!),
+      );
+      const stillPending = pending().filter((p) => !known.has(p.name) && !born.has(p.name));
       // Pending names count as live. A create's session does not exist
       // server-side until the terminal's socket attaches and ttyd runs
       // tmux-user-attach, and GET /sessions is behind a 5-second cache, so the
@@ -1154,6 +1174,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         // without this the card reads as twelve random characters for the
         // second before the server has been told about the session.
         title: t,
+        // The id is this session's birth name from its first moment, which is
+        // what its card and its terminal are keyed by (store/keepalive.ts).
+        bornAs: n,
+        // Where it will run, so an empty box reads as its directory rather
+        // than "New session" (sessionLabel). Ungrouped and dirless projects
+        // start in $HOME, which the first poll reports.
+        cwd: layout().projects.find((p) => p.name === group)?.dir || undefined,
         owner: me(),
         attached: 0,
         lastActivity: nowSec,

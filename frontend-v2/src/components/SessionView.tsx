@@ -315,12 +315,19 @@ export const SessionView: Component<{
     retryConn: (retry: () => void) => void;
   };
 }> = (props) => {
-  const session = props.session;
+  /**
+   * The session's name NOW. This view is keyed by birth name and outlives the
+   * rename that lands seconds after a create (store/keepalive.ts `keyOf`), so
+   * everything here reads the name when it acts rather than once at mount. The
+   * open terminal socket and transcript stream are left alone; their next
+   * connect uses the new name.
+   */
+  const session = () => props.session;
   const store = createSessionStore(session, {
     notify: props.notify,
     autoStart: false,
   });
-  const [mode, setMode, toggleMode] = createViewMode(() => session);
+  const [mode, setMode, toggleMode] = createViewMode(session);
   /**
    * Put this session on a model or an effort level.
    *
@@ -362,7 +369,7 @@ export const SessionView: Component<{
         reason: "No model to pick here.",
       });
     return setSessionModel({
-      session,
+      session: session(),
       harness: h,
       model: choice.model,
       effort: choice.effort,
@@ -403,7 +410,7 @@ export const SessionView: Component<{
   // driving has always attached read-write and claimed the grid, and a preload
   // still refuses to attach at all when it resolves to watch at dwell time.
   const [watch, , toggleWatch] = createWatchMode(
-    () => session,
+    session,
     () => props.driven?.() ?? false,
     () => props.lens?.() ?? "",
   );
@@ -420,8 +427,13 @@ export const SessionView: Component<{
     // moment it stops being. `watch()` is read, never recomputed; promotion
     // publishes what dwell time decided.
     const decided = watch();
-    if (preloading()) clearResolvedWatch(session);
-    else publishResolvedWatch(session, decided);
+    const name = session();
+    if (preloading()) clearResolvedWatch(name);
+    else publishResolvedWatch(name, decided);
+    // A rename re-runs this under the new name; the old one names nothing.
+    onCleanup(() => {
+      if (session() !== name) clearResolvedWatch(name);
+    });
   });
   /** The user this tab is acting as, "" in an ordinary tab. */
   const lens = () => props.lens?.() ?? "";
@@ -634,7 +646,7 @@ export const SessionView: Component<{
   // The sidebar reads this view's resolved state for the open session; drop it
   // when the view goes so a stale decision cannot outlive the attach it
   // described.
-  onCleanup(() => clearResolvedWatch(session));
+  onCleanup(() => clearResolvedWatch(session()));
 
   /**
    * The last grid this view claimed, and when. A claim is idempotent and cheap,
@@ -688,7 +700,7 @@ export const SessionView: Component<{
     if (grid === claimedGrid && now - claimedAt < GRID_CLAIM_QUIET_MS) return;
     claimedGrid = grid;
     claimedAt = now;
-    void setSessionGrid(session, cols, rows);
+    void setSessionGrid(session(), cols, rows);
   };
 
   /**
@@ -932,7 +944,9 @@ export const SessionView: Component<{
   // to tell apart.
   let textSection: HTMLElement | undefined;
   watchBlank({
-    session,
+    get session() {
+      return session();
+    },
     watching: () => onScreen() && mode() === "text" && !preloading() && !windowAway(),
     drawn: () => textSection?.querySelectorAll("[data-eid], [data-eids]").length ?? 0,
     closed: () => store.status() === "closed",
@@ -1170,7 +1184,7 @@ export const SessionView: Component<{
    * creating exists (clipboard/attach.ts).
    */
   const attachFiles = (files: File[]): Promise<DraftAttachment[]> =>
-    uploadAttachments(files, session, { notify: props.notify });
+    uploadAttachments(files, session(), { notify: props.notify });
 
   const resolve = (reqId: string, d: PermissionDecision) => void store.resolvePermission(reqId, d);
 
@@ -1221,7 +1235,9 @@ export const SessionView: Component<{
    *  watch. session-events enforces it; this only hides what would not work. */
   const canControlBrowser = (): boolean => !lens() && props.access?.() !== "ro";
   const browserCards: BrowserCardHost = {
-    session,
+    get session() {
+      return session();
+    },
     owner: browserOwner(),
     state: () => props.browser?.(),
     active: () => onScreen() && mode() === "text" && !store.parked(),
@@ -1323,7 +1339,7 @@ export const SessionView: Component<{
   };
 
   const image = installImageClipboard({
-    session: () => session,
+    session,
     tileBox,
     /**
      * Take focus when a drop lands in this tile and focus is elsewhere.
@@ -1335,7 +1351,7 @@ export const SessionView: Component<{
      * gallery, B's path typed into A's pty. Selecting the session IS focusing
      * its tile, since the focused tile is the selected one.
      */
-    focusTile: () => props.onSwitchSession?.(session, props.owner),
+    focusTile: () => props.onSwitchSession?.(session(), props.owner),
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
     enabled: () => !watch(),
     // The one subsystem in this file that had no `onScreen` in it, and the one
@@ -1522,8 +1538,8 @@ export const SessionView: Component<{
               <Show
                 when={props.onSwitchSession && coarse()}
                 fallback={
-                  <span class="tl-bar-title" title={session}>
-                    {props.label ?? session}
+                  <span class="tl-bar-title" title={session()}>
+                    {props.label ?? session()}
                   </span>
                 }
               >
@@ -1533,10 +1549,10 @@ export const SessionView: Component<{
                     class="tl-bar-title tl-session-switch"
                     aria-haspopup="menu"
                     aria-expanded={picker.open()}
-                    title={session}
+                    title={session()}
                     onClick={() => picker.toggle()}
                   >
-                    {props.label ?? session}
+                    {props.label ?? session()}
                   </button>
                   <Show when={picker.open()}>
                     <div
@@ -1846,7 +1862,7 @@ export const SessionView: Component<{
             starting={store.starting()}
             sessionState={store.state()}
             onListDir={listDir}
-            session={session}
+            session={session()}
             me={props.me?.() ?? ""}
             harness={modelHarness(props.tool?.())}
             onSetModel={setModel}
@@ -1860,7 +1876,7 @@ export const SessionView: Component<{
                   ? "codex"
                   : undefined
             }
-            onSetMode={(m) => setSessionMode({ session, mode: m })}
+            onSetMode={(m) => setSessionMode({ session: session(), mode: m })}
             stampedModel={piReading()}
             modelOffer={piOffer()}
             onAttach={attachFiles}
@@ -1900,7 +1916,7 @@ export const SessionView: Component<{
               other mount, preload included, renders its terminal here. */}
           <Show when={!(preloading() && watch())}>
             <TerminalNative
-              args={terminalFrameArgs(session, {
+              args={terminalFrameArgs(session(), {
                 cmd: props.creating ? props.newCommand?.() : undefined,
                 model: props.creating ? props.newLaunch?.().model : undefined,
                 effort: props.creating ? props.newLaunch?.().effort : undefined,
@@ -1964,7 +1980,7 @@ export const SessionView: Component<{
               // WHICH session rang is the caller's to add: this component is
               // handed `args`, not a name. It is in our own document, so the
               // name is ours to supply and there is nothing to validate.
-              onAttention={(kind) => noteAttention(kind, session)}
+              onAttention={(kind) => noteAttention(kind, session())}
               // Which session's window to size, and whether this device may say
               // so at all, both belong here for the same reason `onAttention`'s
               // name does: the terminal is handed `args`, not a session.
@@ -1997,7 +2013,7 @@ export const SessionView: Component<{
             720px wide; over the whole screen on a phone. */}
         <Show when={browserOpen()}>
           <BrowserPanel
-            session={session}
+            session={session()}
             owner={browserOwner()}
             state={() => props.browser?.()}
             onScreen={onScreen}
