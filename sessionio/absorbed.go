@@ -98,6 +98,9 @@ func queuedCommand(line []byte) (queuedAttachment, bool) {
 // the start of a turn of its own. The renderer draws one prompt per turn, and
 // what Claude writes after taking it is its answer to it.
 func (n *Normalizer) absorbed(rec Record) []Event {
+	if n.agent {
+		return n.steered(rec)
+	}
 	text, pics, ok := absorbedPrompt(rec)
 	if !ok {
 		return nil

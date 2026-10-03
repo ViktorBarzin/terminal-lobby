@@ -153,6 +153,8 @@ func main() {
 	web.HandleFunc("GET /events/{session}/agents/{agent}", rg.handleDrillEvents(*hb))
 	web.HandleFunc("GET /events/{session}/agents/{agent}/earlier", rg.handleDrillEarlier())
 	web.HandleFunc("GET /events/{session}/agents/{agent}/result/{toolId}", rg.handleDrillResult())
+	// A message the person sends the open agent from the composer (steer.go).
+	web.HandleFunc("POST /events/{session}/agents/{agent}/message", rg.handleSteer())
 	// Typing a prompt into the session: the harness decides what "ready" means,
 	// and a suspended session or a pi trust question refuses (turn_routes.go).
 	web.HandleFunc("POST /prompt/{session}", handlePrompt(rg, injector))

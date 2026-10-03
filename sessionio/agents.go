@@ -90,7 +90,23 @@ type AgentInfo struct {
 	// outstanding in its own transcript, which is what lets the panel keep it
 	// on screen when nothing else says the session is busy.
 	Waiting bool `json:"waiting,omitempty"`
+
+	// Steerable says the person can message this agent from the Text view
+	// now, and SteerNote why not when they cannot (SteerFinished and the rest).
+	// Decided in session-events from the engine's own agent list, which the
+	// transcript cannot be: a teammate reads done between its turns, exactly
+	// when it takes a message, and an agent killed mid-call reads running for
+	// good.
+	Steerable bool   `json:"steerable,omitempty"`
+	SteerNote string `json:"steerNote,omitempty"`
 }
+
+// Why an agent cannot be messaged (AgentInfo.SteerNote).
+const (
+	SteerFinished = "finished" // the agent has finished; finished agents are read-only
+	SteerWorkflow = "workflow" // a workflow member, which the engine does not list to address
+	SteerOldMod   = "old-mod"  // the session's Claude runs a mod from before steering
+)
 
 // WorkflowPhase is one phase of a Workflow run, in run order.
 type WorkflowPhase struct {

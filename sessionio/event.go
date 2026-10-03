@@ -147,6 +147,10 @@ type Event struct {
 	// text, so a client from before the marker renders what it always did.
 	Origin string `json:"origin,omitempty"`
 	Plan   string `json:"plan,omitempty"`
+	// Steer marks the user event of a message the person sent a subagent from
+	// the lobby, in that agent's own stream (see steer.go). Body is what they
+	// typed, without the line that tells the agent who is speaking.
+	Steer bool `json:"steer,omitempty"`
 	// Images names the pictures a prompt or a tool result carried, by
 	// position. The bytes are never on the wire: a client asks the image-block
 	// routes for the one it scrolls to (see ImageRef).

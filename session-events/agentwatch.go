@@ -77,6 +77,14 @@ type agentWatch struct {
 	nextSub int
 	paths   map[string]string // agent id -> transcript, for every agent file in the last listing
 
+	// engine is the engine's own agent list as the mod last reported it, by
+	// id, nil until it has reported one; canSteer is whether the session's mod
+	// runs the steer op. Both decide AgentInfo.Steerable (steerability), and
+	// are guarded by engineMu, since the mod's routes set them.
+	engineMu sync.Mutex
+	engine   map[string]sessionio.ModAgent
+	canSteer bool
+
 	agents  map[string]*watchedAgent
 	runs    map[string]*watchedRun // by run id, "wf_<runId>"
 	failing bool                   // the last listing failed; logged once per run of failures
@@ -170,6 +178,64 @@ func (aw *agentWatch) SetDir(dir string) {
 	case aw.wake <- struct{}{}:
 	default:
 	}
+}
+
+// SetEngine records the engine's agent list from the mod's `agents` event and
+// has the set published again.
+func (aw *agentWatch) SetEngine(agents []sessionio.ModAgent) {
+	m := make(map[string]sessionio.ModAgent, len(agents))
+	for _, a := range agents {
+		m[a.ID] = a
+	}
+	aw.engineMu.Lock()
+	aw.engine = m
+	aw.engineMu.Unlock()
+	aw.poke()
+}
+
+// SetSteer records whether the session's mod can steer an agent.
+func (aw *agentWatch) SetSteer(can bool) {
+	aw.engineMu.Lock()
+	changed := aw.canSteer != can
+	aw.canSteer = can
+	aw.engineMu.Unlock()
+	if changed {
+		aw.poke()
+	}
+}
+
+// poke asks the loop for a scan now, which publishes the set again.
+func (aw *agentWatch) poke() {
+	select {
+	case aw.wake <- struct{}{}:
+	default:
+	}
+}
+
+// steerability is whether the person can message an agent from the Text view,
+// and the note why not. The engine's list is the authority: an idle teammate
+// is still running there though its transcript reads done, and an agent it
+// lists as completed is finished whatever its file last said. An agent the
+// engine has not listed yet, which it reports only as turns complete, goes by
+// its file. Workflow members are not addressed (the engine lists the run, not
+// them), and a mod from before steering cannot be asked at all.
+func steerability(info sessionio.AgentInfo, engine map[string]sessionio.ModAgent, canSteer bool) (bool, string) {
+	switch {
+	case !canSteer:
+		return false, sessionio.SteerOldMod
+	case info.WorkflowID != "":
+		return false, sessionio.SteerWorkflow
+	}
+	if a, ok := engine[info.ID]; ok {
+		if a.Status == "running" && a.Type != "workflow" {
+			return true, ""
+		}
+		return false, sessionio.SteerFinished
+	}
+	if info.State == sessionio.AgentRunning {
+		return true, ""
+	}
+	return false, sessionio.SteerFinished
 }
 
 func (aw *agentWatch) watched() bool {
@@ -597,6 +663,11 @@ func (aw *agentWatch) snapshot(now time.Time) sessionio.AgentSet {
 		set.Workflows = append(set.Workflows, run)
 	}
 	set.Agents = carried(going, ended)
+	aw.engineMu.Lock()
+	for i := range set.Agents {
+		set.Agents[i].Steerable, set.Agents[i].SteerNote = steerability(set.Agents[i], aw.engine, aw.canSteer)
+	}
+	aw.engineMu.Unlock()
 	sort.Slice(set.Workflows, func(i, j int) bool {
 		a, b := set.Workflows[i], set.Workflows[j]
 		if a.StartedAt != b.StartedAt {

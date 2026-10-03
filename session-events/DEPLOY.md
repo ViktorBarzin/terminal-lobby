@@ -38,6 +38,11 @@ and its full tool results through routes below `/events/{session}` (see
 `drill.go`). They sit under that prefix on purpose, so the ingress rule above
 already covers them and no new prefix is needed.
 
+A message the person types to the open agent goes the same way: a POST to
+the agent's own drill-in path with "message" as its last segment (`steer.go`),
+which the mod hands to the agent's inbox. The ingress rule matches by path prefix with no method
+restriction, so it reaches here as the drill-in's reads do.
+
 `/hooks/*` and `/mod/*` are never routed publicly, and their handlers are
 additionally gated to loopback in `main.go`: their callers run as OS users on
 this box, so the ingress is not their only guard. The mod's hello identifies

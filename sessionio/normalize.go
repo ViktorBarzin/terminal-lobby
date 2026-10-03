@@ -423,6 +423,7 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 		case "text":
 			k := KindText
 			body := bl.Text
+			steered := false
 			if typed {
 				k = KindUser // rendered as a plain bubble, never as markdown
 				// A slash command is recorded as markup rather than as the line
@@ -431,9 +432,15 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 				if line, ok := commandLine(body); ok {
 					body = line
 				}
+				// A message the person sent this agent from the lobby, taken
+				// while it was idle (see steer.go).
+				if steer, ok := steerText(body); ok && n.agent {
+					body, steered = steer, true
+				}
 			}
 			e := n.emit(k, at)
 			e.Body = plainText(body)
+			e.Steer = steered
 			// The record the plan approval's clear context opens a
 			// conversation with (see Event.Origin).
 			if isPrompt && rec.OriginKind() == OriginAutoContinuation && rec.PlanContent != "" {

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -85,6 +86,9 @@ type modHello struct {
 	Model      string `json:"model"`
 	Version    string `json:"version"`
 	Mod        string `json:"mod"`
+	// Ops are the command ops this mod runs. A mod from before the field
+	// sends none, and is sent nothing it would answer "unknown op" to.
+	Ops []string `json:"ops"`
 }
 
 // modCommand is one command for the mod. One struct for every op.
@@ -100,6 +104,8 @@ type modCommand struct {
 	Reason      string            `json:"reason,omitempty"`
 	Model       string            `json:"model,omitempty"`
 	Effort      string            `json:"effort,omitempty"`
+	// AgentID is the subagent a steer is for (steer.go).
+	AgentID string `json:"agentId,omitempty"`
 }
 
 // modAck is the mod's answer to a command.
@@ -132,6 +138,7 @@ type modConn struct {
 	session    string
 	pane       string
 	transcript string
+	ops        []string // the hello's: what this mod can be sent
 	token      string
 	ls         *liveSource
 	cmds       []modCommand
@@ -444,7 +451,7 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 		c.ls.fs.SetPath(b.Transcript)
 		c.ls.agents.SetDir(sessionio.SessionDir(b.Transcript))
 	}
-	c.pane, c.transcript = b.Pane, b.Transcript
+	c.pane, c.transcript, c.ops = b.Pane, b.Transcript, b.Ops
 	if c.ls == nil {
 		c.ls = h.rg.startMod(b.Session, b.Transcript, us.reader, us.agents)
 		if !history {
@@ -453,6 +460,7 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 			history = true
 		}
 	}
+	c.ls.agents.SetSteer(slices.Contains(b.Ops, "steer"))
 	c.lastSeen = h.now()
 	token := c.token
 	c.mu.Unlock()
@@ -595,6 +603,9 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 			bye = true
 		case sessionio.ModRowEvent:
 			c.firstPromptShown(ev, time.Now())
+		case sessionio.ModAgentsEvent:
+			// The engine's own list decides who can be messaged (steer.go).
+			ls.agents.SetEngine(ev.Agents)
 		}
 		fs.Feed(ev)
 		c.mu.Lock()
