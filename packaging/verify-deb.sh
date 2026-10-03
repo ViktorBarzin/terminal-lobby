@@ -86,6 +86,11 @@ for dep in ttyd-devvm viu tmux acl sudo; do
     "$(dpkg-deb -f "$DEB" Depends | grep -c "\\b$dep\\b" || true)" 1
 done
 
+# tmux-user-attach reads it to tell a pre-warmed slot booted on an older mod
+# from a current one. Missing, every slot reads current and keeps the old mod.
+check "the Claude mod ships its build id" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/share/terminal-lobby/claude-plugins/plugins/terminal-lobby/\.mod-id$' || true)" 1
+
 # The session browser (ADR-0035). Claude Code execs the launcher, the launcher
 # runs node on host.mjs at a compiled-in path, and the host imports
 # @playwright/mcp from the node_modules beside it. Any one missing leaves a

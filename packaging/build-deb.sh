@@ -77,6 +77,12 @@ mkdir -p "$MODS/.claude-plugin" "$MODS/plugins/terminal-lobby/.claude-plugin"
 cp claude-mod/marketplace.json "$MODS/.claude-plugin/marketplace.json"
 cp claude-mod/.claude-plugin/plugin.json "$MODS/plugins/terminal-lobby/.claude-plugin/plugin.json"
 cp -a claude-mod/hooks "$MODS/plugins/terminal-lobby/hooks"
+# Which build of the mod this is, by content, so it changes only when the mod
+# does. tmux-user-attach stamps each pre-warmed slot with it and replaces a slot
+# warmed under another one: a Claude loads the mod once, at start, so a slot
+# warmed before this deploy would otherwise hand out the old mod.
+( cd "$MODS/plugins/terminal-lobby" && find . -type f ! -name .mod-id -print0 | LC_ALL=C sort -z \
+    | xargs -0 sha256sum | sha256sum | cut -c1-16 ) > "$MODS/plugins/terminal-lobby/.mod-id"
 python3 - "$MODS" <<'PY' || { echo "build: the staged Claude mod is malformed" >&2; exit 1; }
 import json, os, sys
 root = sys.argv[1]
