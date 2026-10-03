@@ -22,7 +22,11 @@ type procTree struct {
 }
 
 // procTreeFrom scans procDir (normally /proc) once — a few ms, no forks.
-// Processes that exit mid-scan are skipped.
+// Processes that exit mid-scan are skipped, and so are zombies: a claude that
+// has exited but not yet been reaped by the pane's shell is not running, and
+// procGone already says so. Counting it here made stopClaude's after-the-kill
+// check see a claude the wait had just watched exit. A zombie has no children
+// (they are reparented when it exits), so dropping it loses no subtree.
 func procTreeFrom(procDir string) (procTree, error) {
 	t := procTree{children: map[int][]int{}, comm: map[int]string{}}
 	entries, err := os.ReadDir(procDir)
@@ -38,8 +42,8 @@ func procTreeFrom(procDir string) (procTree, error) {
 		if err != nil {
 			continue
 		}
-		comm, ppid, ok := parseProcStat(string(raw))
-		if !ok {
+		comm, state, ppid, ok := parseProcStat(string(raw))
+		if !ok || state == "Z" {
 			continue
 		}
 		t.comm[pid] = comm
@@ -51,24 +55,24 @@ func procTreeFrom(procDir string) (procTree, error) {
 	return t, nil
 }
 
-// parseProcStat extracts (comm) and ppid from a /proc/<pid>/stat line.
+// parseProcStat extracts (comm), state and ppid from a /proc/<pid>/stat line.
 // comm may itself contain spaces and parens — it ends at the LAST ')'.
-func parseProcStat(s string) (comm string, ppid int, ok bool) {
+func parseProcStat(s string) (comm, state string, ppid int, ok bool) {
 	open := strings.IndexByte(s, '(')
 	close := strings.LastIndexByte(s, ')')
 	if open < 0 || close < open {
-		return "", 0, false
+		return "", "", 0, false
 	}
 	// After the comm: "S <ppid> <pgrp> ..."
 	fields := strings.Fields(s[close+1:])
 	if len(fields) < 2 {
-		return "", 0, false
+		return "", "", 0, false
 	}
 	p, err := strconv.Atoi(fields[1])
 	if err != nil {
-		return "", 0, false
+		return "", "", 0, false
 	}
-	return s[open+1 : close], p, true
+	return s[open+1 : close], fields[0], p, true
 }
 
 // hasClaudeUnder reports whether pid or any descendant is a claude

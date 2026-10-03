@@ -394,3 +394,41 @@ func TestSuspendedSessionsAreClaudes(t *testing.T) {
 		}
 	}
 }
+
+// The same zombie window TestProcGoneCountsAZombieAsFinished covers, seen from
+// the tree. stopClaude waits with procGone, which counts a zombie as finished,
+// then re-checks the pane with claudeUnder; when the tree still counted the
+// zombie, a restart killed claude and then refused to bring it back
+// ("still has a claude under pane … after the kill"). Hit 4 times in ~32 stops
+// between 2026-09-19 and 2026-10-03.
+func TestProcTreeIgnoresAZombieClaude(t *testing.T) {
+	dir := t.TempDir()
+	write := func(pid int, stat string) {
+		d := filepath.Join(dir, strconv.Itoa(pid))
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "stat"), []byte(stat), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(100, "100 (zsh) S 1 100 100 0 -1 0 0\n")      // pane shell, not yet reaped its child
+	write(101, "101 (claude) Z 100 101 100 0 -1 0 0\n") // claude, exited
+	write(102, "102 (python3) S 100 102 100 0 -1 0 0\n")
+	write(200, "200 (zsh) S 1 200 200 0 -1 0 0\n") // a live session for contrast
+	write(201, "201 (claude) S 200 201 200 0 -1 0 0\n")
+
+	tree, err := procTreeFrom(dir)
+	if err != nil {
+		t.Fatalf("procTreeFrom: %v", err)
+	}
+	if pid, ok := tree.claudeUnder(100); ok {
+		t.Errorf("claudeUnder(100) = %d, want none: the only claude is a zombie", pid)
+	}
+	if tree.hasStateOwnerUnder(100) {
+		t.Error("a zombie claude keeps the pane's state alive")
+	}
+	if pid, ok := tree.claudeUnder(200); !ok || pid != 201 {
+		t.Errorf("claudeUnder(200) = %d, %v, want 201, true", pid, ok)
+	}
+}
