@@ -76,6 +76,26 @@ pool_slot_name() {
     printf '%s%s' "$POOL_PREFIX" "$(printf '%s' "${d:-$1}" | tr -c 'a-zA-Z0-9' '_')"
 }
 
+# Which build of the lobby's Claude mod is installed: a content hash the package
+# writes beside the mod (packaging/build-deb.sh). A Claude loads the mod once, at
+# start, so a slot warmed before a deploy keeps the old mod for as long as it
+# waits, and the standing slot waits indefinitely. Each slot is stamped with the
+# id it booted under (@tl_mod_id), and a slot whose stamp is not the installed id
+# is replaced rather than claimed. No file (a box without the package, a test)
+# means no check. TL_MOD_ID_FILE is for the tests.
+MOD_ID_FILE="${TL_MOD_ID_FILE:-/usr/share/terminal-lobby/claude-plugins/plugins/terminal-lobby/.mod-id}"
+mod_id=''
+[[ -r "$MOD_ID_FILE" ]] && read -r mod_id < "$MOD_ID_FILE" || true
+
+# slot_is_stale SLOT: the slot exists and was warmed under another mod, or under
+# a build too old to stamp one.
+slot_is_stale() {
+    [[ -n "$mod_id" ]] || return 1
+    local stamp
+    stamp="$(tmux display -p -t "=$1:" '#{@tl_mod_id}' 2>/dev/null)" || return 1
+    [[ "$stamp" != "$mod_id" ]]
+}
+
 # TL_POOL_WARM=1 means "create the slot for $start_dir, detached, and exit"
 # rather than "attach a session". The name is derived, never taken from $1.
 warm="${TL_POOL_WARM:-}"
@@ -369,6 +389,11 @@ if [[ "$warm" == 1 ]]; then
         logger -t tmux-user-attach "pool: refusing to warm with cmd='${cmd_key:-<none>}' (only 'claude' is pooled)"
         exit 64
     }
+    # A slot warmed under another mod is replaced: it would hand out the old one.
+    if tmux has-session -t "=$name" 2>/dev/null && slot_is_stale "$name"; then
+        logger -t tmux-user-attach "pool: replacing slot for '$start_dir' warmed under another mod"
+        tmux kill-session -t "=$name" >/dev/null 2>&1 || true
+    fi
     # Idempotent: a slot that is already warm is left strictly alone, so a
     # duplicated or racing trigger cannot stack two slots for one directory.
     if tmux has-session -t "=$name" 2>/dev/null; then
@@ -394,6 +419,9 @@ if [[ "$warm" == 1 ]]; then
     # user option. The value is when the guess was made, which is what the
     # reaper compares against; a standing pool slot carries no marker at all and
     # is therefore never collected.
+    if [[ -n "$mod_id" ]]; then
+        tmux set-option -t "=$name:" @tl_mod_id "$mod_id" >/dev/null 2>&1 || true
+    fi
     if [[ "$speculative" == 1 ]]; then
         # `=name:` and not `=name`: set-option rejects the bare exact form, and
         # plain `name` would resolve by unambiguous PREFIX — which could stamp a
@@ -422,7 +450,19 @@ fi
 # flags against ~9ms to claim and then ~4s driving the picker to the same place.
 if [[ "$cmd_key" == claude && -z "$model$effort" ]]; then
     slot="$(pool_slot_name "$start_dir")"
-    if [[ "$name" != "$slot" ]] && tmux rename-session -t "=$slot" "$name" 2>/dev/null; then
+    # A slot warmed under another mod is dropped, not claimed, and this create
+    # takes the cold path while the refill boots one on the installed mod. A
+    # speculative slot is not refilled, for the reason the refill below gives.
+    if [[ "$name" != "$slot" ]] && slot_is_stale "$slot"; then
+        was_speculative="$(tmux display -p -t "=$slot:" '#{@tl_speculative}' 2>/dev/null || true)"
+        tmux kill-session -t "=$slot" >/dev/null 2>&1 || true
+        logger -t tmux-user-attach "pool: dropped slot for '$start_dir' warmed under another mod"
+        if [[ -z "$was_speculative" && "$scope_ok" == yes ]]; then
+            systemctl --user start --no-block \
+                "tl-pool-warm@$(systemd-escape --path "$start_dir").service" \
+                >/dev/null 2>&1 || true
+        fi
+    elif [[ "$name" != "$slot" ]] && tmux rename-session -t "=$slot" "$name" 2>/dev/null; then
         # Read the mark BEFORE clearing it: it decides whether a refill is owed.
         was_speculative="$(tmux display -p -t "=$name:" '#{@tl_speculative}' 2>/dev/null || true)"
         # The claim is what turns a guess into somebody's session, so the

@@ -75,7 +75,10 @@ func runAttachWithLog(t *testing.T, args ...string) (string, string) {
 		shellQuote(home)+"\nexit 0\n")
 
 	cmd := exec.Command("bash", append([]string{script}, args...)...)
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	// No mod id, as on a box without the package: the slot check is skipped,
+	// rather than reading whatever this machine has installed.
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"),
+		"TL_MOD_ID_FILE="+filepath.Join(home, "no-mod-id"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("attach %v failed: %v\n%s", args, err, out)
@@ -273,5 +276,102 @@ func TestAttachStartsClaudeWithoutPermissionChecks(t *testing.T) {
 		if got := runAttach(t, args...); !strings.Contains(got, "claude --dangerously-skip-permissions") {
 			t.Errorf("attach %v does not start Claude with --dangerously-skip-permissions:\n%s", args, got)
 		}
+	}
+}
+
+// runPool runs the script against a pool slot stamped with `slotMod` while the
+// installed mod's id is `installed`, and returns every tmux and systemctl call
+// it made. The stub tmux answers `display` with the slot's stamp and says yes
+// to everything else, so the slot always exists.
+func runPool(t *testing.T, warm bool, slotMod, installed string) string {
+	t.Helper()
+	script, err := filepath.Abs(filepath.Join("..", "devvm", "tmux-user-attach"))
+	if err != nil || !fileExists(script) {
+		t.Skip("tmux-user-attach not present")
+	}
+	bin, home := t.TempDir(), t.TempDir()
+	log := filepath.Join(t.TempDir(), "calls")
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("stub %s: %v", name, err)
+		}
+	}
+	write("tmux", "#!/usr/bin/env bash\nprintf 'tmux %s\\n' \"$*\" >> "+shellQuote(log)+"\n"+
+		"if [[ \"$1\" == display ]]; then [[ \"$*\" == *tl_mod_id* ]] && printf '%s\\n' \"$TL_STUB_SLOT_MOD\"; exit 0; fi\n"+
+		// A killed slot stays gone, so the warm that follows has nothing to find.
+		"if [[ \"$1\" == kill-session ]]; then : > "+shellQuote(log+".killed")+"; exit 0; fi\n"+
+		"if [[ \"$1\" == has-session && -e "+shellQuote(log+".killed")+" ]]; then exit 1; fi\nexit 0\n")
+	write("systemctl", "#!/usr/bin/env bash\nprintf 'systemctl %s\\n' \"$*\" >> "+shellQuote(log)+"\nexit 0\n")
+	write("systemd-run", "#!/usr/bin/env bash\nwhile [[ \"$1\" == -* ]]; do shift; done\nexec \"$@\"\n")
+	write("systemd-escape", "#!/usr/bin/env bash\nprintf 'escaped\\n'\n")
+	write("logger", "#!/usr/bin/env bash\nexit 0\n")
+	write("getent", "#!/usr/bin/env bash\nprintf 'tl:x:1000:1000::%s:/bin/bash\\n' "+shellQuote(home)+"\nexit 0\n")
+	modFile := filepath.Join(home, "mod-id")
+	if err := os.WriteFile(modFile, []byte(installed+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", script, "poolcase", "/tmp", "claude", "", "")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"),
+		"TL_MOD_ID_FILE="+modFile, "TL_STUB_SLOT_MOD="+slotMod)
+	if warm {
+		cmd.Env = append(cmd.Env, "TL_POOL_WARM=1")
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("attach failed: %v\n%s", err, out)
+	}
+	calls, _ := os.ReadFile(log)
+	return string(calls)
+}
+
+// A pool slot is a Claude that started before anyone asked for it, and a
+// Claude loads the lobby's mod once, at start. A slot warmed before a deploy
+// therefore runs the OLD mod for as long as it waits, and the standing slot
+// waits indefinitely: on 2026-10-03 the one for ~/code had been up 11 hours
+// across two releases, so a fix in the mod would have missed every session
+// claimed out of it. A slot whose stamp is not the installed mod's id is
+// dropped instead of claimed, and the create takes the cold path.
+func TestAttachDropsASlotWarmedOnAnOlderMod(t *testing.T) {
+	calls := runPool(t, false, "old", "new")
+	slot := "=" + prewarmSlotName("/tmp")
+	if !strings.Contains(calls, "tmux kill-session -t "+slot) {
+		t.Errorf("a stale slot was not dropped:\n%s", calls)
+	}
+	if strings.Contains(calls, "rename-session") {
+		t.Errorf("a stale slot was claimed:\n%s", calls)
+	}
+	if !strings.Contains(calls, "systemctl --user start --no-block tl-pool-warm@") {
+		t.Errorf("a dropped slot was not refilled:\n%s", calls)
+	}
+}
+
+func TestAttachClaimsASlotWarmedOnTheCurrentMod(t *testing.T) {
+	calls := runPool(t, false, "new", "new")
+	if !strings.Contains(calls, "rename-session") || strings.Contains(calls, "kill-session") {
+		t.Errorf("a current slot was not claimed as before:\n%s", calls)
+	}
+}
+
+// A slot that predates the stamp carries none, which reads as stale: it was
+// warmed by a build that did not know to write one, so it is older than this
+// one by construction.
+func TestAttachDropsASlotWithNoStamp(t *testing.T) {
+	if calls := runPool(t, false, "", "new"); strings.Contains(calls, "rename-session") {
+		t.Errorf("an unstamped slot was claimed:\n%s", calls)
+	}
+}
+
+// The warm is where the slot learns which mod it booted with, and where a
+// stale standing slot is replaced rather than declared "already warm".
+func TestWarmStampsTheModAndReplacesAStaleSlot(t *testing.T) {
+	slot := "=" + prewarmSlotName("/tmp")
+	stale := runPool(t, true, "old", "new")
+	for _, want := range []string{"tmux kill-session -t " + slot, "new-session -d", "set-option -t " + slot + ": @tl_mod_id new"} {
+		if !strings.Contains(stale, want) {
+			t.Errorf("warm over a stale slot did not run %q:\n%s", want, stale)
+		}
+	}
+	current := runPool(t, true, "new", "new")
+	if strings.Contains(current, "kill-session") || strings.Contains(current, "new-session") {
+		t.Errorf("a current slot was rebuilt:\n%s", current)
 	}
 }
