@@ -69,6 +69,25 @@ describe("<Mermaid>", () => {
     expect(initialize.mock.calls.at(-1)![0]).toMatchObject({ theme: "dark" });
   });
 
+  it("lets a diagram shrink to 65% of its natural width and no further", async () => {
+    renderFn.mockResolvedValueOnce({
+      svg: '<svg width="1063.609375" height="373" viewBox="0 0 1063.609375 373"></svg>',
+    });
+    const { container } = render(() => <Mermaid code="graph LR; A-->B;" />);
+    await flush();
+    // 16px node labels land at ~10.4px at the floor, still readable on a
+    // desktop; past that the box pans instead.
+    const box = container.querySelector<HTMLElement>(".tl-mermaid");
+    expect(box?.style.getPropertyValue("--tl-mmd-floor")).toBe("691px");
+  });
+
+  it("sets no floor when the SVG names no width", async () => {
+    const { container } = render(() => <Mermaid code="graph TD; A-->B;" />);
+    await flush();
+    const box = container.querySelector<HTMLElement>(".tl-mermaid");
+    expect(box?.style.getPropertyValue("--tl-mmd-floor")).toBe("");
+  });
+
   it("falls back to the source rather than blanking the message", async () => {
     renderFn.mockRejectedValueOnce(new Error("bad diagram"));
     const { container } = render(() => <Mermaid code="graph TD; ???" />);

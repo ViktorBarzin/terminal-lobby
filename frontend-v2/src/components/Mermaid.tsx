@@ -20,9 +20,10 @@ import { theme } from "../theme/theme";
  *   - `useMaxWidth: false`, per diagram type, because mermaid has no global
  *     knob for it. The default shrinks each SVG to its container, which on a
  *     390px phone collapsed a six-node flowchart to a measured 355x27px sliver.
- *     The container scrolls sideways instead (see .tl-mermaid in app.css), so a
- *     narrow screen pans a legible diagram rather than squinting at a squashed
- *     one; print gets the opposite treatment, since paper cannot pan.
+ *     Instead a diagram shrinks to fit only down to MIN_SCALE of its natural
+ *     width and the container pans past that (see .tl-mermaid in app.css), so
+ *     a narrow screen pans a legible diagram rather than squinting at a
+ *     squashed one; print fits the page, since paper cannot pan.
  *   - Re-render on theme change. Mermaid BAKES the palette into the SVG at
  *     render time, so a diagram drawn once on mount keeps the old theme's
  *     colours after a switch — #333 on #0d1117 is 1.5:1, which is invisible.
@@ -69,6 +70,18 @@ const DIAGRAM_CONFIG = {
 
 let idSeq = 0;
 
+/** How far a diagram may shrink to fit the column before the box pans instead.
+ *  Mermaid draws node labels at 16px, so this keeps them at ~10.4px. */
+const MIN_SCALE = 0.65;
+
+/** The narrowest a rendered diagram may be drawn, from the width mermaid wrote
+ *  on its root <svg> (useMaxWidth:false makes that the natural width). */
+function shrinkFloor(svg: string): string | undefined {
+  const m = /^<svg\b[^>]*?\swidth="([\d.]+)"/.exec(svg);
+  const width = m ? Number(m[1]) : NaN;
+  return width > 0 ? `${Math.round(width * MIN_SCALE)}px` : undefined;
+}
+
 export const Mermaid: Component<{ code: string }> = (props) => {
   const [svg, setSvg] = createSignal<string>("");
   const [failed, setFailed] = createSignal(false);
@@ -103,7 +116,11 @@ export const Mermaid: Component<{ code: string }> = (props) => {
       when={!failed()}
       fallback={<pre class="tl-code tl-mermaid-fallback">{props.code}</pre>}
     >
-      <div class="tl-mermaid" innerHTML={svg()} />
+      <div
+        class="tl-mermaid"
+        style={{ "--tl-mmd-floor": shrinkFloor(svg()) }}
+        innerHTML={svg()}
+      />
     </Show>
   );
 };
