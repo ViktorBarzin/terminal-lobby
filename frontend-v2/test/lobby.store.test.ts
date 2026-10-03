@@ -225,6 +225,39 @@ describe("lobby store", () => {
     });
   });
 
+  // Measured live 2026-10-03: "Layout changed elsewhere" fired on the poll that
+  // saw the title rename, ~9 s after a create. The server had renamed the
+  // session in its own layout, which is nobody else changing anything.
+  it("create: the title rename after the grace window is not a layout conflict", async () => {
+    vi.useFakeTimers();
+    const api = new FakeApi();
+    api.sessionsVal = [sess("older")];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "p", sessions: ["older"], dir: "/srv/p" }] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("Fix the deploy", "p");
+      api.sessionsVal = [sess("older"), sess(id, { id: "$7", bornAs: id })];
+      await store.refresh();
+      await vi.advanceTimersByTimeAsync(5000); // past LAYOUT_GRACE_MS
+      await store.refresh();
+      expect(store.toast()).toBeNull();
+
+      // tmux-api renames the session in its own copy of the layout.
+      api.layoutVal = {
+        ...api.layoutVal,
+        projects: api.layoutVal.projects.map((p) => ({
+          ...p,
+          sessions: p.sessions.map((n) => (n === id ? "fix-the-deploy" : n)),
+        })),
+      };
+      api.sessionsVal = [sess("older"), sess("fix-the-deploy", { id: "$7", bornAs: id })];
+      await store.refresh();
+      expect(store.toast()).toBeNull();
+      expect(names(store)).toEqual(["fix-the-deploy", "older"]);
+    });
+    vi.useRealTimers();
+  });
+
   it("create: a NAME is stamped as the title, because nothing will summarise a shell", async () => {
     // Choosing `shell` in the composer turns the box back into a name box: a
     // shell has no conversation, so no summary is ever coming and the typed

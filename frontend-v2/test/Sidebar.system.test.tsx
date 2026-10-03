@@ -188,3 +188,38 @@ describe("<Sidebar> — the System group", () => {
     store.dispose();
   });
 });
+
+/**
+ * A new session's card is built once. The first poll replaces the optimistic
+ * row with the server's, and the first title renames the session (ADR-0022);
+ * both made a new group object, and the group list was keyed by object, so the
+ * group and every card in it were rebuilt seconds into every create. Measured
+ * live 2026-10-03 against the deployed backends.
+ */
+describe("<Sidebar> — a new session's card", () => {
+  it("keeps its node through the first listing and the rename", async () => {
+    const api = new FakeApi();
+    // In a project: a session the layout does not list is filed outside it,
+    // so a moment where the layout and the list disagree moves the card to
+    // another group, which is a rebuild. Measured live: the layout took the
+    // new name one write before the list did.
+    api.sessionsVal = [sess("older")];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "p", sessions: ["older"], dir: "/srv/p" }] };
+    const { container, store } = mount(api);
+    await store.refresh();
+    const id = await store.create("Fix the deploy", "p");
+    const card = () => container.querySelector(`.tl-card[data-name]:first-of-type`);
+    await waitFor(() => expect(card()?.getAttribute("data-name")).toBe(id));
+    const before = card();
+
+    api.sessionsVal = [sess("older"), sess(id, { id: "$7", bornAs: id })];
+    await store.refresh();
+    expect(card()).toBe(before);
+
+    api.sessionsVal = [sess("older"), sess("fix-the-deploy", { id: "$7", bornAs: id, title: "Fix the deploy" })];
+    await store.refresh();
+    await waitFor(() => expect(card()?.getAttribute("data-name")).toBe("fix-the-deploy"));
+    expect(card()).toBe(before);
+    store.dispose();
+  });
+});

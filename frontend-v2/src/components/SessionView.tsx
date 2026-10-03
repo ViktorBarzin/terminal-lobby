@@ -12,6 +12,7 @@ import {
   type JSX,
 } from "solid-js";
 import { Portal } from "solid-js/web";
+import { keyOf } from "../store/keepalive";
 import {
   createSessionStore,
   JUMP_STEP_BYTES,
@@ -324,7 +325,7 @@ export const SessionView: Component<{
    * open terminal socket and transcript stream are left alone; their next
    * connect uses the new name.
    */
-  const session = () => props.session;
+  const session = createMemo(() => props.session);
   const store = createSessionStore(session, {
     notify: props.notify,
     autoStart: false,
@@ -415,6 +416,9 @@ export const SessionView: Component<{
     session,
     () => props.driven?.() ?? false,
     () => props.lens?.() ?? "",
+    // The join decision is taken once per session, and a rename is not a new
+    // session: this is the key the view is mounted under.
+    () => keyOf({ name: session(), owner: props.owner }),
   );
   // AND A PRELOAD TELLS THE SIDEBAR NOTHING. `createWatchMode` publishes what
   // it resolved, and a card prefers that over its own live answer

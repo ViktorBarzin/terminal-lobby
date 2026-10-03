@@ -127,6 +127,31 @@ Three things the design left implicit, found while building:
   and showed "New session" where the card showed the prompt line. They now
   read the prompt line too.
 
+And four found by the live check, each measured against the deployed backends
+before and after:
+
+- The join decision (drive or watch) was re-taken whenever the view's name
+  was re-read, and it counts this tab's own read-write client as somebody
+  driving. With the name now read live, the first poll after a create
+  reattached the terminal read-only. The decision now follows the session's
+  key, which a rename leaves alone.
+- The sidebar keyed its project groups by object, and a group whose cards
+  change is a new object, so the group and every card in it were rebuilt on
+  the first listing and on the rename. Groups are keyed by token now, as the
+  origin groups already were.
+- A poll's answer was applied as separate writes, and for one step the layout
+  said the new name while the list still said the old one. Rendered, that
+  filed the session outside its project and rebuilt its card. The poll now
+  applies as one batch.
+- The browser's layout carry kept a dead session's entry under the new name,
+  which the server drops, so the two copies disagreed and "Layout changed
+  elsewhere" fired on the rename. The carry now drops it too.
+
+| run (live, desktop Chrome) | terminal sockets | terminal rebuilt | card rebuilt | toast |
+|---|---|---|---|---|
+| before (0.97.1 frontend) | 2 | yes, at the rename | yes, twice | yes |
+| after | 1 | no | no | no |
+
 ## Open questions
 
 - None at the design level.

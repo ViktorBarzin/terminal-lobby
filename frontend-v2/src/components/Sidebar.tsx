@@ -454,17 +454,25 @@ export const Sidebar: Component<{
             <div class="tl-sidebar-msg tl-muted">No sessions yet.</div>
           </Show>
 
-          <For each={visibleGroups()}>
-            {(g) => (
-              <ProjectGroup
-                isUnseen={unseenOf}
-                store={store}
-                group={g}
-                tick={tick}
-                badge={badge}
-                showLastActive={showLastActive}
-                onNewSession={props.onNewSession}
-              />
+          {/* Keyed by group token, for the reason the origin groups below are
+            keyed by name: a group whose cards change is a new object (a new
+            session listed, a session renamed), and keyed by object the whole
+            group and every card in it was rebuilt, seconds into every create. */}
+          <For each={visibleGroups().map(groupToken)}>
+            {(token) => (
+              <Show when={visibleGroups().find((g) => groupToken(g) === token)}>
+                {(g) => (
+                  <ProjectGroup
+                    isUnseen={unseenOf}
+                    store={store}
+                    group={g()}
+                    tick={tick}
+                    badge={badge}
+                    showLastActive={showLastActive}
+                    onNewSession={props.onNewSession}
+                  />
+                )}
+              </Show>
             )}
           </For>
 

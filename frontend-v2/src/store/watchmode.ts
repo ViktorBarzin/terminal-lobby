@@ -227,6 +227,10 @@ export function createWatchMode(
   session: Accessor<string>,
   driven: Accessor<boolean>,
   lens?: Accessor<string>,
+  /** Which session this view is ON, when that is not simply its name: the
+   *  view's keepalive key, which a rename leaves alone (store/keepalive.ts
+   *  `keyOf`). Defaults to the name. */
+  identity?: Accessor<string>,
 ): [Accessor<boolean>, (w: boolean) => void, () => void] {
   /** The act-as target, "" in an ordinary tab. It picks both the default and
    *  the namespace the choice is kept under, so the two cannot disagree. */
@@ -238,8 +242,16 @@ export function createWatchMode(
   // of the update, leaving a window in which `watch()` still reports the
   // previous session's decision. A memo re-latches in the same tick as the
   // session change, so there is no such window to reason about.
+  //
+  // On the session's IDENTITY, through a memo so only a different value counts.
+  // A view outlives a rename now, and reads its name from the live session
+  // row: every poll re-evaluates that, and the rename changes it, and neither
+  // is the view moving to another session. Re-taken then, `driven` counts this
+  // view's own read-write client and the terminal reattached read-only on the
+  // first poll that listed a session it had just created (measured 2026-10-03).
+  const on = createMemo(() => (identity ?? session)());
   const joinedDriven = createMemo(() => {
-    session();
+    on();
     return untrack(() => driven());
   });
 

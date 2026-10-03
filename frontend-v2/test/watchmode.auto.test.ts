@@ -129,6 +129,29 @@ describe("createWatchMode — the join decision is latched", () => {
     });
   });
 
+  // A view now outlives its session's rename (store/keepalive.ts `keyOf`), and
+  // reads the name from the live session row. Neither a fresh row under the
+  // same name nor the rename itself is the view moving to another session, and
+  // re-taking the decision then reads OUR OWN read-write client as somebody
+  // driving: measured live 2026-10-03, a just-created session reattached
+  // read-only on the first poll that listed it.
+  it("keeps the decision when the name is re-read or renamed under one identity", () => {
+    createRoot((dispose) => {
+      const [row, setRow] = createSignal({ name: "zd9h6tvgtfcq" });
+      const session = () => row().name;
+      const [driven, setDriven] = createSignal(false);
+      const [watch] = createWatchMode(session, driven, undefined, () => "\u0000zd9h6tvgtfcq");
+      expect(watch()).toBe(false);
+
+      setDriven(true); // our own attach, counted by the next poll
+      setRow({ name: "zd9h6tvgtfcq" }); // the poll's fresh row, same name
+      expect(watch()).toBe(false);
+      setRow({ name: "ok" }); // the title rename
+      expect(watch()).toBe(false);
+      dispose();
+    });
+  });
+
   it("an explicit toggle still takes effect immediately", () => {
     createRoot((dispose) => {
       const [driven] = createSignal(false);

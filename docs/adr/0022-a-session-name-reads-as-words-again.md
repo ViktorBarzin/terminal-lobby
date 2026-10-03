@@ -146,6 +146,12 @@ attached instead of an empty one being created. A session that really has the
 name still wins. Shared viewers and preloads were never exposed to the trap:
 they attach with `-t =name`, which fails rather than creates.
 
+The view now outlives the rename, which makes one rule from the 2026-09-06
+section load-bearing in a new way: the drive-or-watch decision is taken once
+per session, and it counts this tab's own read-write client. It follows the
+session's key, not its name, or the rename (and every poll that re-reads the
+name) would re-take it and reattach the terminal read-only.
+
 Only a minted id becomes a birth name, for the reason the 2026-09-06 section
 gives: a hand-picked name can be reused after a rename, and two sessions
 answering to one birth name would be one session twice. A hand-named session

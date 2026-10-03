@@ -627,7 +627,17 @@ export function removeSessionFromLayout(layout: Layout, name: string): Layout {
  * otherwise leave the new name unlisted and file it at the bottom of its group.
  */
 export function renameSessionInLayout(layout: Layout, was: string, now: string): Layout {
-  const swap = (names: string[]) => (names.includes(was) ? names.map((n) => (n === was ? now : n)) : names);
+  if (was === now) return layout;
+  // As tmux-api's own rename does (layout.go renameSession): an entry already
+  // under the new name belongs to a dead session, since tmux refuses a rename
+  // onto a live one, so it goes and the renamed session keeps its place.
+  // Only when the rename lands here at all.
+  const renaming =
+    layout.ungrouped.includes(was) || layout.projects.some((p) => p.sessions.includes(was));
+  const swap = (names: string[]) =>
+    names.includes(was) || (renaming && names.includes(now))
+      ? names.flatMap((n) => (n === was ? [now] : renaming && n === now ? [] : [n]))
+      : names;
   const projects = layout.projects.map((p) => {
     const sessions = swap(p.sessions);
     return sessions === p.sessions ? p : { ...p, sessions };

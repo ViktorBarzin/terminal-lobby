@@ -529,6 +529,22 @@ describe("renameSessionInLayout", () => {
     expect(out.dock?.session).toBe("words");
   });
 
+  // tmux-api's own rename does this (layout.go renameSession): tmux refuses a
+  // rename onto a live session, so an entry already under the new name is a
+  // dead session's, and the renamed one keeps its place. Keeping both made this
+  // copy disagree with the server's, and "Layout changed elsewhere" fired on
+  // the rename (measured live 2026-10-03, a dead "ok" beside a new "ok").
+  it("drops a dead session's entry already under the new name, as the server does", () => {
+    const l = {
+      ...emptyLayout(),
+      projects: [{ name: "p", sessions: ["k7m2q9x4tp0v", "a", "ok"] }],
+      ungrouped: ["ok"],
+    };
+    const out = renameSessionInLayout(l, "k7m2q9x4tp0v", "ok");
+    expect(out.projects[0]!.sessions).toEqual(["ok", "a"]);
+    expect(out.ungrouped).toEqual([]);
+  });
+
   it("returns the same layout when the name is not in it", () => {
     const l = addSessionToGroup(emptyLayout(), "a", "");
     expect(renameSessionInLayout(l, "zzz", "words")).toBe(l);

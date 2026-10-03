@@ -1,4 +1,4 @@
-import { createMemo, createSignal, type Accessor } from "solid-js";
+import { batch, createMemo, createSignal, type Accessor } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import type { SessionsReport } from "../diagnostics/status";
 import {
@@ -795,64 +795,72 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     const outcome: LoadOutcome = sRes.status === "fulfilled" ? "ok" : "failed";
     if (seq < appliedSeq) return outcome; // a newer answer already landed
     appliedSeq = seq;
-    if (sRes.status === "fulfilled") {
-      const list = withPromptLines(sRes.value);
-      trackStates(list);
-      // Before anything reads the new list: a renamed session keeps the key it
-      // was mounted under only if its birth name is known by the time the
-      // selection follows it (store/keepalive.ts `keyOf`).
-      noteBirthNames(sRes.value, me());
-      // Before setSessions, which is what makes `sessions` the OLD list here.
-      // The carry runs FIRST: the view reads the records this call moves.
-      const moves = renamesWithSelection(sessions, sRes.value);
-      carryRenamedRecords(moves);
-      followRenamedSelection(moves, sRes.value);
-      // This tab's own copy of the layout, which a create has just written and
-      // which ignores the server's for LAYOUT_GRACE_MS. tmux-api renamed its
-      // copy already; without this one the new name is unlisted here and files
-      // itself at the bottom of its group until the grace runs out.
-      if (moves.length > 0) {
-        const carry = (l: Layout) => moves.reduce((acc, [was, now]) => renameSessionInLayout(acc, was, now), l);
-        setLayout(carry(layout()));
-        if (lastWritten) lastWritten = carry(lastWritten);
+    // ONE BATCH. The steps below write the birth names, the selection, the
+    // layout and the list separately, and between two of them the layout and
+    // the list can disagree about a renamed session: the layout already says
+    // the new name while the list still says the old one. Rendered, that
+    // moment files the session outside its project and rebuilds its card
+    // (measured live 2026-10-03). Batched, the sidebar only sees the end state.
+    batch(() => {
+      if (sRes.status === "fulfilled") {
+        const list = withPromptLines(sRes.value);
+        trackStates(list);
+        // Before anything reads the new list: a renamed session keeps the key it
+        // was mounted under only if its birth name is known by the time the
+        // selection follows it (store/keepalive.ts `keyOf`).
+        noteBirthNames(sRes.value, me());
+        // Before setSessions, which is what makes `sessions` the OLD list here.
+        // The carry runs FIRST: the view reads the records this call moves.
+        const moves = renamesWithSelection(sessions, sRes.value);
+        carryRenamedRecords(moves);
+        followRenamedSelection(moves, sRes.value);
+        // This tab's own copy of the layout, which a create has just written and
+        // which ignores the server's for LAYOUT_GRACE_MS. tmux-api renamed its
+        // copy already; without this one the new name is unlisted here and files
+        // itself at the bottom of its group until the grace runs out.
+        if (moves.length > 0) {
+          const carry = (l: Layout) => moves.reduce((acc, [was, now]) => renameSessionInLayout(acc, was, now), l);
+          setLayout(carry(layout()));
+          if (lastWritten) lastWritten = carry(lastWritten);
+        }
+        // Reconcile by name rather than replace: a re-parsed but unchanged
+        // payload must write nothing, or every memo downstream recomputes and
+        // <For> re-creates every group and card (taking open menus with it).
+        setSessions(reconcile(list, { key: "name" }));
+        // After setSessions, so a reader waking on `polls` sees the new list.
+        setPolls((n) => n + 1);
+        // drop optimistic pending that the server now knows about
+        const known = new Set(sRes.value.map((s) => s.name));
+        // A birth name counts as known too. A session renamed before any poll
+        // listed its minted id is the pending card's session under another name,
+        // and keeping the card would show it twice until the tab reloaded.
+        const born = new Set(
+          sRes.value.filter((s) => s.bornAs && (!s.owner || s.owner === me())).map((s) => s.bornAs!),
+        );
+        const stillPending = pending().filter((p) => !known.has(p.name) && !born.has(p.name));
+        // Pending names count as live. A create's session does not exist
+        // server-side until the terminal's socket attaches and ttyd runs
+        // tmux-user-attach, and GET /sessions is behind a 5-second cache, so the
+        // burst polls at 700/1600/3000ms routinely report a list without it —
+        // pruning against
+        // that alone would delete the prompt line the card is there to show.
+        prunePromptLines([...known, ...stillPending.map((p) => p.name)]);
+        if (stillPending.length !== pending().length) setPending(stillPending);
+        setLoadError(null);
+      } else {
+        setLoadError("Failed to load sessions");
       }
-      // Reconcile by name rather than replace: a re-parsed but unchanged
-      // payload must write nothing, or every memo downstream recomputes and
-      // <For> re-creates every group and card (taking open menus with it).
-      setSessions(reconcile(list, { key: "name" }));
-      // After setSessions, so a reader waking on `polls` sees the new list.
-      setPolls((n) => n + 1);
-      // drop optimistic pending that the server now knows about
-      const known = new Set(sRes.value.map((s) => s.name));
-      // A birth name counts as known too. A session renamed before any poll
-      // listed its minted id is the pending card's session under another name,
-      // and keeping the card would show it twice until the tab reloaded.
-      const born = new Set(
-        sRes.value.filter((s) => s.bornAs && (!s.owner || s.owner === me())).map((s) => s.bornAs!),
-      );
-      const stillPending = pending().filter((p) => !known.has(p.name) && !born.has(p.name));
-      // Pending names count as live. A create's session does not exist
-      // server-side until the terminal's socket attaches and ttyd runs
-      // tmux-user-attach, and GET /sessions is behind a 5-second cache, so the
-      // burst polls at 700/1600/3000ms routinely report a list without it —
-      // pruning against
-      // that alone would delete the prompt line the card is there to show.
-      prunePromptLines([...known, ...stillPending.map((p) => p.name)]);
-      if (stillPending.length !== pending().length) setPending(stillPending);
-      setLoadError(null);
-    } else {
-      setLoadError("Failed to load sessions");
-    }
-    // A stale poll must not revert an in-flight local layout change.
-    if (lRes.status === "fulfilled" && Date.now() >= graceUntil) {
-      if (lastWritten && !sameLayout(lRes.value, lastWritten)) {
-        showToast("Layout changed elsewhere", "warning");
+      // A stale poll must not revert an in-flight local layout change.
+      if (lRes.status === "fulfilled" && Date.now() >= graceUntil) {
+        if (lastWritten && !sameLayout(lRes.value, lastWritten)) {
+          showToast("Layout changed elsewhere", "warning");
+        }
+        lastWritten = null;
+        setLayout(lRes.value);
       }
-      lastWritten = null;
-      setLayout(lRes.value);
-    }
-    if (lRes.status === "fulfilled") layoutKnown = true;
-    setLoading(false);
+      if (lRes.status === "fulfilled") layoutKnown = true;
+      setLoading(false);
+    });
     return outcome;
   }
 
