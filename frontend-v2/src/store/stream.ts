@@ -104,11 +104,50 @@ export function streamEvents(s: StreamState, session: string): Event[] {
   }));
 }
 
-/** The events with the stream's stand-ins after them; `events` itself when
- *  nothing streams. */
+/**
+ * The turn key a reply streamed after the main thread's turn ended is drawn
+ * under, until the stored row arrives with the server's own id.
+ */
+const STREAM_TURN = "streaming";
+
+/**
+ * Whether the main thread's last turn has ended: a turn_end comes after its
+ * last word. A subagent's work and the harness's status lines (an agent
+ * finishing) arrive after the end without reopening it.
+ */
+function mainTurnEnded(events: Event[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.sidechain || e.agentId) continue;
+    switch (e.kind) {
+      case "turn_end":
+        return true;
+      case "user":
+      case "text":
+      case "thinking":
+      case "tool_use":
+      case "tool_result":
+        return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * The events with the stream's stand-ins after them; `events` itself when
+ * nothing streams.
+ *
+ * A reply with no prompt in front of it, which is how the main thread answers
+ * a background agent finishing, streams while the last turn has already ended.
+ * Joined to that turn, its words were drawn inside the settled group, then
+ * jumped to a turn of their own when the stored row landed (2026-10-03). They
+ * open a turn of their own from the first word instead.
+ */
 export function withStreaming(events: Event[], s: StreamState): Event[] {
   if (s.blocks.length === 0) return events;
-  return [...events, ...streamEvents(s, events[0]?.session ?? "")];
+  const own = mainTurnEnded(events);
+  const stand = streamEvents(s, events[0]?.session ?? "");
+  return [...events, ...(own ? stand.map((e) => ({ ...e, turnId: STREAM_TURN })) : stand)];
 }
 
 /** What a stand-in's block holds right now, "" once it has gone. */

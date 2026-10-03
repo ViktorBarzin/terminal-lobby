@@ -2893,15 +2893,24 @@ label.tl-set-row-label {
 }
 .tl-markdown table {
   border-collapse: collapse;
-  /* As wide as the content wants. The scroller above is what stays 390px. */
+  /* As wide as the content wants, up to the column, so a cell holding a
+     sentence wraps it instead of running off the edge. Uncapped, an eleven-row
+     Area/Decision table measured 1260px in a 723px column with every Decision
+     cut off. The 36rem floor is for a phone: five columns squeezed into 390px
+     wrap every cell, so there the table stays wider and the scroller pans it. */
   width: max-content;
-  max-width: none;
+  max-width: max(100%, 36rem);
   margin: 0;
 }
 .tl-markdown th,
 .tl-markdown td {
   border: 1px solid var(--border);
   padding: 4px 8px;
+  /* `.tl-markdown` breaks anywhere, and a table sizes each column from the
+     narrowest its cells could get. With break-anywhere that is one letter, so
+     a capped table split its label column mid-word ("Terrafo/rm"). break-word
+     still breaks a token that cannot fit, without counting it toward that. */
+  overflow-wrap: break-word;
 }
 /* An identifier is one thing, so it breaks between cells rather than inside
    itself. This is what turned `on-screen-here` into three stacked fragments. */
@@ -2920,29 +2929,36 @@ label.tl-set-row-label {
   height: auto;
   border-radius: 8px;
 }
-/* A diagram is rendered at its natural size (Mermaid.tsx sets useMaxWidth:false
-   per diagram type) and the CONTAINER scrolls sideways. The default shrink-to-
-   fit collapsed a six-node flowchart to a measured 355x27px on a 390px phone;
-   panning a legible diagram beats squinting at a squashed one. */
+/* A diagram shrinks to the column down to 65% of its natural size, and past
+   that the CONTAINER scrolls sideways. Mermaid's own shrink-to-fit has no floor
+   (Mermaid.tsx turns it off with useMaxWidth:false per diagram type): it
+   collapsed a six-node flowchart to a measured 355x27px on a 390px phone.
+   Mermaid.tsx sets the floor per diagram as --tl-mmd-floor. */
 .tl-mermaid {
   display: flex;
-  justify-content: center;
   margin: 0.6em 0;
   overflow-x: auto;
   max-width: 100%;
 }
 .tl-mermaid svg {
   height: auto;
-  /* A flex item shrinks by default, which quietly undid useMaxWidth:false —
-     the diagram fitted the line instead of overflowing it, so the container
-     never had anything to scroll. Measured at 390px: a 1042px-wide flowchart
-     rendered 308px wide. */
+  /* A flex item shrinks to nothing by default, so the size comes from these
+     two instead: the column, but never under the floor. min-width wins. */
   flex: none;
+  max-width: 100%;
+  min-width: var(--tl-mmd-floor, 0px);
+  /* Centres a diagram that fits. NOT justify-content:center on the box: a
+     centred item wider than its box overflows both sides, and a scroller cannot
+     reach the left one. Measured at 723px on a 1064px flowchart: 170px cut off
+     at the left. An auto margin resolves to zero when there is no room, so an
+     overflowing diagram starts at the left edge and all of it can be reached. */
+  margin-inline: auto;
 }
 /* Paper cannot pan, so print goes back to fitting the page. */
 @media print {
   .tl-mermaid svg {
     max-width: 100%;
+    min-width: 0;
     height: auto;
     flex-shrink: 1;
   }

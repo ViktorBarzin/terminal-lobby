@@ -53,10 +53,27 @@ describe("the table's scroller", () => {
 });
 
 describe("the table itself", () => {
-  it("is as wide as its content, not as wide as the column", () => {
+  it("is as wide as its content, up to the column or 36rem, whichever is wider", () => {
     const r = rule(".tl-markdown table");
     expect(r).toMatch(/width:\s*max-content/);
-    expect(r).toMatch(/max-width:\s*none/);
+    // Uncapped, a cell holding a sentence laid it out on ONE line. Measured at
+    // 723px on a desktop, on an eleven-row Area/Decision table: 1260px wide,
+    // every Decision cut off at the column edge, the rest reachable only by
+    // panning. Capped at the column, the prose wraps and the table fits. The
+    // 36rem floor keeps a phone from squeezing five columns into 390px: there
+    // the table stays wider than the screen and the scroller pans it.
+    expect(r).toMatch(/max-width:\s*max\(100%,\s*36rem\)/);
+  });
+
+  // `.tl-markdown` breaks anywhere so a bare URL cannot widen the transcript,
+  // and a table sizes its columns from the narrowest each cell could get. With
+  // break-anywhere that is one letter, so a capped table split its short label
+  // column mid-word: "Terrafo/rm", "Stagin/g test". break-word still breaks a
+  // token that cannot fit, without counting it toward that minimum.
+  it("does not split a short word to make room for a long cell", () => {
+    expect(rule(".tl-markdown th,\n.tl-markdown td")).toMatch(
+      /overflow-wrap:\s*break-word/,
+    );
   });
 
   // Both halves of the old shape have to be gone. Either one left behind puts

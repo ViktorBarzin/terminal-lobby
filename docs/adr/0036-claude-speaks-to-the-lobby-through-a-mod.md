@@ -121,6 +121,18 @@ later call for this sid. `history: true` asks the mod to send what the session
 already holds, because session-events has no log for it (it restarted, or this
 is a resumed conversation).
 
+`transcript` is present only once the file exists, and Claude creates it with
+the first row it stores, so a new session's first hello names none. The mod says
+hello again as soon as the file appears, and session-events gives the existing
+source that path and points its agent watch at the session directory, keeping
+the log (`history` stays false). Until 2026-10-03 that second hello was read as
+a reload: the source kept the empty path for the life of the session, so no
+picture or full result could be read back and the agent panel listed nothing.
+A text view re-rendering 34 such pictures sent 421 requests that answered 404,
+and the edge banned the phone for probing. Rebuilding the source with history
+was considered and not taken: history entries carry no row uuid, so a first row
+still queued while history was read would be drawn twice.
+
 After every hello the mod also sends the `ask`, `plan` and `permission` events
 of the dialogs still on screen, behind the history and ahead of anything else
 queued. A dialog is reported once when it opens, and a session-events that
