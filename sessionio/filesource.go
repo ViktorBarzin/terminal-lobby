@@ -450,6 +450,25 @@ func (f *FileSource) ImageBlock(addr ImageAddr) (ImageData, error) {
 	return f.reader.ImageBlock(f.path, addr)
 }
 
+// ResultAgent names the subagent whose own transcript holds toolID's result,
+// ok=false for the main thread's. A subagent writes to its own file, and its
+// rows reach this log from the mod carrying its id, so a picture in one of
+// them is read from that file, not from f.path (2026-10-03).
+func (f *FileSource) ResultAgent(toolID string) (string, bool) {
+	if toolID == "" {
+		return "", false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.logbuf) - 1; i >= 0; i-- {
+		e := &f.logbuf[i]
+		if e.Kind == KindToolResult && e.ToolID == toolID {
+			return e.AgentID, e.Sidechain && e.AgentID != ""
+		}
+	}
+	return "", false
+}
+
 // Interrupt records an operator interrupt on this session at `at` (epoch ms)
 // and streams the turn_end it implies, if a turn was open. An interrupt that
 // lands before Claude's first token leaves nothing in the transcript, so this

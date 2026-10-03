@@ -87,7 +87,9 @@ type drillFixture struct {
 	tmux    string
 	agent   string
 	homeDir string
-	cancel  context.CancelFunc
+	// transcript is the session's own transcript, whose directory holds subagents/.
+	transcript string
+	cancel     context.CancelFunc
 }
 
 func newDrillFixture(t *testing.T) *drillFixture {
@@ -112,7 +114,7 @@ func newDrillFixture(t *testing.T) *drillFixture {
 	rg := newRegistry(ctx, time.Millisecond, homeBase, siotest.NewFakeOptions(osUser+"/"+tmux), osUser)
 	rg.agentEvery = 5 * time.Millisecond
 	register(t, rg, osUser, "dddd-1111", cwd, tmux)
-	return &drillFixture{rg: rg, tmux: tmux, agent: "a1", homeDir: homeBase, cancel: cancel}
+	return &drillFixture{rg: rg, tmux: tmux, agent: "a1", homeDir: homeBase, transcript: transcript, cancel: cancel}
 }
 
 // server mounts the three drill-in routes the way main.go does, with the

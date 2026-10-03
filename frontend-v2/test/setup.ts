@@ -8,6 +8,9 @@ if (typeof document !== "undefined") {
   afterEach(async () => {
     const { cleanup } = await import("@solidjs/testing-library");
     cleanup();
+    // A picture that failed in one test must not stay hidden in the next.
+    const { forgetFailedPictures } = await import("../src/components/Attachment");
+    forgetFailedPictures();
   });
 }
 

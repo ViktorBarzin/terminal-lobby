@@ -83,6 +83,31 @@ function picturesAround(button: HTMLElement): PictureSet | undefined {
   return index < 0 ? undefined : { items, index };
 }
 
+/**
+ * Addresses that failed to load, and when. A row that re-renders mounts its
+ * pictures again, and the browser does not cache a failure, so without this
+ * every re-render asked again: on 2026-10-03 a phone on a slow line sent 421
+ * requests for 34 missing pictures in seven seconds, and the edge banned it for
+ * probing. A failure is believed for a minute, long enough to absorb a burst of
+ * re-renders, short enough that a picture that turns up is drawn without a
+ * reload.
+ */
+const failedAt = new Map<string, number>();
+const RETRY_FAILED_MS = 60_000;
+
+/** Forget every remembered failure. Each test starts from none. */
+export function forgetFailedPictures(): void {
+  failedAt.clear();
+}
+
+function recentlyFailed(src: string): boolean {
+  const at = failedAt.get(src);
+  if (at === undefined) return false;
+  if (Date.now() - at < RETRY_FAILED_MS) return true;
+  failedAt.delete(src);
+  return false;
+}
+
 export const Picture: Component<{
   src: string;
   alt: string;
@@ -93,16 +118,20 @@ export const Picture: Component<{
   title?: string;
   fallback?: JSX.Element;
 }> = (props) => {
-  const [broken, setBroken] = createSignal(false);
+  const [broken, setBroken] = createSignal(recentlyFailed(props.src));
   // A new address deserves a fresh try: the effective user arriving turns a
   // store path's null into a URL, and a screenshot is rewritten in place.
   createComputed(
     on(
       () => props.src,
-      () => setBroken(false),
+      (src) => setBroken(recentlyFailed(src)),
       { defer: true },
     ),
   );
+  const failed = () => {
+    failedAt.set(props.src, Date.now());
+    setBroken(true);
+  };
   return (
     <Show when={!broken()} fallback={props.fallback}>
       <button
@@ -124,7 +153,7 @@ export const Picture: Component<{
           )
         }
       >
-        <img src={props.src} alt={props.alt} loading="lazy" onError={() => setBroken(true)} />
+        <img src={props.src} alt={props.alt} loading="lazy" onError={failed} />
       </button>
     </Show>
   );

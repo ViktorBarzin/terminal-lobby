@@ -96,12 +96,35 @@ func serveImageBlock(w http.ResponseWriter, r *http.Request, rg *registry, recor
 		pictureError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fs, ok := rg.source(osUserFrom(r.Context()), r.PathValue("session"))
+	osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+	fs, ok := rg.source(osUser, session)
 	if !ok {
 		pictureError(w, "session not registered", http.StatusNotFound)
 		return
 	}
+	// A subagent's result is in the agent's own transcript, found the way the
+	// drill-in finds it.
+	if agent, ok := fs.ResultAgent(addr.ToolID); ok {
+		_, path, reader, err := rg.agentTranscript(osUser, session, agent)
+		if err != nil {
+			pictureError(w, "no such agent transcript", http.StatusNotFound)
+			return
+		}
+		writeImageBlock(w, r, agentImages{reader, path}, addr)
+		return
+	}
 	writeImageBlock(w, r, fs, addr)
+}
+
+// agentImages reads pictures out of one subagent's transcript through the
+// session owner's reader.
+type agentImages struct {
+	reader sessionio.Reader
+	path   string
+}
+
+func (a agentImages) ImageBlock(addr sessionio.ImageAddr) (sessionio.ImageData, error) {
+	return a.reader.ImageBlock(a.path, addr)
 }
 
 // writeImageBlock serves one picture's bytes, or the status that says why not.

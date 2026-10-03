@@ -297,4 +297,29 @@ describe("Picture", () => {
     fireEvent.error(container.querySelector("img")!);
     expect(await findByText("/tmp/a.png")).toBeTruthy();
   });
+
+  // A row that re-renders mounts its pictures again, and a fresh <img> is a
+  // fresh request: a failure is not cached by the browser. On 2026-10-03 a
+  // phone on a slow line asked for 34 missing pictures about 12 times each in
+  // seven seconds, and the 421 404s got its address banned. A picture that
+  // just failed is not asked for again until a minute has passed.
+  it("does not ask again for a picture that failed a moment ago", () => {
+    const src = "/result/s/toolu_01gone/image/0";
+    const first = render(() => <Picture src={src} alt="gone" size="thumb" source="tool" kind="block" />);
+    fireEvent.error(first.container.querySelector("img")!);
+    first.unmount();
+
+    const again = render(() => <Picture src={src} alt="gone" size="thumb" source="tool" kind="block" />);
+    expect(again.container.querySelector("img")).toBeNull();
+    again.unmount();
+
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
+    try {
+      const later = render(() => <Picture src={src} alt="gone" size="thumb" source="tool" kind="block" />);
+      expect(later.container.querySelector("img")?.getAttribute("src")).toBe(src);
+    } finally {
+      clock.mockRestore();
+    }
+  });
 });

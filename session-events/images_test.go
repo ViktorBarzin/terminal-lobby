@@ -230,3 +230,51 @@ func TestImageEventsCarryNoBase64(t *testing.T) {
 		}
 	}
 }
+
+// A subagent's picture, 2026-10-03. A subagent writes its own transcript under
+// the session's subagents/ directory, and its rows reach the session's stream
+// from the mod with the agent's id on them. The page asks for the picture by
+// tool id under the session, as it does for the main thread's, so the route
+// has to find the agent that holds it. Before this it read only the session's
+// transcript, every subagent screenshot was a 404, and a phone re-asking for
+// 34 of them got its address banned by the edge's probing rule.
+func TestServeImageBlockReadsASubagentsPictureFromItsTranscript(t *testing.T) {
+	f := newDrillFixture(t)
+	pic := pngOf(t)
+	enc := base64.StdEncoding.EncodeToString(pic)
+	const toolID = "toolu_01shotabcdef"
+	writeAgent(t, sessionio.SessionDir(f.transcript), "subagents", "a2", `{"description":"take a screenshot"}`, []string{
+		userLine("a2", 0, "Screenshot the page"),
+		toolLine("a2", time.Second, "m1", toolID, "mcp__playwright__browser_take_screenshot", `{}`),
+		`{"type":"user","isSidechain":true,"agentId":"a2","timestamp":"` + agentAt(2*time.Second) +
+			`","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + toolID + `",` +
+			`"content":[{"type":"text","text":"Took the screenshot"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + enc + `"}}]}]}}`,
+	}, time.Now())
+
+	fs, ok := f.rg.source("wizard", f.tmux)
+	if !ok {
+		t.Fatal("session not registered")
+	}
+	// What the mod streams for that result: a sidechain row naming its agent.
+	fs.Append(sessionio.Event{Kind: sessionio.KindToolResult, ToolID: toolID, Sidechain: true, AgentID: "a2",
+		Images: []sessionio.ImageRef{{N: 0, MediaType: "image/png"}}})
+
+	get := func(id string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/result/"+f.tmux+"/"+id+"/image/0", nil)
+		r.SetPathValue("session", f.tmux)
+		r.SetPathValue("toolId", id)
+		r.SetPathValue("n", "0")
+		r = r.WithContext(context.WithValue(r.Context(), osUserKey, "wizard"))
+		rec := httptest.NewRecorder()
+		serveImageBlock(rec, r, f.rg, false)
+		return rec
+	}
+	if rec := get(toolID); rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), pic) {
+		t.Fatalf("the subagent's picture: status %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	// A tool id no event names stays a 404, read from the session's own
+	// transcript as before.
+	if rec := get("toolu_01nobodyhere"); rec.Code != http.StatusNotFound {
+		t.Fatalf("an unknown tool id: status %d, want 404", rec.Code)
+	}
+}
