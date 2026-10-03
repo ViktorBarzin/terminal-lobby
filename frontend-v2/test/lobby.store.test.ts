@@ -814,6 +814,46 @@ describe("lobby store", () => {
     });
   });
 
+  // PUT /layout replaces the whole document, and the layout signal starts as
+  // the empty placeholder. A create sent before the first fetch landed used to
+  // build on that placeholder: the session went to Ungrouped and the PUT
+  // erased every project the user had.
+  it("create: before the first layout fetch, waits for the layout and keeps every project", async () => {
+    const api = new FakeApi();
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [
+        { name: "work", sessions: ["a"] },
+        { name: "home", sessions: ["b"] },
+      ],
+      ungrouped: ["c"],
+    };
+    await withStore(api, async (store) => {
+      // No refresh: the user pressed Enter while the lobby was still loading.
+      const id = await store.create("Fix the deploy", "work");
+      expect(api.puts).toHaveLength(1);
+      const put = api.puts[0]!;
+      expect(put.projects.map((p) => p.name)).toEqual(["work", "home"]);
+      expect(put.projects[0]!.sessions).toEqual([id, "a"]);
+      expect(put.projects[1]!.sessions).toEqual(["b"]);
+      expect(put.ungrouped).toEqual(["c"]);
+    });
+  });
+
+  it("never PUTs a layout built on a document it could not load", async () => {
+    const api = new FakeApi();
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["a"] }] };
+    api.layoutError = true;
+    await withStore(api, async (store) => {
+      await store.refresh();
+      await store.create("Fix the deploy", "");
+      expect(api.puts).toHaveLength(0);
+      expect(api.layoutVal.projects.map((p) => p.name)).toEqual(["work"]);
+      expect(names(store)).toEqual([]);
+      expect(store.toast()).toMatch(/layout/i);
+    });
+  });
+
   it("kill: PUTs the layout so the entry cannot come back on the next poll", async () => {
     vi.useFakeTimers();
     const api = new FakeApi();

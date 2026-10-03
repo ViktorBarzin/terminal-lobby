@@ -21,6 +21,11 @@ package main
 // a title by hand unsets @title and puts the session back in front of the rule,
 // which makes "clear" mean "go back to auto" — the meaning that fits now that a
 // bare name is unreadable.
+//
+// The rule watches every untitled live Claude for as long as it lives. The
+// two-minute window only decides when a session missing its summary is
+// reported as gave_up; a summary that lands after that is still adopted, and
+// reported as titled_late.
 
 import (
 	"log"
@@ -63,14 +68,20 @@ const (
 	// has not run", not a title.
 	noSummaryYet = "Claude Code"
 
-	// autoTitleWindow is how long after creation the rule keeps watching. It
-	// exists so the rule does not watch forever: a Claude that crashed at
-	// launch, a plain shell, or a session started with
-	// CLAUDE_CODE_DISABLE_TERMINAL_TITLE set never produces a summary, and
-	// leaving those untitled is a normal outcome rather than a failure. They
-	// stay titleable by hand.
+	// autoTitleWindow is how long after creation a session has to produce its
+	// summary before the rule reports it as gave_up. It is a reporting
+	// deadline, not the end of the watch: a summary that lands later is still
+	// stamped, as titled_late.
 	//
-	// A summary lands seconds after the first prompt, so the window is sized
+	// It used to end the watch, and that cost real titles. Measured
+	// 2026-10-03: three of emo's live sessions read "New session" while their
+	// pane titles carried a summary, one because the first prompt came 160s
+	// after the create and two because the summary came later than two
+	// minutes. Watching on costs a string comparison per untitled Claude per
+	// poll, and a session that never produces a summary (a Claude started
+	// with CLAUDE_CODE_DISABLE_TERMINAL_TITLE, say) simply stays untitled.
+	//
+	// A summary lands seconds after the first prompt, so the deadline is sized
 	// for the gap between creating a session and sending that prompt, not for
 	// the summariser.
 	//
@@ -88,13 +99,14 @@ const (
 	// the backstop rather than the mechanism: it still covers what no stamp
 	// reaches — a session renamed by hand at a shell, and a slot claimed by a
 	// build older than the stamp — and it stays out of the way of the first
-	// list after a restart, where dating every session from now would put every
-	// old untitled Claude session back in front of the rule.
+	// list after a restart, where dating every session from now would report
+	// every old untitled Claude session as if it had just been created.
 	autoTitleWindow = 2 * time.Minute
 
-	// The two outcomes session.autonamed reports.
-	autoTitleTitled = "titled"
-	autoTitleGaveUp = "gave_up"
+	// The outcomes session.autonamed reports.
+	autoTitleTitled     = "titled"
+	autoTitleGaveUp     = "gave_up"
+	autoTitleTitledLate = "titled_late"
 )
 
 // stripTitleGlyph returns a pane title with its leading Claude Code glyph
@@ -216,10 +228,14 @@ type autoTitleWatch struct {
 	// and puts the session back in front of the rule, which is what makes
 	// "clear" mean "go back to auto".
 	stamping bool
-	// reported is set once an outcome has been emitted. There is one per
-	// session for its whole life — a re-stamp after a clear is not a second
-	// autoname, and an expired session must not be reported on every poll.
+	// reported is set once an outcome has been emitted, so an expired session
+	// is not reported on every poll.
 	reported bool
+	// titled is set once a titled or titled_late outcome has been emitted.
+	// There is one per session for its whole life: a re-stamp after a clear is
+	// not a second autoname. A gave_up before it does not count, so a session
+	// that missed the window and then summarised reports both.
+	titled bool
 }
 
 func newAutoTitleTracker() *autoTitleTracker {
@@ -303,16 +319,17 @@ func (t *autoTitleTracker) beginStamp(osUser, name string) bool {
 
 // endStamp releases the in-flight lock and reports whether the outcome is worth
 // an event. A stamp tmux refused reports nothing and leaves the session
-// untitled inside its window, so the next poll tries again.
+// untitled, so the next poll tries again.
 func (t *autoTitleTracker) endStamp(osUser, name string, stamped bool) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	w := t.entry(osUser, name)
 	w.stamping = false
-	if !stamped || w.reported {
+	if !stamped || w.titled {
 		return false
 	}
 	w.reported = true
+	w.titled = true
 	return true
 }
 
@@ -383,20 +400,20 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 			continue
 		}
 		age := now.Sub(autoTitles.windowStart(osUser, s.Name, time.Unix(s.Created, 0), now))
-		if age > autoTitleWindow {
-			if autoTitles.giveUp(osUser, s.Name) {
-				emitAutoTitled(osUser, s.Name, age, autoTitleGaveUp)
-			}
-			continue
-		}
+		late := age > autoTitleWindow
 		summary, ok := paneTitleSummary(s.PaneTitle)
 		if !ok {
 			summary, ok = modSummary(s.Summary)
 		}
 		if !ok {
 			// Still waiting: no glyph yet, the "Claude Code" sentinel, or
-			// nothing that survives the clean.
-			autoTitles.watch(osUser, s.Name)
+			// nothing that survives the clean. Past the window that is worth
+			// one gave_up, and the watch goes on.
+			if !late {
+				autoTitles.watch(osUser, s.Name)
+			} else if autoTitles.giveUp(osUser, s.Name) {
+				emitAutoTitled(osUser, s.Name, age, autoTitleGaveUp)
+			}
 			continue
 		}
 		if !autoTitles.beginStamp(osUser, s.Name) {
@@ -409,8 +426,7 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 		origin := s.Name
 		err := stampSessionTitle(osUser, origin, summary)
 		if err != nil {
-			// The session is still untitled and still inside its window, so
-			// the next poll tries again.
+			// The session is still untitled, so the next poll tries again.
 			log.Printf("auto-title: titling %s/%s failed: %v", osUser, origin, err)
 		} else {
 			s.Title = summary
@@ -421,7 +437,11 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 			}
 		}
 		if autoTitles.endStamp(osUser, origin, err == nil) {
-			emitAutoTitled(osUser, origin, age, autoTitleTitled)
+			outcome := autoTitleTitled
+			if late {
+				outcome = autoTitleTitledLate
+			}
+			emitAutoTitled(osUser, origin, age, outcome)
 		}
 		if err == nil {
 			// The summary is the moment a session stops being a bare id, so it
@@ -443,7 +463,7 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 
 // emitAutoTitled records one outcome. tl.delay_ms is measured from the window
 // start — creation, or the moment a claimed pre-warm slot appeared under its
-// new name — which is the only clock both outcomes share; tmux reports creation
+// new name — which is the only clock every outcome shares; tmux reports creation
 // in whole seconds, so the number is second-resolution despite its name.
 func emitAutoTitled(osUser, name string, delay time.Duration, outcome string) {
 	events.Emit("session.autonamed", osUser, telemetry.Attrs{

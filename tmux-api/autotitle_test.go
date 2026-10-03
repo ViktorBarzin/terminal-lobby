@@ -323,6 +323,78 @@ func TestAutoTitleGivesUpAfterTheWindow(t *testing.T) {
 	}
 }
 
+// The window is a reporting deadline, not the end of the watch. A person who
+// opens a session and types three minutes later, or a Claude that writes its
+// first summary on the second prompt, still gets a title. Measured 2026-10-03:
+// three of emo's live sessions sat at "New session" with a summary in their
+// pane title, because each had missed the two minutes.
+func TestAutoTitleStampsASummaryThatLandsAfterTheWindow(t *testing.T) {
+	now := time.Now()
+	argv, rec := autoTitleFixture(t, "exit 0")
+
+	waiting := []Session{claudeSession("k7m2q9x4tpz3", "✳ Claude Code", 10*time.Second, now)}
+	autoTitleSessions("wizard", waiting, now)
+	later := now.Add(autoTitleWindow + time.Minute)
+	autoTitleSessions("wizard", waiting, later)
+
+	late := []Session{claudeSession("k7m2q9x4tpz3", "✳ Tashkent trip planning", 10*time.Second, now)}
+	autoTitleSessions("wizard", late, later.Add(time.Minute))
+
+	if got := recordedArgv(t, argv); !strings.Contains(got, "Tashkent trip planning") {
+		t.Errorf("never stamped the late summary:\n%s", got)
+	}
+	if late[0].Title != "Tashkent trip planning" {
+		t.Errorf("Title = %q, want the summary", late[0].Title)
+	}
+	evs := autonamed(t, rec)
+	if len(evs) != 2 {
+		t.Fatalf("emitted %d events, want gave_up then titled_late: %v", len(evs), rec.lines)
+	}
+	if got := attrsOf(t, evs[1])["tl.outcome"]; got != autoTitleTitledLate {
+		t.Errorf("second outcome = %v, want %q", got, autoTitleTitledLate)
+	}
+
+	// Titled now, so the next poll reads @title back and leaves it alone.
+	next := []Session{claudeSession("k7m2q9x4tpz3", "✳ Tashkent trip planning", 10*time.Second, now)}
+	next[0].Title = "Tashkent trip planning"
+	autoTitleSessions("wizard", next, later.Add(2*time.Minute))
+	if evs := autonamed(t, rec); len(evs) != 2 {
+		t.Errorf("emitted %d events, want 2 for the life of the session", len(evs))
+	}
+}
+
+// A session already past the window when this process first sees it, which is
+// every untitled session after a tmux-api restart, takes its summary too. It
+// was never watched, so there is no gave_up for it, only the late title.
+func TestAutoTitleTitlesASessionFirstSeenPastTheWindow(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name      string
+		paneTitle string
+		summary   string
+		want      string
+	}{
+		{"from the pane title", "✳ Звукова аларма при нарушаване", "", "Звукова аларма при нарушаване"},
+		{"from the mod's summary", "✳ Claude Code", "HA updates", "HA updates"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argv, rec := autoTitleFixture(t, "exit 0")
+			s := claudeSession("c0k98k45p7jw", tc.paneTitle, 18*24*time.Hour, now)
+			s.Summary = tc.summary
+			sessions := []Session{s}
+			autoTitleSessions("wizard", sessions, now)
+
+			if got := recordedArgv(t, argv); !strings.Contains(got, tc.want) {
+				t.Errorf("never stamped %q:\n%s", tc.want, got)
+			}
+			evs := autonamed(t, rec)
+			if len(evs) != 1 || attrsOf(t, evs[0])["tl.outcome"] != autoTitleTitledLate {
+				t.Fatalf("events = %v, want one titled_late outcome", rec.lines)
+			}
+		})
+	}
+}
+
 // A restart must not re-report every old untitled Claude session on the box.
 func TestAutoTitleSaysNothingAboutASessionItNeverWatched(t *testing.T) {
 	now := time.Now()
@@ -700,8 +772,8 @@ func TestAutoTitlePrefersThePaneSummaryToTheMods(t *testing.T) {
 	}
 }
 
-// The mod's summary is held to the same window and the same normalisation as
-// the pane's: nothing outside two minutes, nothing that cleans away to empty.
+// The mod's summary is held to the same normalisation as the pane's: nothing
+// that cleans away to empty is stamped, inside the window or after it.
 func TestAutoTitleHoldsTheModSummaryToTheSameRules(t *testing.T) {
 	now := time.Now()
 	for _, tc := range []struct {
@@ -709,8 +781,8 @@ func TestAutoTitleHoldsTheModSummaryToTheSameRules(t *testing.T) {
 		age     time.Duration
 		summary string
 	}{
-		{"past the window", autoTitleWindow + time.Minute, "Late summary"},
 		{"blank", 10 * time.Second, "   "},
+		{"blank past the window", autoTitleWindow + time.Minute, "   "},
 	} {
 		argv, _ := autoTitleFixture(t, "exit 0")
 		s := claudeSession("k7m2q9x4tpz3", "✳ Claude Code", tc.age, now)

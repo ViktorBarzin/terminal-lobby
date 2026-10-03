@@ -91,7 +91,8 @@ var knownEvents = map[string]bool{
 	// The auto-title rule (tmux-api/autotitle.go) taking Claude Code's own
 	// conversation summary as the session's title, or running out of window
 	// without one. tl.session, tl.delay_ms since creation, tl.outcome =
-	// titled|gave_up.
+	// titled|gave_up|titled_late. titled_late is a summary adopted after the
+	// window, which can follow a gave_up for the same session.
 	"session.autonamed": true,
 	"session.moved":     true, // between projects / reordered (tl.from, tl.to)
 	"session.killed":    true,
