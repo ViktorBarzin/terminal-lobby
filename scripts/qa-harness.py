@@ -593,6 +593,33 @@ class Guard:
                 return (f"refusing to rename {old!r} to {new!r} — the new name must "
                         f"stay qa-*")
 
+        # The composer claims its warm slot at Send (ADR-0038), usually before
+        # the terminal attaches, so a claim is the moment this run takes a fresh
+        # minted id as its own, by the same rule check_ws applies to an attach.
+        # Without it the first prompt, which follows the claim at once, is
+        # refused as typing into a live Claude.
+        if tail == "sessions/claim" and method == "POST":
+            try:
+                name = str(json.loads(body or b"{}").get("name", "")).strip()
+            except (ValueError, AttributeError):
+                return "claim body was not JSON, refusing to guess the session"
+            if self.may_drive(name):
+                self.pending_origin.add(name)
+                return None
+            if not is_minted(name):
+                return (f"refusing to claim a slot for {name!r} — only qa-* sessions, "
+                        f"ones this run created, and fresh minted ids may be claimed")
+            live = tmux_session_names()
+            if live is None:
+                return (f"refusing to claim a slot for {name!r} — cannot read the tmux "
+                        f"session list, so cannot tell a new session from a real one")
+            if name in live:
+                return (f"refusing to claim a slot for {name!r} — that id is already a "
+                        f"live session and this run did not create it")
+            self.own_sessions.add(name)
+            self.pending_origin.add(name)
+            return None
+
         if tail.startswith("shares") and method != "GET":
             return ("refusing to mutate shares — a share grants another OS user "
                     "access to a real session")

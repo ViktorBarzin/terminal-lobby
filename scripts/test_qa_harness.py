@@ -404,6 +404,32 @@ def test_attach_to_a_minted_id_someone_else_is_using_blocked(guard, monkeypatch)
     assert guard.own_sessions == set()
 
 
+# The composer claims its warm slot at Send (POST /sessions/claim, ADR-0038),
+# usually before the terminal attaches, so a claim takes ownership of a fresh
+# minted id exactly as the attach does, and the first prompt to it is allowed.
+def test_a_claim_for_a_fresh_minted_id_is_ours(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: ["main"])
+    body = json.dumps({"name": "k7m2q9x4tp0v", "cmd": "claude"}).encode()
+    assert guard.check_tmux_api("POST", "sessions/claim", body) is None
+    assert "k7m2q9x4tp0v" in guard.own_sessions
+    assert "k7m2q9x4tp0v" in guard.pending_origin
+    assert guard.check_events("POST", "/prompt/k7m2q9x4tp0v") is None
+
+
+def test_a_claim_for_a_live_session_that_is_not_ours_is_refused(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: ["k7m2q9x4tp0v"])
+    body = json.dumps({"name": "k7m2q9x4tp0v"}).encode()
+    reason = guard.check_tmux_api("POST", "sessions/claim", body)
+    assert reason and "already a live session" in reason
+    assert guard.own_sessions == set()
+
+
+def test_a_claim_for_a_name_that_is_not_minted_is_refused(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: [])
+    for body in (b'{"name": "main"}', b"not json"):
+        assert guard.check_tmux_api("POST", "sessions/claim", body) is not None
+
+
 def test_attach_to_a_minted_id_blocked_when_tmux_is_unreadable(guard, monkeypatch):
     monkeypatch.setattr(qa, "tmux_session_names", lambda: None)
     reason = guard.check_ws(FakeQuery(["k7m2q9x4tp0v"]))
