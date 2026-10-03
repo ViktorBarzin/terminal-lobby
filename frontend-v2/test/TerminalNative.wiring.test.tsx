@@ -1690,7 +1690,11 @@ describe("xterm's helper textarea (term.html:6339-6347)", () => {
     const m = await mount();
     expect(document.querySelector(".xterm-helper-textarea")).toBeNull();
     m.term.createHelperTextarea();
-    await vi.advanceTimersToNextTimerAsync();
+    // Past one frame, not to the next timer: the fake requestAnimationFrame
+    // lands 0-16ms out depending on the clock, so "the next timer" was
+    // sometimes another one and the retry had not run (it failed the release
+    // build of 5e9cafd3, 2026-10-03, while passing the three before it).
+    await vi.advanceTimersByTimeAsync(20);
     await settle();
     expect(textarea().getAttribute("type")).toBe("password");
   });
