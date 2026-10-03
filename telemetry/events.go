@@ -297,6 +297,11 @@ var knownEvents = map[string]bool{
 	// own cause. blank_ended says how long it lasted and why it ended.
 	"text.blank":       true,
 	"text.blank_ended": true,
+	// A Text view with rows that stopped receiving them: behind the server's
+	// heartbeat head (tl.why=behind, tl.gap) or hearing no heartbeat
+	// (tl.why=silent). stale_ended: caught-up | left, with tl.ms.
+	"text.stale":       true,
+	"text.stale_ended": true,
 
 	// -- server-side health -------------------------------------------------
 	"api.error":    true, // an unexpected server failure (tl.kind)

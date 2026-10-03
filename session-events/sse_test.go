@@ -129,8 +129,8 @@ func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 	want(func(l string) bool { return l == "id: 5" }, "live id 5")
 	want(func(l string) bool { return strings.Contains(l, `"body":"live"`) }, "live data")
 
-	// Heartbeat comment appears.
-	want(func(l string) bool { return strings.HasPrefix(l, ":") }, "heartbeat comment")
+	// The heartbeat appears, as a head frame.
+	want(func(l string) bool { return l == "event: head" }, "heartbeat")
 }
 
 // A fresh open is windowed; a resume asks for everything after its cursor, or
@@ -554,5 +554,26 @@ func TestSSETellsProxiesNotToHoldTheStream(t *testing.T) {
 		if b := w.Header().Get("X-Accel-Buffering"); b != "no" {
 			t.Errorf("Accept-Encoding %q: X-Accel-Buffering = %q, want no", enc, b)
 		}
+	}
+}
+
+// The heartbeat names the newest event the server holds, so a client can tell
+// a quiet session from a stream that stopped delivering: if it is still behind
+// the head a heartbeat ago, events exist that never reached it (text.stale).
+func TestTheHeartbeatCarriesTheHead(t *testing.T) {
+	src := &fakeSource{live: make(chan sessionio.Event), head: 7, epoch: "aaaa"}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("GET", "/events/demo?rev=1", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		writeSSE(w, r, src, nil, 5*time.Millisecond)
+	}()
+	time.Sleep(40 * time.Millisecond)
+	cancel()
+	<-done
+	if body := w.Body.String(); !strings.Contains(body, "event: head\ndata: {\"head\":7}\n\n") {
+		t.Fatalf("no head frame in %q", body)
 	}
 }

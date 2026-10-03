@@ -16,6 +16,45 @@
 import { createEffect, onCleanup, untrack, type Accessor } from "solid-js";
 import type { TlAttrs, TlEvent } from "./track";
 
+/** What decides a blank's cause. */
+export interface BlankFacts {
+  tool: string;
+  sse: string;
+  starting: boolean;
+  noMod: boolean;
+  exited: boolean;
+  /** `ready` frames received: the server has said where the opening window ends. */
+  ready: number;
+  /** Events the store holds. */
+  events: number;
+}
+
+export type BlankCause =
+  | "shell"
+  | "no-stream"
+  | "exited"
+  | "nomod"
+  | "starting"
+  | "not-drawn"
+  | "empty"
+  | "not-arrived";
+
+/**
+ * Why a view is blank, as one field (tl.cause). The first five are expected:
+ * the view says so on screen. `empty` is a conversation with nothing in it
+ * yet. `not-drawn` (events held, none on screen) and `not-arrived` (no window
+ * yet) are the ones to look at.
+ */
+export function blankCause(f: BlankFacts): BlankCause {
+  if (f.tool === "shell") return "shell";
+  if (f.sse === "no-transcript") return "no-stream";
+  if (f.noMod) return f.exited ? "exited" : "nomod";
+  if (f.starting) return "starting";
+  if (f.events > 0) return "not-drawn";
+  if (f.ready > 0) return "empty";
+  return "not-arrived";
+}
+
 /** How long a view may sit empty on screen before it counts as blank. */
 export const BLANK_AFTER_MS = 2000;
 

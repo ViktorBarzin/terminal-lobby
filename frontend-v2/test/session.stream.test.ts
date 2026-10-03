@@ -217,3 +217,25 @@ describe("the starting frame in the session store", () => {
     dispose();
   });
 });
+
+describe("the head frame in the session store", () => {
+  it("keeps the last two heads and when the newest arrived", () => {
+    installEventSource();
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+      cb();
+      return 1;
+    });
+    let store!: ReturnType<typeof createSessionStore>;
+    const dispose = createRoot((d) => {
+      store = createSessionStore("demo");
+      return d;
+    });
+    expect(store.head()).toBeNull();
+    sources[0]!.emit("head", { head: 5 });
+    expect(store.head()).toMatchObject({ head: 5, prev: 0 });
+    sources[0]!.emit("head", { head: 8 });
+    expect(store.head()).toMatchObject({ head: 8, prev: 5 });
+    expect(typeof store.head()!.at).toBe("number");
+    dispose();
+  });
+});

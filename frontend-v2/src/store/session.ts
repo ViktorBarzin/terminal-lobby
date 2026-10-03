@@ -8,6 +8,7 @@ import {
   type SseStatus,
 } from "../sse/client";
 import { track } from "../telemetry/track";
+import type { HeadInfo } from "../telemetry/stale";
 import { HIDDEN_SUSPEND_MS, OFFSCREEN_SUSPEND_MS } from "../terminal/battery";
 import {
   createTranscriptCache,
@@ -206,6 +207,10 @@ export interface SessionStore {
   starting: Accessor<boolean>;
   /** What the stream has delivered so far, by frame, for the blank telemetry. */
   frames: () => FrameCounts;
+  /** The last two heartbeat heads and when the newest arrived (telemetry/stale.ts). */
+  head: Accessor<HeadInfo | null>;
+  /** The newest event id held: what a reconnect resumes from. */
+  cursor: () => number;
   /**
    * Close the stream because nobody is reading this session, keeping every
    * event, cursor and pending prompt held.
@@ -436,6 +441,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   const [noMod, setNoMod] = createSignal(false);
   const [claudeExited, setClaudeExited] = createSignal(false);
   const [starting, setStarting] = createSignal(false);
+  const [head, setHead] = createSignal<HeadInfo | null>(null);
   /**
    * Where the next step back begins.
    *
@@ -840,6 +846,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     },
     // The same for a Claude still starting: nothing is held back for a window
     // that only comes once its mod connects.
+    onHead: (h: number) => setHead((p) => ({ head: h, prev: p?.head ?? 0, at: Date.now() })),
     onStarting: () => {
       setStarting(true);
       setCatchingUp(false);
@@ -1415,6 +1422,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     claudeExited,
     starting,
     frames: () => client.frames(),
+    head,
+    cursor: () => client.cursor,
     park,
     unpark,
     parked,

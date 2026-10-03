@@ -44,6 +44,7 @@ export interface FrameCounts {
   ready: number;
   nomod: number;
   starting: number;
+  head: number;
   errors: number;
 }
 
@@ -78,12 +79,14 @@ const PROBE_TIMEOUT_MS = 5000;
 /**
  * How long a stream may go silent before a wake signal stops trusting it.
  * session-events heartbeats every 20s (session-events/main.go `-heartbeat`), so
- * two missed beats is the natural window — but note the heartbeat is a `:`
- * COMMENT, and the SSE spec has EventSource *ignore* comment lines entirely, so
- * the browser never surfaces one to us. Silence therefore does not prove a
- * stream is dead, only that it is UNVERIFIED, which is why this window gates a
- * wake-triggered revalidation rather than a standalone stall timer: an idle
- * session is silent for hours and must not be torn down for it.
+ * two missed beats is the natural window. Since 2026-10-03 the main stream's
+ * heartbeat is a named `head` frame the browser does surface, but it feeds the
+ * stale telemetry only and does not count as activity here (the held streams
+ * for nomod and starting still send a `:` comment, which EventSource ignores).
+ * Silence therefore does not prove a stream is dead, only that it is
+ * UNVERIFIED, which is why this window gates a wake-triggered revalidation
+ * rather than a standalone stall timer: an idle session is silent for hours and
+ * must not be torn down for it.
  */
 const DEFAULT_STALL_MS = 45000;
 
@@ -196,6 +199,8 @@ export interface SseClientOptions {
   onDelta?: (d: StreamDelta) => void;
   /** Claude is starting and has not reached the lobby (the `starting` frame). */
   onStarting?: (s: StartingFrame) => void;
+  /** The heartbeat: the newest event id the server holds (the `head` frame). */
+  onHead?: (head: number) => void;
   /** The session has no mod connection yet (the `nomod` frame). */
   onNoMod?: (n: NoModFrame) => void;
   /** injectable for tests; defaults to the browser EventSource. */
@@ -253,6 +258,7 @@ export class SseClient {
       | "onDelta"
       | "onNoMod"
       | "onStarting"
+      | "onHead"
     >
   > &
     Pick<
@@ -268,6 +274,7 @@ export class SseClient {
       | "onDelta"
       | "onNoMod"
       | "onStarting"
+      | "onHead"
     >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -288,6 +295,7 @@ export class SseClient {
     ready: 0,
     nomod: 0,
     starting: 0,
+    head: 0,
     errors: 0,
   };
   private readonly onVisible = () => {
@@ -312,6 +320,7 @@ export class SseClient {
       onDelta: opts.onDelta,
       onNoMod: opts.onNoMod,
       onStarting: opts.onStarting,
+      onHead: opts.onHead,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -409,6 +418,13 @@ export class SseClient {
       this.markAlive();
       this.counts.nomod++;
       this.o.onNoMod?.(parseJSON<NoModFrame>(ev.data) ?? {});
+    });
+    // Deliberately not markAlive: the stall window's behaviour is unchanged by
+    // the heartbeat becoming visible, and this frame feeds telemetry only.
+    es.addEventListener?.("head", (ev) => {
+      this.counts.head++;
+      const h = parseJSON<{ head?: unknown }>(ev.data)?.head;
+      if (typeof h === "number") this.o.onHead?.(h);
     });
     es.addEventListener?.("starting", (ev) => {
       this.markAlive();

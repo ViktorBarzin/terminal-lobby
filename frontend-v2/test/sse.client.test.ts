@@ -721,3 +721,27 @@ describe("frame counts", () => {
     expect(h.client.frames()).toMatchObject({ state: 1, back: 2, ready: 1, live: 1, errors: 1 });
   });
 });
+
+/**
+ * The heartbeat names the newest event the server holds (session-events
+ * sse.go), which is what lets the view tell a quiet session from a stream that
+ * stopped delivering (telemetry/stale.ts).
+ */
+describe("the head frame", () => {
+  it("hands the server's head to onHead and counts it", () => {
+    const got: number[] = [];
+    const h = harness(() => 200, { onHead: (n) => got.push(n) });
+    h.client.connect();
+    h.sources[0]!.emit("head", { head: 42 });
+    h.sources[0]!.emit("head", { nope: 1 });
+    expect(got).toEqual([42]);
+    expect(h.client.frames().head).toBe(2);
+  });
+
+  it("reports the cursor it holds", () => {
+    const h = harness(() => 200);
+    h.client.connect();
+    h.sources[0]!.onmessage?.({ data: JSON.stringify({ id: 9, kind: "text", session: "sess" }) });
+    expect(h.client.cursor).toBe(9);
+  });
+});

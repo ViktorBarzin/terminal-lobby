@@ -80,6 +80,10 @@ export type TlEvent =
   // telemetry/blank.ts), and when that ended (tl.why: rows | left | closed).
   | "text.blank"
   | "text.blank_ended"
+  // The Text view on screen with rows but no longer receiving them: behind the
+  // server's head or hearing no heartbeat (telemetry/stale.ts).
+  | "text.stale"
+  | "text.stale_ended"
   // A picture in the Text view opened full size (2026-09-24). tl.kind is file |
   // block and tl.source is bubble | prose | tool, never the path or the image.
   | "text.picture_opened"
