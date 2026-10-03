@@ -369,6 +369,9 @@ interface Workspace {
  * whether to take the keyboard when ITS own boot fit lands, whoever else is up.
  */
 async function workspace(names: string[], focusedName: string): Promise<Workspace> {
+  // Every case here is about the terminals, and text is the default view, so
+  // each tile is one somebody left on the terminal.
+  for (const name of names) localStorage.setItem(`tl:viewmode:v1:${name}`, "terminal");
   const [focused, setFocused] = createSignal(focusedName);
   const [mounted, setMounted] = createSignal<string[]>([]);
   const r = render(() => (

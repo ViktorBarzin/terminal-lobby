@@ -387,8 +387,9 @@ describe("the attention props <SessionView> gives the terminal", () => {
    * report, since output arriving then is what dots the Terminal icon.
    */
   it("hands over `active`, and takes it away when the text view shows", () => {
+    localStorage.setItem("tl:viewmode:v1:qa-native-active", "terminal");
     const { container } = render(() => <SessionView session="qa-native-active" />);
-    expect(native.active?.(), "the terminal is the default view").toBe(true);
+    expect(native.active?.(), "the terminal is the view this session was left on").toBe(true);
 
     show(container, "text");
     expect(mode(container)).toBe("text");

@@ -26,13 +26,12 @@ describe("swipeDirection", () => {
 
 describe("the device's default view", () => {
   /**
-   * Terminal, on every device (Viktor, 2026-08-19). A phone used to open in the
-   * text view on the reasoning that a 390px screen cannot render an 80-column
-   * pty; in daily use the terminal is still what a session is opened to do, and
-   * the text view is one tap away. The switch is what makes that true, which is
-   * why the bar has to keep it reachable (test/header.fit.test.ts).
+   * Text, on every device (Viktor, 2026-10-03). It was the terminal from
+   * 2026-08-19, and before that text on a phone only. The terminal is one tap
+   * away, which is why the bar has to keep the switch reachable
+   * (test/header.fit.test.ts).
    */
-  it("is terminal, whatever the pointer", () => {
-    expect(defaultMode()).toBe("terminal");
+  it("is text, whatever the pointer", () => {
+    expect(defaultMode()).toBe("text");
   });
 });

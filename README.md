@@ -128,8 +128,8 @@ thinking, every tool call and its result, token usage, mode changes and queued
 prompts. The work between two replies collapses into one line you can open.
 The composer is at parity with the CLI, including the permission-mode chip and
 the model, and a blocking question is answered from here by mirroring the pane
-and injecting the keys. Terminal is the default on every device; text is one
-tap away and the choice sticks per session. See
+and injecting the keys. Text is the default on every device; the terminal is
+one tap away and the choice sticks per session. See
 `docs/adr/0018-the-transcript-is-what-people-said.md`.
 
 ![text mode, with the work log opened](docs/screenshots/text-mode.png)

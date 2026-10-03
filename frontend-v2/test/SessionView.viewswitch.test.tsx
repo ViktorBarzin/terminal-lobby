@@ -136,6 +136,15 @@ const menuRow = (root: HTMLElement, label: string): HTMLButtonElement => {
   return b!;
 };
 
+/**
+ * Leave these sessions on the terminal, as a reader who switched there would.
+ * Text is the default view (2026-10-03), and the cases below start from the
+ * terminal: its tools, its activity dot, and the icon that leads to Text.
+ */
+const pinTerminal = (...sessions: string[]): void => {
+  for (const s of sessions) localStorage.setItem(`tl:viewmode:v1:${s}`, "terminal");
+};
+
 /** Fire the terminal's attention hand-up, as terminal/attention.ts does. */
 function fromTerminal(kind: "bell" | "output"): void {
   expect(terminal.signal, "the mounted terminal").toBeTruthy();
@@ -163,6 +172,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
       close(): void {}
     };
     localStorage.clear();
+    pinTerminal("qa-vs");
   });
   afterEach(() => {
     g.EventSource = origES;
@@ -452,6 +462,9 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
  * on every device; the Terminal view keeps its own tools as buttons.
  */
 describe("<SessionView> — terminal controls in the session bar", () => {
+  beforeEach(() => pinTerminal("qa-tools"));
+  afterEach(() => localStorage.clear());
+
   it("offers font size, upload and paste on the bar, and images and files in the menu", () => {
     const { container } = render(() => <SessionView session="qa-tools" />);
     const labels = [...container.querySelectorAll(".tl-session-bar button")].map((b) =>
@@ -506,8 +519,9 @@ describe("<SessionView> — terminal controls in the session bar", () => {
   });
 
   it("keeps the terminal tools off the Text view's bar", () => {
-    // Its own session name: the view is remembered per session, and the cases
-    // after this one expect qa-tools to open in the terminal.
+    // Its own session name, so it starts from the terminal like a reader who
+    // switched away from Text would, and leaves qa-tools alone.
+    pinTerminal("qa-tools-text");
     const { container } = render(() => <SessionView session="qa-tools-text" />);
     show(container, "text");
     expect(container.querySelector('[aria-label="Paste from clipboard"]')).toBeNull();
@@ -617,6 +631,9 @@ describe("<SessionView> — terminal controls in the session bar", () => {
  * in the same place.
  */
 describe("<SessionView> — the header's view icon", () => {
+  beforeEach(() => pinTerminal("qa-icon"));
+  afterEach(() => localStorage.clear());
+
   it("shows a Text icon over the terminal and a Terminal icon over the text", () => {
     const { container } = render(() => <SessionView session="qa-icon" />);
     expect(mode(container)).toBe("terminal");
@@ -651,6 +668,11 @@ describe("<SessionView> — the header's view icon", () => {
 });
 
 describe("<SessionView> — the header's title and subtitle", () => {
+  // The Text view lets its own conversation say what the session is doing
+  // (textLive), so the session list's state is read on the terminal.
+  beforeEach(() => pinTerminal("qa-sub"));
+  afterEach(() => localStorage.clear());
+
   const sub = (root: HTMLElement): string =>
     root.querySelector(".tl-bar-sub-text")?.textContent?.trim() ?? "";
   const stateDot = (root: HTMLElement): string | null =>

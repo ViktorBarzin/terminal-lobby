@@ -37,6 +37,8 @@ function mountVisible(initial: boolean | undefined): {
   setVisible: (v: boolean | undefined) => void;
 } {
   const [visible, setVisible] = createSignal<boolean | undefined>(initial);
+  // The terminal is what a hidden pane must not resize, so mount on it.
+  localStorage.setItem("tl:viewmode:v1:qa-mobile", "terminal");
   render(() => <SessionView session="qa-mobile" visible={visible()} />);
   expect(terminal.active, "the mounted terminal").toBeTruthy();
   return { setVisible: (v) => setVisible(() => v) };
@@ -70,6 +72,9 @@ function stubViewport(vp: { width: number; height: number; coarse: boolean }): v
 const PHONE = { width: 390, height: 844, coarse: true };
 const TABLET = { width: 768, height: 1024, coarse: true };
 const realMatchMedia = window.matchMedia;
+
+// View choices pinned by a case must not carry into the next one.
+afterEach(() => localStorage.clear());
 
 describe("<SessionView> — the merged phone bar", () => {
   it("renders the shell's back control first in its own bar", () => {
@@ -148,6 +153,9 @@ describe("<SessionView> — the header's … menu", () => {
    */
   it("gives the toolbar only to the session on screen", () => {
     stubViewport(PHONE);
+    // The soft keys belong to the terminal view.
+    localStorage.setItem("tl:viewmode:v1:qa-mobile", "terminal");
+    localStorage.setItem("tl:viewmode:v1:qa-kept", "terminal");
     const shown = render(() => <SessionView session="qa-mobile" visible={true} />);
     expect(shown.container.querySelector("#soft-keys")).not.toBeNull();
 
@@ -168,9 +176,9 @@ describe("<SessionView> — the header's … menu", () => {
 
   it("opens on tap and offers Find, Images, Files, Watch and the shell's own items", () => {
     stubViewport(PHONE);
-    // Find searches the transcript, so it is a TEXT-view item. Since 2026-08-19
-    // a phone opens in the terminal like everything else, so this session has to
-    // say it is being read in text — which is what a reader who tapped Text has.
+    // Find searches the transcript, so it is a TEXT-view item. Text is the
+    // default (2026-10-03); the session says so anyway, so this case does not
+    // move if the default does.
     localStorage.setItem("tl:viewmode:v1:qa-mobile", "text");
     const { container } = render(() => (
       <SessionView session="qa-mobile" menuExtra={<button class="tl-menu-item">Settings</button>} />

@@ -90,6 +90,9 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
       }
     };
     localStorage.clear();
+    // Text is the default view, so a session that starts on the terminal is
+    // one somebody switched there. The lazy open is about exactly that session.
+    localStorage.setItem("tl:viewmode:v1:qa-lazy", "terminal");
   });
   afterEach(() => {
     g.EventSource = origES;
@@ -118,6 +121,13 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     expect(mode(container)).toBe("text");
     // The remembered mode IS the view being shown — there is no click to wait
     // for, so mount is the moment Text is first shown.
+    expect(eventSources).toHaveLength(1);
+  });
+
+  it("connects on mount for a session nobody chose a view for", () => {
+    localStorage.removeItem("tl:viewmode:v1:qa-lazy");
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    expect(mode(container)).toBe("text");
     expect(eventSources).toHaveLength(1);
   });
 

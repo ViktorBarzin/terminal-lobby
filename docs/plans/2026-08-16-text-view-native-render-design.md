@@ -84,7 +84,7 @@ append.
 | 5 | **Port T3's pure logic under MIT; rebuild the views in Solid.** | T3 Code is MIT (T3 Tools Inc, 2026), so copying is permitted with the notice retained. React-vs-Solid rules out component reuse, but the derivation rules — which is where the accumulated edge cases live — are plain TypeScript. Inventory in §8. |
 | 6 | **Liveness comes from transcript data, not a second stream.** A rich working row: in-flight tool, live elapsed timer, step count, last thinking or text block. | The `tool_use` record lands the moment Claude emits it, so the working row can be specific for free. Token-level streaming is a **non-goal on this path** — see §5. |
 | 7 | **Open on a recent window with lazy payloads.** Last ~20 turns replayed; tool results capped on the wire with fetch-on-demand for the rest; "Load earlier" walks back. | Worst case on this box is a 28.9 MB transcript: ~4,936 events and 5.5 MB of tool results, one of them 673 KB. First paint on a phone should not depend on a session's age. |
-| 8 | **Terminal is the default on every device** *(revised 2026-08-19; this row read "text becomes the default on phones" and was built that way)*. | Three days of use answered the question the original gate was about: a session is still opened to drive the terminal, and the text view is one tap away on the bar. The tap is what makes that true, which is why the switch has to stay reachable — §14. |
+| 8 | **Text is the default on every device** *(revised 2026-10-03; from 2026-08-19 this row read "terminal is the default on every device", and before that "text becomes the default on phones")*. | The terminal is one tap away on the bar, and each session remembers the view it was left on. The tap is what makes either default workable, which is why the switch has to stay reachable — §14, §15. |
 | 9 | **One landing.** All of it builds in `wizard/text-view-native` and merges to master together. | Chosen over staged delivery. |
 | 10 | **Fix the mobile composer keyboard** (§7.1) and **grow the session list into a switcher** (§7.2). | Raised during design; both are in the same surface and land with this work. |
 
@@ -481,3 +481,26 @@ row type.
 **And the default view went back to the terminal**, on every device (decision 8).
 The text view stays a tap away and keeps its own per-session memory, so a session
 read in text on a phone still opens in text next time.
+
+---
+
+## 15. Revision — 2026-10-03: text is the default
+
+Viktor asked for text mode to be the default view. `defaultMode()` in
+`store/viewmode.ts` returns `"text"` on every device, and the terminal stays a
+tap away on the bar.
+
+Storage still records only a deviation from the default, so after this change:
+
+| what a browser held | opens in |
+|---|---|
+| nothing (no choice made, or the terminal chosen under the old default) | text |
+| `"text"` | text; the key is pruned the next time the switch is pressed |
+| `"terminal"` (written from now on) | the terminal |
+
+A session that was left on the terminal under the old default stored nothing,
+so it opens in text once. Switching it back stores `"terminal"` and it stays
+there.
+
+A session with no Claude transcript (a plain shell, or Codex) opens on the text
+view's note that output shows in the terminal, with a link to open it.

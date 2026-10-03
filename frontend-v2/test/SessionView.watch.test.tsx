@@ -265,6 +265,8 @@ describe("<SessionView> — acting as another user", () => {
   // the session's gallery first — a half-done action in someone else's account
   // while watching, and exactly what taking control is for afterwards.
   it("frees the controls that write into the session once you take control", () => {
+    // Paste and Upload sit on the terminal's bar.
+    localStorage.setItem("tl:viewmode:v1:main", "terminal");
     const { container } = lensView();
     expect(bar(container, "tl-paste-btn").disabled).toBe(true);
     expect(bar(container, "tl-upload-btn").disabled).toBe(true);
@@ -283,6 +285,7 @@ describe("<SessionView> — acting as another user", () => {
   });
 
   it("leaves those controls alone on an ordinary session", () => {
+    localStorage.setItem("tl:viewmode:v1:main", "terminal");
     const { container } = render(() => <SessionView session="main" />);
     expect(bar(container, "tl-paste-btn").disabled).toBe(false);
     expect(bar(container, "tl-upload-btn").disabled).toBe(false);

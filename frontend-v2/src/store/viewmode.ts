@@ -8,16 +8,15 @@ import { lsGet, lsSet } from "../lib/storage";
  * same session may be terminal on a desktop and text on a phone (T3 template,
  * minus its terminalIds/groups/height).
  *
- * The DEFAULT is the terminal, on every device (Viktor, 2026-08-19). A phone
- * used to open in the text view, on the reasoning that a 390px screen cannot
- * render an 80-column pty; what daily use said is that a session is still opened
- * to drive the terminal, and the text view is a tap away on the bar.
+ * The DEFAULT is the text view, on every device (Viktor, 2026-10-03). It was
+ * the terminal from 2026-08-19; before that a phone opened in text and a
+ * desktop in the terminal. The terminal is a tap away on the bar.
  *
- * Storage records only a deviation from that default, so a browser holds "text"
- * for the sessions it was chosen for and inherits the terminal for the rest. The
- * values written before this change still read correctly — a phone that chose
- * text kept nothing, since text WAS its default, so those sessions now open in
- * the terminal, which is the point.
+ * Storage records only a deviation from that default, so a browser holds
+ * "terminal" for the sessions it was chosen for and inherits text for the rest.
+ * Under the terminal default nothing was stored for a terminal session, so
+ * those sessions now open in text; a stored "text" still reads as text and is
+ * pruned the next time the switch is pressed.
  */
 
 export type ViewMode = "text" | "terminal";
@@ -29,7 +28,7 @@ const KEY_PREFIX = "tl:viewmode:v1:";
  * rule has one name to change and one place to test.
  */
 export function defaultMode(): ViewMode {
-  return "terminal";
+  return "text";
 }
 
 export function loadMode(session: string): ViewMode {

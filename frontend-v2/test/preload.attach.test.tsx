@@ -337,6 +337,9 @@ describe("<SessionView> — a preloading mount", () => {
   // a preloaded card would leave a terminal nobody can type into, where an
   // ordinary first open focuses itself.
   it("takes the keyboard when the click reveals it", async () => {
+    // A session left on the terminal: the text view hands the keyboard to the
+    // composer instead.
+    localStorage.setItem("tl:viewmode:v1:main", "terminal");
     const focus = vi.fn(() => true);
     (window as { __tlFocusTerminal?: () => boolean }).__tlFocusTerminal = focus;
     const [pre, setPre] = createSignal(true);

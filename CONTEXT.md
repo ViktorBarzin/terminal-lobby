@@ -480,8 +480,8 @@ screen, so it stays on the browser that answered it.
 
 **Tile**:
 One rectangle showing one **Session**, in a **Workspace**. Holds whatever
-view that session is set to on this device — the terminal by default, the
-**Text view** where that was chosen — plus a thin header carrying the
+view that session is set to on this device — the **Text view** by default,
+the terminal where that was chosen — plus a thin header carrying the
 **title**, the **Session state**, a watch marker when the tile is read-only,
 and a close control. The header's title is editable in place, so a tile is
 where a session is retitled as well as where it is read, and the rectangle is
