@@ -231,6 +231,10 @@ src/
                          server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
+    term-size.ts         The terminal size this device last drew, kept in
+                         localStorage. The New-session composer's slot claim
+                         carries it, so the session is sized before its
+                         terminal attaches (ADR-0038)
     browser-stream.ts    The lobby's end of a Session browser's viewer stream:
                          a WebSocket to session-events' /browser/<session>/
                          stream that connects only while somebody can see the

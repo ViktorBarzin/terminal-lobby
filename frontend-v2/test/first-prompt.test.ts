@@ -227,6 +227,23 @@ describe("deliverFirstPrompt", () => {
     expect(bodies[2]).toMatchObject({ text: "do the thing", sinceSendMs: 1950, hidden: true });
   });
 
+  it("names each line once, and keeps the name across its retries", async () => {
+    // session-events sends each request id once (promptonce.go), so a retry
+    // after the browser gave up on a slow answer cannot make a second prompt.
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_u: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(null, { status: bodies.length === 2 ? 503 : 204 });
+    }) as unknown as typeof fetch;
+    await deliver({ fetchImpl, ...fastClock(), lines: ["/model sonnet", "do the thing"] });
+    const ids = bodies.map((b) => b.id);
+    expect(ids.every((id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id))).toBe(
+      true,
+    );
+    expect(ids[1]).toBe(ids[2]);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
   it("says nothing about Send when it was not told when that was", async () => {
     const bodies: Record<string, unknown>[] = [];
     const fetchImpl = (async (_u: string, init?: RequestInit) => {
@@ -276,14 +293,16 @@ describe("the harness the first prompt names", () => {
     const r = recorder();
     const c = fastClock();
     expect(await deliver({ ...r, ...c, awaitReady: true, tool: "pi" })).toBe(true);
-    expect(r.bodies).toEqual([{ text: "do the thing", awaitReady: true, tool: "pi" }]);
+    expect(r.bodies).toEqual([
+      { text: "do the thing", awaitReady: true, tool: "pi", id: expect.any(String) },
+    ]);
   });
 
   it("leaves the field out when no harness is named", async () => {
     const r = recorder();
     const c = fastClock();
     expect(await deliver({ ...r, ...c, awaitReady: true })).toBe(true);
-    expect(r.bodies[0]).toEqual({ text: "do the thing", awaitReady: true });
+    expect(r.bodies[0]).toEqual({ text: "do the thing", awaitReady: true, id: expect.any(String) });
     expect("tool" in r.bodies[0]!).toBe(false);
   });
 

@@ -101,6 +101,10 @@ type promptBody struct {
 	// Hidden says the page was hidden at some point since Send, when a phone's
 	// backgrounded tab can stretch the browser's share of the time.
 	Hidden bool `json:"hidden"`
+	// ID names this prompt across the browser's retries, so it is sent once
+	// however many times it is asked for (promptonce.go). Set by the
+	// New-session composer's first prompt.
+	ID string `json:"id"`
 }
 
 // handlePrompt types a prompt into the session.
@@ -137,98 +141,114 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
 		}
-		// Claude takes its prompts through its mod (ADR-0036): submitted inside
-		// the process, so nothing is typed, no dialog can catch the Enter, and
-		// a prompt sent mid-turn waits for the turn to end.
-		if h := sessionio.Harness(body.Tool); h == "" || h == sessionio.HarnessClaude {
-			servePromptViaMod(w, r, rg, drv, osUser, session, body)
-			return
-		}
-		pi := sessionio.Harness(body.Tool) == sessionio.HarnessPi
-		if body.AwaitReady {
-			// Not distinguished from "no such session": both mean the caller
-			// should come back, and the caller's retry ladder is what decides
-			// how long to keep coming back for.
-			var err error
-			switch {
-			case pi:
-				err = drv.AwaitPiReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
-			case sessionio.Harness(body.Tool) == sessionio.HarnessCodex:
-				err = drv.AwaitReady(r.Context(), osUser, session, sessionio.HarnessCodex, PromptReadyWait, PromptReadyPoll)
-			default:
-				err = drv.AwaitInputReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
-			}
-			if err != nil {
-				// Claude asking whether to trust the folder never draws its
-				// input box, so the wait cannot end until someone answers in
-				// the Terminal. Said now, rather than as a 503 the caller
-				// would retry against the same dialog.
-				if !pi && sessionio.Harness(body.Tool) != sessionio.HarnessCodex {
-					if pane, perr := drv.CapturePane(osUser, session); perr == nil && sessionio.ClaudeTrustPending(pane) {
-						writePromptRefusal(w, trustOpenReason)
-						return
-					}
-				}
-				http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
+		if body.ID != "" {
+			if !promptIDRe.MatchString(body.ID) {
+				http.Error(w, "bad body (id must be 1-64 of [A-Za-z0-9_-])", http.StatusBadRequest)
 				return
 			}
-		}
-		// From here to the Enter the input line is this prompt's: a Stop that is
-		// clearing it goes first, and one pressed now waits (inputLines). After
-		// the ready wait, which can take seconds and types nothing.
-		release, err := holdInputLine(r.Context(), osUser, session)
-		if err != nil {
+			rg.prompts.do(w, r, osUser+"\x00"+session+"\x00"+body.ID, func(w http.ResponseWriter, r *http.Request) {
+				servePrompt(w, r, rg, drv, osUser, session, body)
+			})
 			return
 		}
-		defer release()
-		if pi && drv.PiTrustPending(osUser, session) {
-			http.Error(w, "pi is asking whether to trust this folder; answer it in the terminal first", http.StatusConflict)
-			return
-		}
-		if at, _ := drv.Option(osUser, session, sessionio.OptionSuspended); at != "" {
-			http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
-			return
-		}
-		// A codex menu is the screen a typed prompt must not reach: the Enter at
-		// its end would pick the menu's highlighted row (refusal.go). Pi draws
-		// none of codex's menus, so a pi session is not read for them.
-		box := false
-		if !pi {
-			var reason string
-			if reason, box = paneRefusal(drv, osUser, session); reason != "" {
-				writePromptRefusal(w, reason)
-				return
-			}
-		}
-		err = drv.PromptInto(osUser, session, body.Text, box)
-		if err != nil {
-			// A menu took the input line's place between the guard above and
-			// the Enter (sessionio.ErrInputGone), or stood there by the read
-			// after it (sessionio.ErrSubmitUnconfirmed). Refused as though it
-			// had been up all along, so the sender keeps its text and says
-			// where to answer.
-			if errors.Is(err, sessionio.ErrInputGone) || errors.Is(err, sessionio.ErrSubmitUnconfirmed) {
-				writePromptRefusal(w, metDialogReason(r.Context(), drv, osUser, session))
-				return
-			}
-			// The paste landed and no Enter took it: the text is on Claude's
-			// input line, unsent. Said by name so the sender keeps its text
-			// rather than reading a generic failure as a transport problem.
-			if errors.Is(err, sessionio.ErrPromptNotSubmitted) {
-				http.Error(w, "prompt not submitted: it is still on the session's input line", http.StatusBadGateway)
-				return
-			}
-			http.Error(w, "inject failed", http.StatusBadGateway)
-			return
-		}
-		// tl.count is the prompt LENGTH; the text itself is never recorded.
-		attrs := telemetry.Attrs{"tl.session": session, "tl.count": len(body.Text), "tl.client": "api"}
-		if body.Tool != "" {
-			attrs["tl.tool"] = body.Tool
-		}
-		events.Emit("claude.prompt_sent", osUser, attrs)
-		w.WriteHeader(http.StatusNoContent)
+		servePrompt(w, r, rg, drv, osUser, session, body)
 	}
+}
+
+// servePrompt sends one decoded prompt: through the mod for Claude, typed into
+// the pane for pi and codex.
+func servePrompt(w http.ResponseWriter, r *http.Request, rg *registry, drv promptDriver, osUser, session string, body promptBody) {
+	// Claude takes its prompts through its mod (ADR-0036): submitted inside
+	// the process, so nothing is typed, no dialog can catch the Enter, and
+	// a prompt sent mid-turn waits for the turn to end.
+	if h := sessionio.Harness(body.Tool); h == "" || h == sessionio.HarnessClaude {
+		servePromptViaMod(w, r, rg, drv, osUser, session, body)
+		return
+	}
+	pi := sessionio.Harness(body.Tool) == sessionio.HarnessPi
+	if body.AwaitReady {
+		// Not distinguished from "no such session": both mean the caller
+		// should come back, and the caller's retry ladder is what decides
+		// how long to keep coming back for.
+		var err error
+		switch {
+		case pi:
+			err = drv.AwaitPiReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
+		case sessionio.Harness(body.Tool) == sessionio.HarnessCodex:
+			err = drv.AwaitReady(r.Context(), osUser, session, sessionio.HarnessCodex, PromptReadyWait, PromptReadyPoll)
+		default:
+			err = drv.AwaitInputReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
+		}
+		if err != nil {
+			// Claude asking whether to trust the folder never draws its
+			// input box, so the wait cannot end until someone answers in
+			// the Terminal. Said now, rather than as a 503 the caller
+			// would retry against the same dialog.
+			if !pi && sessionio.Harness(body.Tool) != sessionio.HarnessCodex {
+				if pane, perr := drv.CapturePane(osUser, session); perr == nil && sessionio.ClaudeTrustPending(pane) {
+					writePromptRefusal(w, trustOpenReason)
+					return
+				}
+			}
+			http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	// From here to the Enter the input line is this prompt's: a Stop that is
+	// clearing it goes first, and one pressed now waits (inputLines). After
+	// the ready wait, which can take seconds and types nothing.
+	release, err := holdInputLine(r.Context(), osUser, session)
+	if err != nil {
+		return
+	}
+	defer release()
+	if pi && drv.PiTrustPending(osUser, session) {
+		http.Error(w, "pi is asking whether to trust this folder; answer it in the terminal first", http.StatusConflict)
+		return
+	}
+	if at, _ := drv.Option(osUser, session, sessionio.OptionSuspended); at != "" {
+		http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
+		return
+	}
+	// A codex menu is the screen a typed prompt must not reach: the Enter at
+	// its end would pick the menu's highlighted row (refusal.go). Pi draws
+	// none of codex's menus, so a pi session is not read for them.
+	box := false
+	if !pi {
+		var reason string
+		if reason, box = paneRefusal(drv, osUser, session); reason != "" {
+			writePromptRefusal(w, reason)
+			return
+		}
+	}
+	err = drv.PromptInto(osUser, session, body.Text, box)
+	if err != nil {
+		// A menu took the input line's place between the guard above and
+		// the Enter (sessionio.ErrInputGone), or stood there by the read
+		// after it (sessionio.ErrSubmitUnconfirmed). Refused as though it
+		// had been up all along, so the sender keeps its text and says
+		// where to answer.
+		if errors.Is(err, sessionio.ErrInputGone) || errors.Is(err, sessionio.ErrSubmitUnconfirmed) {
+			writePromptRefusal(w, metDialogReason(r.Context(), drv, osUser, session))
+			return
+		}
+		// The paste landed and no Enter took it: the text is on Claude's
+		// input line, unsent. Said by name so the sender keeps its text
+		// rather than reading a generic failure as a transport problem.
+		if errors.Is(err, sessionio.ErrPromptNotSubmitted) {
+			http.Error(w, "prompt not submitted: it is still on the session's input line", http.StatusBadGateway)
+			return
+		}
+		http.Error(w, "inject failed", http.StatusBadGateway)
+		return
+	}
+	// tl.count is the prompt LENGTH; the text itself is never recorded.
+	attrs := telemetry.Attrs{"tl.session": session, "tl.count": len(body.Text), "tl.client": "api"}
+	if body.Tool != "" {
+		attrs["tl.tool"] = body.Tool
+	}
+	events.Emit("claude.prompt_sent", osUser, attrs)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // servePromptViaMod sends a prompt to a Claude session through its mod.
@@ -283,7 +303,10 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 	}
 	ack, err := c.send(r.Context(), modCommand{Op: "prompt", Text: p.Text})
 	if err != nil {
-		http.Error(w, "the session's Claude did not take the prompt", http.StatusBadGateway)
+		// The mod may still submit it: a command in hand goes out again to the
+		// next hello. Not a "come back" answer, so a retry cannot make two
+		// (promptonce.go remembers it).
+		http.Error(w, "the session's Claude did not confirm the prompt; look at the session before sending it again", http.StatusGatewayTimeout)
 		return
 	}
 	if !ack.OK {

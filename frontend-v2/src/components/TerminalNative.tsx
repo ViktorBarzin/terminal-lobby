@@ -1,5 +1,6 @@
 import { createEffect, createSignal, on, onCleanup, onMount, Show, type Component } from "solid-js";
 import { ownWhile } from "../lib/ownwhile";
+import { rememberTermSize } from "../lib/term-size";
 // xterm ships its own stylesheet and WILL NOT LAY OUT WITHOUT IT: the rows get
 // no positioning, so the terminal renders as a narrow column of overlapping
 // glyphs. It looks like a sizing bug and it is a missing import. Vite folds it
@@ -1460,7 +1461,12 @@ export const TerminalNative: Component<{
           // SessionView, which is where the watcher's refusal lives.
           const target = sizeTarget();
           if (target.kind === "grid") term.resize(target.cols, target.rows);
-          else fit.fit();
+          else {
+            fit.fit();
+            // This device's own size, which the next create's slot claim
+            // sizes the session to before its terminal attaches (term-size).
+            rememberTermSize(term.cols, term.rows);
+          }
         } catch (e) {
           // The debt is already cleared, so a throw is not handed back. The
           // next resize or view switch settles it. term.html has five

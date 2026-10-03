@@ -76,6 +76,8 @@ type registry struct {
 	// agentEvery is how often a watched session's agent files are listed,
 	// AgentScanInterval outside tests.
 	agentEvery time.Duration
+	// prompts sends each first prompt's request id once (promptonce.go).
+	prompts *promptOnce
 }
 
 func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
@@ -83,6 +85,7 @@ func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts 
 		users: map[string]*userState{}, ctx: ctx,
 		poll: poll, homeBase: homeBase, opts: opts, self: self,
 		now: time.Now, agentEvery: AgentScanInterval,
+		prompts: newPromptOnce(),
 	}
 	rg.mods = newModHub(rg, opts)
 	return rg

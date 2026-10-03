@@ -512,6 +512,7 @@ func registerRoutes(mux *http.ServeMux) {
 	// (pimodels.go).
 	mux.HandleFunc("/pi-models", handlePiModels)
 	mux.HandleFunc("/sessions/prewarm", handlePrewarm)
+	mux.HandleFunc("/sessions/claim", handleClaim)
 	mux.HandleFunc("/sessions/", handleSessionByName)
 	mux.HandleFunc("/whoami", handleWhoami)
 	mux.HandleFunc("/restore", handleRestore)

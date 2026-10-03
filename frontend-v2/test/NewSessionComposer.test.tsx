@@ -17,7 +17,8 @@ import { createSignal, Show } from "solid-js";
 import type { SlashCommand } from "../src/logic/compose.logic";
 import { NewSessionComposer } from "../src/components/NewSessionComposer";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
-import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
+import { ApiError, type ClaimRequest, type LobbyApi } from "../src/lib/lobby-api";
+import { rememberTermSize } from "../src/lib/term-size";
 import {
   emptyLayout,
   sessionLabel,
@@ -100,6 +101,8 @@ interface Wire {
     awaitReady: boolean;
     tool?: string;
   }[];
+  /** Every claim the composer fired at Send. */
+  claims: ClaimRequest[];
   /** When each delivery was told Send was pressed, and whether the page hid. */
   timed: { sentAt: number | undefined; hidden: boolean | undefined }[];
   uploads: { files: readonly File[]; session: string }[];
@@ -144,6 +147,10 @@ function mount(
           wire.catalogueDirs.push(dir);
           return { commands: wire.catalogue, ok: wire.catalogueOk };
         }}
+        claim={async (body) => {
+          wire.claims.push(body);
+          return true;
+        }}
         upload={async (files, session, opts) => {
           wire.uploads.push({ files, session });
           const i = Math.min(wire.uploads.length - 1, wire.chips.length - 1);
@@ -181,6 +188,7 @@ function mount(
 
 const emptyWire = (): Wire => ({
   delivered: [],
+  claims: [],
   timed: [],
   uploads: [],
   chips: [[]],
@@ -338,6 +346,69 @@ describe("<NewSessionComposer> — creating from a prompt", () => {
     fireEvent.keyDown(field(m.container)!, { key: "Enter", shiftKey: true });
     await Promise.resolve();
     expect(api.puts.length).toBe(0);
+    m.store.dispose();
+  });
+});
+
+// The slot is claimed at Send rather than by the terminal's attach, which on a
+// phone's link comes seconds later (tmux-api POST /sessions/claim).
+describe("<NewSessionComposer> — claiming the slot at Send", () => {
+  it("claims for the session it creates, with where and how it starts and this screen's size", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
+    rememberTermSize(45, 30);
+    const api = new FakeApi();
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "alpha", sessions: [], dir: "/home/wizard/code/alpha" }],
+    };
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.claims.length).toBe(1));
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.claims[0]).toEqual({
+      name: w.delivered[0]!.session,
+      dir: "/home/wizard/code/alpha",
+      cmd: "claude",
+      model: "",
+      effort: "",
+      cols: 45,
+      rows: 30,
+    });
+    m.store.dispose();
+  });
+
+  it("claims for Ungrouped with no directory, and without a size it has never seen", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.claims.length).toBe(1));
+    expect(w.claims[0]).toMatchObject({ dir: "", cmd: "claude" });
+    expect(w.claims[0]).not.toHaveProperty("cols");
+    m.store.dispose();
+  });
+
+  it("does not claim for a model the slot was not started on", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    choose(m.container, "Model for new session", "claude-sonnet-5");
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.claims).toEqual([]);
     m.store.dispose();
   });
 });

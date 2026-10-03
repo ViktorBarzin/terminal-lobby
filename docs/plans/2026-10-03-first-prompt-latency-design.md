@@ -112,9 +112,63 @@ a few milliseconds.
   `~/code/terminal-lobby`, including one claimed from a slot that has been warm
   for over a minute.
 
+## Phase 1 result
+
+Deployed in 0.98.4 at 16:40. The first create through it, at 16:45, read
+`prompt.landed` Send to **Accepted** 1,020ms and Send to **Shown** 1,675ms, against
+a 2.75s median and 16.2s p90 to the prompt reaching Claude before. Timed hop by
+hop from the journal: the claim landed 606ms after Send, the mod said hello under
+the new name 249ms after that, and Claude accepted 165ms later.
+
+## Phase 2: slow networks, and claiming at Send
+
+Viktor then added: *"also now it's quite bad, especially on slow networks"*.
+
+The prompt itself leaves the browser one round trip after Send, but it cannot
+land before the claim, and the claim waited for the browser's terminal: about
+five round trips in sequence on a slow link.
+
+| step before the claim | round trips | iPhone, 7 days |
+|---|---|---|
+| layout save, awaited before the session opened | 1 | `/api/sessions/layout` slow (≥1.5s) 93 times, p50 3.3s |
+| terminal code (phones skip the prefetch) | 1 + 83 KB | |
+| `GET /token` | 1 | slow 55 times, p50 2.7s, p90 11.4s |
+| WebSocket open | 2-3 | handshake p50 560ms, p90 1.2s (n=831) |
+
+After the claim there is a fixed ~415ms to Accepted and ~1,070ms to Shown, so
+Shown under 2s needs the claim within about 900ms of Send. On a phone only a
+claim that does not wait for the WebSocket reaches that.
+
+### What we decided
+
+| decision | choice | why |
+|---|---|---|
+| where the claim happens | also at Send, through tmux-api `POST /sessions/claim`; the attach keeps its own | takes the terminal off the prompt's path; the atomic rename settles the race; a create still works with tmux-api down |
+| how it claims | `tmux-user-attach` in a claim-only mode, a sixth argument `claim` | the script's rules and stamps stay in one place; sudo's `env_reset` would strip a variable |
+| what it claims for | Claude, no model or effort, a minted id, the user's own project dir or home | what a warm slot can be |
+| act-as | refused | an administrator acting as someone never creates their sessions |
+| the size | the claim carries the device's last terminal size; tmux-api resizes the window and unsets `window-size` | the first reply wraps to the screen it is read on, with no lasting pin |
+| a tab that never attaches | the prompt runs anyway | Viktor: that is what Send means |
+| the layout save | no longer awaited before the session opens | it was a round trip in front of the attach |
+| duplicate prompts | each first-prompt line carries a request id; session-events sends each id once, joins a retry to the attempt under way, remembers a 504 and forgets 502/503/404 | the browser gives up at 8s while the server may take 4s + 10s, and a request it gave up on left its command queued for the mod |
+
+Two blind challenger reviews ran against the first draft. Both agreed on the
+direction and changed four things in it: the claim moved from session-events to
+tmux-api and from the prompt request to its own request (so attachments do not
+hold it back), the mode became an argument rather than an environment variable,
+act-as is refused, and the size is set before the prompt. One reviewer would
+have shipped the browser-only changes first and measured; the other measured
+that only the claim reaches the phone targets. The ADR is
+`docs/adr/0038-a-new-sessions-slot-is-claimed-at-send.md`.
+
 ## Open questions
 
 - The 0.6 to 1.2s for Claude's own record is from a measurement on 2026-08-18.
   The new event will show whether that still holds on the current Claude Code.
 - A first prompt that is itself a slash command may never produce a row, so its
   event never fires. Pending marks expire after two minutes.
+- The size a claim carries is the last one this device drew. A device that has
+  never shown a terminal sends none, and its first reply wraps at 80 columns
+  until the attach.
+- The iPhone could not be checked on 2026-10-03: the rig's Mac did not answer
+  ssh. Phone checks ran on the shared Android emulator with a shaped link.

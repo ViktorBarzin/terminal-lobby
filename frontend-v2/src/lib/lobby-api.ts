@@ -409,6 +409,44 @@ export async function prewarm(dir: string): Promise<void> {
   }
 }
 
+/** What `claimSlot` asks for: the session, and how its attach would start it. */
+export interface ClaimRequest {
+  name: string;
+  /** The project's directory, "" for the home directory. */
+  dir: string;
+  cmd: string;
+  model: string;
+  effort: string;
+  /** The device's last terminal size (lib/term-size.ts), when it has one. */
+  cols?: number;
+  rows?: number;
+}
+
+/**
+ * POST /api/sessions/claim — claim a warm slot for a session being created,
+ * the moment Send is pressed.
+ *
+ * Without it the slot is claimed only by the terminal's attach, so the first
+ * prompt waits for the layout write, the terminal code, a token and a
+ * WebSocket, which on a phone's link is the slowest part of a create (iPhone
+ * WebSocket handshake 1.2s at p90, 2026-10-03). A HINT like `prewarm`: the
+ * attach still claims when this does not, so every failure is swallowed.
+ * Resolves whether a slot was claimed.
+ */
+export async function claimSlot(body: ClaimRequest): Promise<boolean> {
+  try {
+    const res = await req("/sessions/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const got: unknown = await res.json();
+    return typeof got === "object" && got !== null && "claimed" in got && got.claimed === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * POST /api/sessions/{name}/resume — bring a suspended session back.
  *

@@ -26,7 +26,15 @@ import {
   NEW_SESSION_COMMANDS as COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
-import { isOneSessionEffort, labelFor, modelHarness, type ModelHarness } from "../lib/models";
+import {
+  isOneSessionEffort,
+  labelFor,
+  modelHarness,
+  modelRequest,
+  type ModelHarness,
+} from "../lib/models";
+import { claimSlot } from "../lib/lobby-api";
+import { lastTermSize } from "../lib/term-size";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
 import { BottomSheet, ModelSheet } from "./ModelSheet";
@@ -154,6 +162,8 @@ export const NewSessionComposer: Component<{
    *  given its first prompt, and how held files reach its store. */
   deliver?: typeof deliverFirstPrompt;
   upload?: typeof uploadAttachments;
+  /** How the warm slot is claimed at Send (tmux-api POST /sessions/claim). */
+  claim?: typeof claimSlot;
   /** How the `/` menu's catalogue is read, for the directory a session would
    *  start in. Injected by tests; the default is the real endpoint. */
   catalogue?: (dir: string) => Promise<Catalogue>;
@@ -165,6 +175,14 @@ export const NewSessionComposer: Component<{
   /** Which CLI is starting, or null for a shell, which has none. */
   const harness = (): ModelHarness | null => modelHarness(cmd() as SessionTool);
   const choice = (h: ModelHarness) => modelChoiceFor(props.prefs.prefs(), h);
+  /** Whether a session created now could take a warm slot: Claude, with no
+   *  model or effort flag on its launch (App.newLaunch reads the same). */
+  const claimLaunch = (): boolean => {
+    const h = harness();
+    if (cmd() !== "claude" || h !== "claude") return false;
+    const req = modelRequest(h, choice(h));
+    return !req || (req.model === "" && req.effort === "");
+  };
 
   // ---- pi's models ---------------------------------------------------------
   // Read again whenever this opens with pi chosen, and whenever pi becomes the
@@ -427,6 +445,21 @@ export const NewSessionComposer: Component<{
     if (shell) {
       shown.stop();
       return true;
+    }
+    // Claim the warm slot now rather than when the terminal attaches, which on
+    // a phone's link is seconds away (token, terminal code, WebSocket). Only
+    // what a slot can be: Claude, started with no model or effort flags. A
+    // hint: the attach claims anyway when this does not.
+    const launch = claimLaunch();
+    if (launch) {
+      void (props.claim ?? claimSlot)({
+        name: id,
+        dir: dirFor(project) ?? "",
+        cmd: "claude",
+        model: "",
+        effort: "",
+        ...lastTermSize(),
+      });
     }
     void sendFirstPrompt({
       session: id,

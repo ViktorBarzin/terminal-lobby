@@ -215,6 +215,14 @@ export function watchHidden(doc: Document = document): {
   return { hidden: () => seen, stop: () => doc.removeEventListener("visibilitychange", on) };
 }
 
+/** A request id: 16 random bytes as hex, which session-events' id pattern
+ *  takes ([A-Za-z0-9_-]{1,64}). */
+function requestId(): string {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
 /** What one POST /prompt means for whether to try again. */
 type Attempt = "ok" | "later" | "no";
 
@@ -226,12 +234,19 @@ async function post(
   fetchImpl: typeof fetch,
   onRefused?: (reason: string) => void,
   timing?: SendTiming,
+  id?: string,
 ): Promise<Attempt> {
   try {
     const res = await fetchImpl(promptUrl(session), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, awaitReady, ...(tool ? { tool } : {}), ...timing }),
+      body: JSON.stringify({
+        text,
+        awaitReady,
+        ...(tool ? { tool } : {}),
+        ...timing,
+        ...(id ? { id } : {}),
+      }),
       credentials: "same-origin",
     });
     if (res.ok) return "ok";
@@ -314,6 +329,11 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
       ? undefined
       : { sinceSendMs: Math.max(0, Math.round(now() - sentAt)), hidden: o.hidden?.() ?? false };
 
+  // One request id per line, kept across that line's retries: session-events
+  // sends each id once (promptonce.go), so a retry after this browser gave up
+  // on a slow answer is answered by the attempt already under way rather than
+  // sending the line a second time.
+  const ids = lines.map(() => requestId());
   let sent = 0;
   for (let rung = 0; rung < ladder.length; rung++) {
     await sleep(ladder[rung]!);
@@ -327,6 +347,7 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
         fetchImpl,
         o.onRefused,
         timing(sent),
+        ids[sent],
       );
       if (r === "no") return false;
       if (r === "later") break; // next rung, resuming at this line

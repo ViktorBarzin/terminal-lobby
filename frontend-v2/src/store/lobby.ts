@@ -819,7 +819,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         // copy already; without this one the new name is unlisted here and files
         // itself at the bottom of its group until the grace runs out.
         if (moves.length > 0) {
-          const carry = (l: Layout) => moves.reduce((acc, [was, now]) => renameSessionInLayout(acc, was, now), l);
+          const carry = (l: Layout) =>
+            moves.reduce((acc, [was, now]) => renameSessionInLayout(acc, was, now), l);
           setLayout(carry(layout()));
           if (lastWritten) lastWritten = carry(lastWritten);
         }
@@ -835,7 +836,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         // listed its minted id is the pending card's session under another name,
         // and keeping the card would show it twice until the tab reloaded.
         const born = new Set(
-          sRes.value.filter((s) => s.bornAs && (!s.owner || s.owner === me())).map((s) => s.bornAs!),
+          sRes.value
+            .filter((s) => s.bornAs && (!s.owner || s.owner === me()))
+            .map((s) => s.bornAs!),
         );
         const stillPending = pending().filter((p) => !known.has(p.name) && !born.has(p.name));
         // Pending names count as live. A create's session does not exist
@@ -1215,8 +1218,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    *
    * What happens to the text depends on `kind`; see CreateKind. Returns the id
    * the session was given, which is what the caller needs to send the first
-   * prompt. A layout write that fails is toasted and drops the optimistic card,
-   * but the session itself is still started by the attach.
+   * prompt, as soon as the session is open: the layout write runs on behind it.
+   * One that fails is toasted and drops the optimistic card, but the session
+   * itself is still started by the attach.
    */
   async function create(text: string, group: string, kind: CreateKind = "prompt"): Promise<string> {
     // The layout write below builds on `layout()`, so it has to be the
@@ -1269,15 +1273,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // for seconds (deployed review round 5, 2026-09-29). Only the placeholder:
     // the server's title replaces it the moment it has one.
     if (t !== "") rememberPromptLine(n, t);
-    const saved = await saveLayout(addSessionToGroup(layout(), n, group));
-    if (!saved) {
+    // Not waited on before the session opens. Opening it is what mounts the
+    // terminal whose attach claims the slot, and on a slow link this write
+    // took seconds (iPhone /api/sessions/layout p50 3.3s when slow,
+    // 2026-10-03). saveLayout applies the document locally before its PUT, so
+    // nothing written after this builds on a layout without the session.
+    void saveLayout(addSessionToGroup(layout(), n, group)).then((saved) => {
       // The layout PUT is the only record a create makes, so a write that did
       // not land created nothing. Keeping the optimistic card would strand a
-      // phantom the poll can never resolve. Selecting still happens: attaching
-      // the terminal is what actually brings the session into being, and that
-      // path is unaffected when it is only the layout endpoint that is down.
-      setPending((p) => p.filter((s) => s.name !== n));
-    }
+      // phantom the poll can never resolve. The session stays open: attaching
+      // the terminal is what actually brings it into being, and that path is
+      // unaffected when it is only the layout endpoint that is down.
+      if (!saved) setPending((p) => p.filter((s) => s.name !== n));
+    });
     select(n);
     // Stamping the title needs the session to EXIST, and only the terminal's
     // attach creates it. The refresh burst is already the "has it appeared

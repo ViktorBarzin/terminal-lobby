@@ -28,6 +28,20 @@ name="${1:-}"
 # the same pattern as tmux-api's mintedNameRe, which a test there checks.
 MINTED_RE='^[0-9a-hjkmnp-tv-z]{12}$'
 
+# A 6th argument of `claim` means "claim a warm slot for this session if one
+# fits, then stop": no attach, and no cold create. tmux-api runs it this way
+# (POST /sessions/claim) the moment the composer's Send is pressed, so the slot
+# is claimed without waiting for the browser's terminal to attach, which on a
+# phone's link is the slowest part of a create. An argument and not an
+# environment variable, because sudo's env_reset would strip a variable; and
+# the 6th, because tmux-attach.sh passes five and NAME_RE admits a leading
+# dash. Only a minted id may be claimed this way.
+claim_only=""
+if [[ "${6:-}" == claim ]]; then
+    [[ "$name" =~ $MINTED_RE ]] || exit 0
+    claim_only=yes
+fi
+
 # Resolve this user's home from the password database rather than trusting
 # $HOME, the same way tmux-user-dirlist does. `sudo -H` at every in-repo call
 # site and `Defaults env_reset` in /etc/sudoers both set HOME to the target
@@ -497,6 +511,7 @@ if [[ "$cmd_key" == claude && -z "$model$effort" && -z "${renamed:-}" ]]; then
                 >/dev/null 2>&1 || true
         fi
     elif [[ "$name" != "$slot" ]] && tmux rename-session -t "=$slot" "$name" 2>/dev/null; then
+        claimed=yes
         # Read the mark BEFORE clearing it: it decides whether a refill is owed.
         was_speculative="$(tmux display -p -t "=$name:" '#{@tl_speculative}' 2>/dev/null || true)"
         # The claim is what turns a guess into somebody's session, so the
@@ -566,6 +581,14 @@ if [[ "$cmd_key" == claude && -z "$model$effort" && -z "${renamed:-}" ]]; then
                 >/dev/null 2>&1 || true
         fi
     fi
+fi
+
+# Claim-only stops here, whatever happened above: everything below attaches or
+# creates, and the browser's own attach will do that when it arrives. It says
+# whether it claimed, which is all tmux-api needs to know.
+if [[ "$claim_only" == yes ]]; then
+    [[ "${claimed:-}" == yes ]] && echo claimed
+    exit 0
 fi
 
 logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' scope=$scope_ok"

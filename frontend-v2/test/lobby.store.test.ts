@@ -205,6 +205,30 @@ describe("lobby store", () => {
     });
   });
 
+  // On a slow link the layout PUT took seconds (iPhone /api/sessions/layout
+  // p50 3.3s when slow, 2026-10-03), and the session did not open, so its
+  // terminal did not attach and its slot was not claimed, until it answered.
+  it("create: opens the session without waiting for the layout write", async () => {
+    const api = new FakeApi();
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const put = api.putLayout.bind(api);
+    api.putLayout = async (l: Layout) => {
+      await held;
+      await put(l);
+    };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("Fix the deploy", "");
+      expect(store.selected()?.name).toBe(id);
+      expect(names(store)).toEqual([id]);
+      expect(api.puts).toHaveLength(0);
+      release();
+      await vi.waitFor(() => expect(api.puts).toHaveLength(1));
+      expect(api.puts[0]!.ungrouped).toEqual([id]);
+    });
+  });
+
   // The title rename lands 3-5 s after a create, often before any poll has
   // listed the minted id, and inside the window where this tab ignores the
   // server's layout. The card must stay where the create put it, under its new
@@ -232,7 +256,10 @@ describe("lobby store", () => {
     vi.useFakeTimers();
     const api = new FakeApi();
     api.sessionsVal = [sess("older")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "p", sessions: ["older"], dir: "/srv/p" }] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "p", sessions: ["older"], dir: "/srv/p" }],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       const id = await store.create("Fix the deploy", "p");
@@ -1416,7 +1443,9 @@ describe("lobby store", () => {
     await withStore(api, async (store) => {
       await store.refresh();
       await store.create("ghost", "");
-      expect(names(store)).toEqual([]);
+      // The write is not waited on before the session opens, so its failure
+      // lands a moment after create returns.
+      await vi.waitFor(() => expect(names(store)).toEqual([]));
       expect(store.toast()).toMatch(/layout/i);
 
       api.putError = false;

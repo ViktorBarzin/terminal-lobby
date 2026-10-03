@@ -9,6 +9,7 @@ import {
   restartSession,
   resumeSession,
   withDeadline,
+  claimSlot,
   REQUEST_TIMEOUT_MS,
   RESTORE_TIMEOUT_MS,
 } from "../src/lib/lobby-api";
@@ -299,5 +300,41 @@ describe("restartSession", () => {
     const e = (await restartSession("a").catch((x: unknown) => x)) as ApiError;
     expect(e.status).toBe(409);
     expect(e.message).toBe("the session has no conversation to restart yet");
+  });
+});
+
+describe("claimSlot", () => {
+  it("posts the claim and reports what the server did", async () => {
+    const f = vi.fn(
+      async (_u: string, _i: RequestInit) =>
+        new Response(JSON.stringify({ claimed: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", f);
+    const body = {
+      name: "bw8k5gt9v314",
+      dir: "/home/u/code",
+      cmd: "claude",
+      model: "",
+      effort: "",
+      cols: 45,
+      rows: 30,
+    };
+    expect(await claimSlot(body)).toBe(true);
+    const [url, init] = f.mock.calls[0] as FetchArgs;
+    expect(url).toBe(apiUrl("/sessions/claim"));
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual(body);
+  });
+
+  // A hint: the attach claims anyway when this does not.
+  it("swallows every failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("offline");
+      }),
+    );
+    const body = { name: "bw8k5gt9v314", dir: "", cmd: "claude", model: "", effort: "" };
+    expect(await claimSlot(body)).toBe(false);
   });
 });
