@@ -403,7 +403,7 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			//
 			// A subagent's interim notice is read against the subagent's own
 			// transcript, which says whether anything can still wake it.
-			subagents := agentView{now: s.now(), read: func(id string) ([][]byte, bool) {
+			subagents := agentView{read: func(id string) ([][]byte, bool) {
 				l, err := s.Sessions.AgentTranscriptLines(t.OSUser, live.Name, id)
 				return l, err == nil
 			}}

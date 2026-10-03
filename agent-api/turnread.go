@@ -131,6 +131,13 @@ var noticeEnds = map[string]bool{"completed": true, "failed": true, "killed": tr
 // subagent's last notice carried the note too, because a Monitor it had armed
 // was still counting down, and nothing ever came after it.
 //
+// Read as a subagent's transcript (v.subagent), a Monitor is never
+// outstanding: a stopped subagent's Monitor events are only enqueued in the
+// main session and never wake the subagent (measured live on 2026-10-03,
+// rv-bg-c: the Monitor fired, its event sat in the session's queue, and the
+// subagent's transcript got nothing). Holding for one held the turn until the
+// Monitor's timeout, up to the 30-minute hold.
+//
 // A pending ScheduleWakeup is outstanding too, as wakeupTask: the turn that
 // armed it ends by saying it will wait, and the answer comes in the turn the
 // wakeup starts. It stays outstanding from the moment it fires until that
@@ -139,9 +146,9 @@ var noticeEnds = map[string]bool{"completed": true, "failed": true, "killed": tr
 func backgroundOutstanding(lines [][]byte, v agentView) []string {
 	var order []string
 	open := map[string]bool{}
-	// expires is when each timed Monitor's timeout ends it, for a
-	// subagent's view only (see agentView.idle).
-	expires := map[string]time.Time{}
+	// monitors are the Monitors among the started tasks, which a
+	// subagent's view does not count (see above).
+	monitors := map[string]bool{}
 	wakeup := wakeupNone
 	for _, l := range lines {
 		var r struct {
@@ -203,8 +210,8 @@ func backgroundOutstanding(lines [][]byte, v agentView) []string {
 			started := []string{tur.BackgroundTaskID}
 			if !tur.Persistent {
 				started = append(started, tur.TaskID)
-				if launched, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && tur.TaskID != "" && tur.TimeoutMs > 0 {
-					expires[tur.TaskID] = launched.Add(time.Duration(tur.TimeoutMs) * time.Millisecond)
+				if tur.TaskID != "" && tur.TimeoutMs > 0 {
+					monitors[tur.TaskID] = true
 				}
 			}
 			// A foreground Agent answers with an agentId too, once it has
@@ -234,7 +241,7 @@ func backgroundOutstanding(lines [][]byte, v agentView) []string {
 		if !open[id] {
 			continue
 		}
-		if end, ok := expires[id]; ok && v.subagent && !v.now.Before(end) {
+		if v.subagent && monitors[id] {
 			continue
 		}
 		out = append(out, id)
@@ -253,7 +260,6 @@ type agentView struct {
 	// read returns a subagent's own transcript, ok=false when it cannot be
 	// read.
 	read func(agentID string) ([][]byte, bool)
-	now  time.Time
 	// subagent is set while reading a subagent's transcript rather than the
 	// session's.
 	subagent bool
@@ -272,10 +278,11 @@ const maxAgentDepth = 4
 //     answer written at or before noticeAt. A notice from its own work that
 //     woke it, or anything it said after, means another notice is coming.
 //   - Its own transcript has no background work outstanding. A Monitor it
-//     armed counts until its timeout: when the subagent has stopped, the
-//     Monitor's expiry notice is only queued in the session and never
-//     reaches the subagent's transcript (measured live on 2026-10-02), so
-//     the clock is what ends it there.
+//     armed does not count: once the subagent has stopped, the Monitor's
+//     events and its expiry notice are only queued in the session and never
+//     reach the subagent (measured live on 2026-10-02 and 2026-10-03). A
+//     background command it ran does count, because that command's notice
+//     does wake it (rv3-flow).
 func (v agentView) idle(agentID, noticeAt string) bool {
 	if v.read == nil || v.depth >= maxAgentDepth {
 		return false
