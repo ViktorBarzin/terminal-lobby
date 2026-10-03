@@ -123,8 +123,29 @@ describe("the agent panel in the text view", () => {
     const v = mount({ agents: snap([agent("a1")]), working: true });
     const view = v.container.querySelector(".tl-textview");
     expect(view?.getAttribute("data-rail")).toBe("true");
+    // The margin is permanent on a wide view, so the dock stays where it is
+    // when the agents go (Viktor, 2026-10-03).
     v.setAgents(null);
-    expect(view?.hasAttribute("data-rail")).toBe(false);
+    expect(view?.getAttribute("data-rail")).toBe("true");
+  });
+
+  // Agents coming and going used to add and remove a 280px column, which
+  // moved the whole conversation sideways on desktop (Viktor, 2026-10-03).
+  // The margin now stays, empty, so nothing beside it moves.
+  it("keeps an empty margin where the panel goes, so the column never shifts", () => {
+    const v = mount({ agents: null });
+    const timeline = v.container.querySelector(".tl-timeline");
+    const empty = () => v.container.querySelector(".tl-rail-empty");
+    expect(v.panel()).toBeNull();
+    expect(empty()?.parentElement).toBe(timeline?.parentElement);
+    v.setAgents(snap([agent("a1")]));
+    v.setBg({ agents: 1 });
+    expect(v.panel()).not.toBeNull();
+    expect(empty()).toBeNull();
+    v.setAgents(null);
+    v.setBg(undefined);
+    expect(v.panel()).toBeNull();
+    expect(empty()).not.toBeNull();
   });
 
   it("stays while the session list still counts the agent after the turn closed", () => {
@@ -258,6 +279,10 @@ describe("the background line, folded into the panel", () => {
       expect(v.strip()).toBeNull();
       // A strip takes no margin, so the dock keeps the whole width.
       expect(v.container.querySelector(".tl-textview")?.hasAttribute("data-rail")).toBe(false);
+      // And with nothing running, a narrow view keeps no empty margin either.
+      v.setAgents(null);
+      v.setBg(undefined);
+      expect(v.container.querySelector(".tl-rail-empty")).toBeNull();
     });
   });
 });

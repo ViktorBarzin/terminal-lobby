@@ -2189,9 +2189,11 @@ export const TextView: Component<{
       ref={viewEl}
       style={{ "--tl-text-scale": String(scaleFor(textSize())) }}
       data-card-keys={cardUp() && cardKeysArmed() ? "armed" : undefined}
-      // The agent panel is in the right margin, so the composer and the cards
-      // below the transcript centre on what is left of it (app.css).
-      data-rail={showAgents() && agentSet() && !narrow() ? "true" : undefined}
+      // The right margin is the agent panel's, so the composer and the cards
+      // below the transcript centre on what is left of it (app.css). It is
+      // kept on a wide view whether or not anything runs, so agents coming
+      // and going never move the conversation sideways.
+      data-rail={narrow() ? undefined : "true"}
     >
       {/* What size the pinch has reached, while it is being made. */}
       <Show when={sizing() !== null}>
@@ -2273,7 +2275,17 @@ export const TextView: Component<{
             />
           )}
         </Show>
-        <Show when={showAgents() ? agentSet() : null}>
+        <Show
+          when={showAgents() ? agentSet() : null}
+          // With nothing running, a wide view keeps the margin empty rather
+          // than giving its 280px to the transcript and taking it back on the
+          // next agent (Viktor, 2026-10-03).
+          fallback={
+            <Show when={!narrow()}>
+              <div class="tl-rail-empty" aria-hidden="true" />
+            </Show>
+          }
+        >
           {(snap) => (
             <AgentPanel
               snapshot={snap()}

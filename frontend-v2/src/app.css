@@ -1378,7 +1378,7 @@ label.tl-set-row-label {
 }
 /* The rail takes the right margin of the transcript's row only. What sits
    below that row (the composer, a card docked in its place, the bands above
-   them) spans the whole view, so while the rail shows it gives the rail's
+   them) spans the whole view, so on a wide view it gives the rail's
    width back on the right and centres on the conversation's column instead
    of on the view (TextView `data-rail`). Without it the box sat 140px right
    of the column (seen at 2000px on 2026-09-30). */
@@ -1427,6 +1427,14 @@ label.tl-set-row-label {
   padding: 0 14px 22px 11px;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+/* The margin with nothing in it. A wide view keeps the rail's width and its
+   hairline whether or not an agent runs, so the conversation's column does not
+   jump 140px each time one starts or ends (TextView, 2026-10-03). */
+.tl-rail-empty {
+  flex: none;
+  width: var(--tl-rail-w);
+  border-left: 1px solid var(--border);
 }
 .tl-agents[data-form="strip"] {
   order: -1; /* above the transcript, which comes first in the markup */
