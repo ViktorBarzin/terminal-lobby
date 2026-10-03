@@ -363,6 +363,40 @@ func TestAutoTitleStampsASummaryThatLandsAfterTheWindow(t *testing.T) {
 	}
 }
 
+// @claude_state is the hooks' record and it goes missing on a live Claude:
+// measured 2026-10-03, 10 of emo's 11 Claude sessions had none, three of them
+// untitled with a summary in the pane title. The /proc tool mark is read live
+// on every poll, so it says a claude is running there now, which is all the
+// state check was standing in for.
+func TestAutoTitleTitlesALiveClaudeWithNoHookState(t *testing.T) {
+	now := time.Now()
+	argv, _ := autoTitleFixture(t, "exit 0")
+	s := claudeSession("vsg8anas3xrv", "✳ Оставяме го така", 10*time.Second, now)
+	s.State = ""
+	s.Tool = "claude"
+	sessions := []Session{s}
+	autoTitleSessions("wizard", sessions, now)
+
+	if got := recordedArgv(t, argv); !strings.Contains(got, "Оставяме го така") {
+		t.Errorf("never stamped a live claude with no hook state:\n%s", got)
+	}
+}
+
+// The tool mark is what keeps a dead claude out: once the process is gone the
+// pane runs a shell again, and whatever the dead pane last wrote stays put.
+func TestAutoTitleLeavesAShellWithAClaudeLookingPaneTitle(t *testing.T) {
+	now := time.Now()
+	argv, _ := autoTitleFixture(t, "exit 0")
+	s := claudeSession("vsg8anas3xrv", "✳ Оставяме го така", 10*time.Second, now)
+	s.State = ""
+	s.Tool = "shell"
+	autoTitleSessions("wizard", []Session{s}, now)
+
+	if got := recordedArgv(t, argv); got != "" {
+		t.Errorf("stamped a session with no live claude:\n%s", got)
+	}
+}
+
 // A session already past the window when this process first sees it, which is
 // every untitled session after a tmux-api restart, takes its summary too. It
 // was never watched, so there is no gave_up for it, only the late title.

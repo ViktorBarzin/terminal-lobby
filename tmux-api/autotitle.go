@@ -174,6 +174,17 @@ func modSummary(raw string) (string, bool) {
 	return summary, summary != ""
 }
 
+// liveClaude reports whether a claude is running in the session right now.
+//
+// Either record will do. @claude_state is the hooks' and goes missing on a
+// live Claude (measured 2026-10-03: 10 of emo's 11 Claude sessions had none,
+// three of them untitled with a summary in the pane title). The tool mark is
+// read out of /proc on every poll, so it cannot outlive the process, which is
+// what keeps a dead claude's last pane title from becoming a title.
+func liveClaude(s *Session) bool {
+	return s.State != "" || s.Tool == toolClaude
+}
+
 // autoTitles is what stops one session being reported twice. Package state
 // because the rule runs on a poll, and the poll runs for the life of the
 // process; a var so tests get their own.
@@ -382,10 +393,10 @@ func (t *autoTitleTracker) size(osUser string) int {
 // stamping the title onto the session AND onto the row being served, so the
 // poll that stamps is the one that shows it rather than the one after.
 //
-// Called from userSessionsAndActivity, after the liveness backstop has run:
-// State there means a claude that is actually alive, which is what makes a
-// crashed Claude leave its session untitled rather than take the pane title a
-// dead process left behind.
+// Called from userSessionsAndActivity, after the liveness backstop and the
+// /proc tool mark have run: State and Tool there both mean a claude that is
+// actually alive (liveClaude), which is what makes a crashed Claude leave its
+// session untitled rather than take the pane title a dead process left behind.
 func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 	live := make(map[string]bool, len(sessions))
 	for i := range sessions {
@@ -395,7 +406,7 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 
 	for i := range sessions {
 		s := &sessions[i]
-		if s.State == "" || s.Title != "" {
+		if !liveClaude(s) || s.Title != "" {
 			// Not a live Claude, or somebody has already titled it.
 			continue
 		}
