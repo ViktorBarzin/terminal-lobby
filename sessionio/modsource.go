@@ -46,6 +46,9 @@ const (
 	ModAgentsEvent     = "agents"
 	ModAckEvent        = "ack"
 	ModByeEvent        = "bye"
+	// ModSummaryEvent carries, as Text, the mod's one-line summary of the
+	// conversation, for OptionSummary.
+	ModSummaryEvent = "summary"
 )
 
 // ModEvent is one event the mod posts. One struct for every type, because the
@@ -66,8 +69,8 @@ type ModEvent struct {
 	Tool    string          `json:"tool,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	IsError bool            `json:"isError,omitempty"`
-	// Text is the result's flattened text, a delta's new words, or a
-	// prompt's text.
+	// Text is the result's flattened text, a delta's new words, a prompt's
+	// text, or a summary.
 	Text string `json:"text,omitempty"`
 
 	// turn_start, delta, turn_end

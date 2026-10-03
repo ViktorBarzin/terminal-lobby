@@ -148,11 +148,20 @@ arrive in order. Every event has `type` and `t` (epoch ms).
 | `settled` | `toolId`, `by` (`terminal`/`web`/`gone`) | a dialog closed |
 | `model` | `model`, `effort?` | `turn.step`, when it changes |
 | `agents` | `agents` (as `$.agent.list()` returns them) | after every `turn_end` |
+| `summary` | `text`, a few words for the session's title | the first `prompt` command of a fresh conversation, from `$.model.complete` on haiku (see below) |
 | `ack` | `id`, `ok`, `error?` | a command finished |
 | `bye` | `reason` | `session.end` |
 
 Answer: `204`, or `409` when the token is unknown (session-events restarted),
 which sends the mod back to hello.
+
+`summary` exists because Claude Code writes its conversation summary into the
+terminal title only for a prompt somebody typed, and the lobby's prompts reach
+Claude through `$.prompt.submit`. Until it was added (2026-10-03), every session
+started from the lobby kept its random id as its name, and pushes about it said
+the id. session-events stamps the text as `@tl_summary`, and tmux-api's
+auto-title rule adopts it when the pane title has no summary of its own, under
+the same two-minute window and the same cleaning.
 
 ### `GET /mod/v1/poll?token=…`
 

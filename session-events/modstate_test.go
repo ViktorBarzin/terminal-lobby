@@ -258,3 +258,23 @@ func containsName(names []string, want string) bool {
 	}
 	return false
 }
+
+// A prompt the lobby hands to the mod never makes Claude Code write a summary
+// into the pane title, so the mod writes one of its own and it lands here, on
+// the option tmux-api's auto-title rule reads when the pane has nothing.
+func TestStampSummaryLandsOnItsOption(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModSummaryEvent, Text: "  Notification titles fall back to ids \n"}, stampNow)
+	if got := writeKeys(w); got != sessionio.OptionSummary+"=Notification titles fall back to ids" {
+		t.Fatalf("summary writes %q", got)
+	}
+	for _, ev := range []sessionio.ModEvent{
+		{Type: sessionio.ModSummaryEvent, Text: "   "},
+		{Type: sessionio.ModSummaryEvent, Text: "A subagent's own task", AgentID: "a1"},
+	} {
+		if got := writeKeys(s.apply(ev, stampNow)); strings.Contains(got, sessionio.OptionSummary) {
+			t.Errorf("%+v wrote %q", ev, got)
+		}
+	}
+}

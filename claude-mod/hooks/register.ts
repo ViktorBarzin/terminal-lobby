@@ -10,6 +10,7 @@ import { SeenCommands } from './lib/seen.ts';
 import { TranscriptStamp } from './lib/stamp.ts';
 import { Decided } from './lib/decided.ts';
 import { OpenDialogs } from './lib/open.ts';
+import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
@@ -42,6 +43,8 @@ const ownDialogs = new Map<string, Promise<string>>();
 const seenCommands = new SeenCommands();
 // Dialogs on screen, sent again after every hello (lib/open.ts).
 const openDialogs = new OpenDialogs();
+// Whether this conversation still owes its summary (lib/summary.ts).
+const summary = new SummaryOnce();
 
 const now = () => Date.now();
 
@@ -74,6 +77,18 @@ function ack(id: unknown, ok: boolean, error?: string): void {
   const outcome = error === undefined ? { ok } : { ok, error };
   seenCommands.record(id, outcome);
   send({ type: 'ack', id, ...outcome });
+}
+
+// Asks for a one-line summary of the conversation's first prompt and sends it
+// for the session's title. Claude Code writes its own only for a typed prompt.
+async function sendSummary($: EngineInterface, text: string): Promise<void> {
+  try {
+    const r = await $.model.complete(summaryRequest(text));
+    const title = r.isAnswered ? summaryFrom(r.text) : '';
+    if (title) send({ type: 'summary', text: title });
+  } catch {
+    // An untitled session keeps its prompt line in the lobby, as before.
+  }
 }
 
 function errorText(err: unknown): string {
@@ -184,6 +199,9 @@ async function runCommand($: EngineInterface, c: Command): Promise<void> {
   try {
     switch (c.op) {
       case 'prompt': {
+        // The first prompt of a fresh conversation is the one to title it by;
+        // a resumed one already has a title. Never in the prompt's way.
+        const owesSummary = summary.claim() && (await $.session.turns().catch(() => -1)) === 0;
         // submit resolves only when the prompt's turn starts, minutes later if
         // Claude is busy: ack now, and ack again with ok:false if it fails.
         const submitted = $.prompt.submit({ text: String(c.text ?? ''), asUser: true });
@@ -196,6 +214,7 @@ async function runCommand($: EngineInterface, c: Command): Promise<void> {
             }
             // The mod's own prompt.submit hook does not see a prompt it submitted.
             send({ type: 'prompt', text: r.text, origin: r.origin ?? { kind: 'plugin', name: 'terminal-lobby', asUser: true } });
+            if (owesSummary) void sendSummary($, r.text);
           },
           (err: unknown) => ack(c.id, false, errorText(err)),
         );
@@ -363,7 +382,10 @@ export const register: Register = (on) => {
         await link.drain(DRAIN_MS);
         // A /clear ends this conversation but not the process: say hello
         // again for the new one.
-        if (e.reason === 'clear') link.rehello();
+        if (e.reason === 'clear') {
+          summary.reset();
+          link.rehello();
+        }
         else link.stop();
       } catch {
         // Ignored: the session ends either way.

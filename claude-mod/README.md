@@ -16,6 +16,9 @@ What it does, in short:
 - Holds plan approvals and permission prompts in `tool.check` and draws its own
   Approve / Reject dialog, raced against the web answer. A web answer takes the
   terminal dialog off the screen.
+- Asks haiku for a short title on the first prompt the lobby sends into a fresh
+  conversation, and sends it as a `summary` event. Claude Code titles only
+  prompts somebody typed.
 - Stays inert in a non-interactive session (`claude -p`) and outside tmux.
 
 ## Layout
@@ -30,6 +33,7 @@ What it does, in short:
 | `hooks/lib/stamp.ts` | whether session-events has been told where the transcript is |
 | `hooks/lib/decided.ts` | answers already given, for a tool call checked twice |
 | `hooks/lib/open.ts` | dialogs on screen, sent again after every hello |
+| `hooks/lib/summary.ts` | the title request for a lobby-started conversation, and reading the reply |
 | `test/*.test.ts` | unit tests for `hooks/lib` |
 
 ## Loading it for a dev session

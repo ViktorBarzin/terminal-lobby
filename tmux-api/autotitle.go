@@ -146,6 +146,22 @@ func paneTitleSummary(paneTitle string) (string, bool) {
 	return summary, true
 }
 
+// modSummary reads the summary the lobby's Claude mod wrote for a session
+// (sessionio.OptionSummary), and reports whether there is one.
+//
+// It is the second source, read only when the pane title has none. Claude Code
+// writes its summary into the pane title for a prompt somebody typed, and
+// writes nothing for one a plugin submitted, which is how every prompt sent
+// from the lobby reaches Claude since the mod (ADR-0036). Those sessions sat
+// on the "Claude Code" sentinel until the window ran out, and a push about
+// one named its id (measured 2026-10-03: every lobby-started session from the
+// morning of 2026-10-02 on gave up). The mod asks for a summary itself and
+// session-events stamps it, so it gets the same normalisation as the pane's.
+func modSummary(raw string) (string, bool) {
+	summary := slug.CleanTitle(raw)
+	return summary, summary != ""
+}
+
 // autoTitles is what stops one session being reported twice. Package state
 // because the rule runs on a poll, and the poll runs for the life of the
 // process; a var so tests get their own.
@@ -374,6 +390,9 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 			continue
 		}
 		summary, ok := paneTitleSummary(s.PaneTitle)
+		if !ok {
+			summary, ok = modSummary(s.Summary)
+		}
 		if !ok {
 			// Still waiting: no glyph yet, the "Claude Code" sentinel, or
 			// nothing that survives the clean.

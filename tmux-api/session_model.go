@@ -82,6 +82,11 @@ type Session struct {
 	// session has no title and its name is what gets shown, which is where
 	// every session that predates the feature sits.
 	Title string `json:"title,omitempty"`
+	// Summary is the lobby mod's one-line summary of the conversation
+	// (sessionio.OptionSummary), which the auto-title rule adopts when the
+	// pane title carries none. Server only: what reaches a browser is the
+	// Title it becomes.
+	Summary string `json:"-"`
 	// BornAs is the name this session was FIRST created with, present only on
 	// a session that has since been renamed (sessionio.OptionBornAs). It is
 	// how a client that never saw the session under its original name still

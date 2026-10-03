@@ -656,3 +656,68 @@ func TestAutoTitleNeverAdoptsPisPaneTitle(t *testing.T) {
 		}
 	}
 }
+
+// A prompt the lobby sends goes in through the mod, and Claude Code writes no
+// summary into the pane title for a prompt a plugin submitted: the pane stays
+// on the "Claude Code" sentinel for the life of the session. The mod writes a
+// summary of its own instead (@tl_summary), and the rule adopts it exactly as
+// it would have adopted the pane's.
+func TestAutoTitleAdoptsTheModSummaryWhenThePaneHasNone(t *testing.T) {
+	now := time.Now()
+	argv, rec := autoTitleFixture(t, "exit 0")
+
+	s := claudeSession("k7m2q9x4tpz3", "✳ Claude Code", 12*time.Second, now)
+	s.Summary = "Notification titles fall back to ids"
+	sessions := []Session{s}
+	autoTitleSessions("wizard", sessions, now)
+
+	got := recordedArgv(t, argv)
+	for _, want := range []string{"set-option", sessionTitleOption, "Notification titles fall back to ids", "rename-session"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q:\n%s", want, got)
+		}
+	}
+	if sessions[0].Title != "Notification titles fall back to ids" {
+		t.Errorf("Title = %q, want the mod's summary", sessions[0].Title)
+	}
+	if evs := autonamed(t, rec); len(evs) != 1 || attrsOf(t, evs[0])["tl.outcome"] != autoTitleTitled {
+		t.Errorf("events %v, want one titled", rec.lines)
+	}
+}
+
+// Claude Code's own summary, when it wrote one, is still the one adopted.
+func TestAutoTitlePrefersThePaneSummaryToTheMods(t *testing.T) {
+	now := time.Now()
+	argv, _ := autoTitleFixture(t, "exit 0")
+
+	s := claudeSession("k7m2q9x4tpz3", "✳ Tashkent trip planning", 12*time.Second, now)
+	s.Summary = "Trip to Tashkent"
+	sessions := []Session{s}
+	autoTitleSessions("wizard", sessions, now)
+
+	if got := recordedArgv(t, argv); !strings.Contains(got, "Tashkent trip planning") || strings.Contains(got, "Trip to Tashkent") {
+		t.Errorf("argv:\n%s", got)
+	}
+}
+
+// The mod's summary is held to the same window and the same normalisation as
+// the pane's: nothing outside two minutes, nothing that cleans away to empty.
+func TestAutoTitleHoldsTheModSummaryToTheSameRules(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name    string
+		age     time.Duration
+		summary string
+	}{
+		{"past the window", autoTitleWindow + time.Minute, "Late summary"},
+		{"blank", 10 * time.Second, "   "},
+	} {
+		argv, _ := autoTitleFixture(t, "exit 0")
+		s := claudeSession("k7m2q9x4tpz3", "✳ Claude Code", tc.age, now)
+		s.Summary = tc.summary
+		autoTitleSessions("wizard", []Session{s}, now)
+		if got := recordedArgv(t, argv); got != "" {
+			t.Errorf("%s: stamped\n%s", tc.name, got)
+		}
+	}
+}

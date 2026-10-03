@@ -23,6 +23,8 @@ import (
 //	@claude_reply    "<epoch> <text>" of the reply that ended the last turn
 //	@claude_notice   "<epoch> <text>" of the newest PushNotification
 //	@last_activity   epoch seconds of the last prompt or finished turn
+//	@tl_summary      the mod's one-line summary, for tmux-api's auto-title
+//	                 (new with the mod: the hooks had nothing to write here)
 //
 // The mod sees the session from inside, so none of the old script's guesses
 // are needed: a turn starts and ends when Claude says so, a dialog is up from
@@ -186,6 +188,11 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 		w.put(optActivity, strconv.FormatInt(now.Unix(), 10))
 		if strings.TrimSpace(ev.Answer) != "" {
 			w.put(optReply, stampText(now, ev.Answer))
+		}
+	case sessionio.ModSummaryEvent:
+		// tmux-api adopts it as the title while the session has none.
+		if t := strings.TrimSpace(ev.Text); main && t != "" {
+			w.put(sessionio.OptionSummary, t)
 		}
 	case sessionio.ModAgentsEvent:
 		s.agents = ev.Agents

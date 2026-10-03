@@ -125,18 +125,19 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 
 // spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
 // activityColumn, the pane's working directory at cwdColumn, @claude_notice at
-// noticeColumn, @claude_reply at replyColumn and @tl_browser at browserColumn,
-// the last five columns before pane_title, spliced for the reason rowCreated
-// gives. EMPTY is what every session reports until its Claude next sees a
-// prompt or finishes a turn, the directory is left empty, as a dead pane
-// reports it, and so are the notice, the reply and the browser.
+// noticeColumn, @claude_reply at replyColumn, @tl_browser at browserColumn and
+// @tl_summary at summaryColumn, the last six columns before pane_title,
+// spliced for the reason rowCreated gives. EMPTY is what every session reports
+// until its Claude next sees a prompt or finishes a turn, the directory is
+// left empty, as a dead pane reports it, and so are the notice, the reply, the
+// browser and the summary.
 func spliceActivity(cols []string, activity string) string {
 	if len(cols) < activityColumn {
 		return strings.Join(cols, listSep)
 	}
-	out := make([]string, 0, len(cols)+5)
+	out := make([]string, 0, len(cols)+6)
 	out = append(out, cols[:activityColumn]...)
-	out = append(out, activity, "", "", "", "")
+	out = append(out, activity, "", "", "", "", "")
 	out = append(out, cols[activityColumn:]...)
 	return strings.Join(out, listSep)
 }
@@ -218,8 +219,8 @@ func TestBrowserColumnSitsBeforePaneTitle(t *testing.T) {
 	if cols[browserColumn] != "#{@tl_browser}" {
 		t.Fatalf("column %d is %q, want #{@tl_browser}", browserColumn, cols[browserColumn])
 	}
-	if browserColumn != listFields-2 {
-		t.Fatalf("browserColumn %d, want the last column before pane_title (%d)", browserColumn, listFields-2)
+	if browserColumn != summaryColumn-1 {
+		t.Fatalf("browserColumn %d, want the column before @tl_summary (%d)", browserColumn, summaryColumn-1)
 	}
 }
 
@@ -840,5 +841,35 @@ func TestStalePiFieldsGoWithTheProcess(t *testing.T) {
 	}
 	if sessions[1].PiModel != "" || sessions[1].PiThinking != "" || sessions[1].PiLevels != "" {
 		t.Errorf("a pane that no longer runs pi kept its pi fields: %+v", sessions[1])
+	}
+}
+
+// The mod's own summary of a session (sessionio.OptionSummary) rides the list
+// for the auto-title rule. It is never sent to a browser: the title it becomes
+// is.
+func TestParseSessionsReadsTheModSummary(t *testing.T) {
+	line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "running", "4242", "claude", "", "✳ Claude Code")
+	cols := strings.Split(line, listSep)
+	cols[summaryColumn] = "Notification titles fall back to ids"
+	got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows, want 1", len(got))
+	}
+	if got[0].Summary != "Notification titles fall back to ids" || got[0].PaneTitle != "✳ Claude Code" {
+		t.Fatalf("Summary %q, PaneTitle %q", got[0].Summary, got[0].PaneTitle)
+	}
+	b, _ := json.Marshal(got[0])
+	if strings.Contains(string(b), "Notification titles") {
+		t.Fatalf("the summary reached the wire: %s", b)
+	}
+}
+
+func TestSummaryColumnSitsBeforePaneTitle(t *testing.T) {
+	cols := strings.Split(tmuxListFmt, listSep)
+	if cols[summaryColumn] != "#{"+sessionio.OptionSummary+"}" {
+		t.Fatalf("column %d is %q, want #{%s}", summaryColumn, cols[summaryColumn], sessionio.OptionSummary)
+	}
+	if summaryColumn != listFields-2 {
+		t.Fatalf("summaryColumn %d, want the last column before pane_title (%d)", summaryColumn, listFields-2)
 	}
 }

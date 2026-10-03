@@ -314,6 +314,7 @@ func parseSessions(out []byte) []Session {
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.
+			Summary:   parts[summaryColumn],
 			PaneTitle: parts[listFields-1],
 		})
 		// Read off the two fields it depends on once the record holds both,

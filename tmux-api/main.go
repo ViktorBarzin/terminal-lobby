@@ -82,11 +82,12 @@ const (
 		"#{pane_current_path}" + listSep +
 		"#{" + sessionio.OptionNotice + "}" + listSep +
 		"#{" + sessionio.OptionReply + "}" + listSep +
-		"#{" + browserOption + "}" + listSep + "#{pane_title}"
+		"#{" + browserOption + "}" + listSep +
+		"#{" + sessionio.OptionSummary + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 26
+	listFields = 27
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -189,6 +190,12 @@ const (
 	// browser indicator costs no request of its own. Last before pane_title
 	// for the reason every column before it is.
 	browserColumn = 24
+
+	// summaryColumn is @tl_summary, the one-line summary the lobby's Claude
+	// mod writes for a session whose pane title will never carry Claude Code's
+	// own (sessionio.OptionSummary). Only the auto-title rule reads it. Last
+	// before pane_title for the reason every column before it is.
+	summaryColumn = 25
 
 	// browserOption is the host's stamp (tl-browser/host/lib/tmux.mjs).
 	// Spelled here as a literal, the way @tl_created is: nothing in Go writes

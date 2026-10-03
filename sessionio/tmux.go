@@ -120,6 +120,14 @@ const (
 	// which is most of them. Like the others it dies with the session, so
 	// tmux-api keeps a durable copy to re-stamp after a restore.
 	OptionTitle = "@title"
+	// OptionSummary holds a one-line summary of the session that the lobby's
+	// Claude Code mod wrote, for tmux-api's auto-title rule to adopt as the
+	// title when the pane title carries none. Claude Code writes its own
+	// summary into the pane title only for a prompt somebody TYPED, and the
+	// lobby hands its prompts to the mod, so without this a session started
+	// from the lobby never gets a title (2026-10-03). Written by session-events
+	// from the mod's summary event; never shown to anyone as it is.
+	OptionSummary = "@tl_summary"
 	// OptionBornAs holds the name a session was FIRST created with, written
 	// once by the first rename that moves it (tmux-api carryRenameAcrossStores)
 	// and never again.
