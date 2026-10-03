@@ -1043,7 +1043,9 @@ its turn to wait on its own background work is still running. It shows
 elapsed time and last activity, and never says an agent is stuck. Background
 `Bash` commands and the session's own schedules are not in it. When nothing is
 in it, a view wide enough for the margin keeps the margin empty, so agents
-starting and ending do not move the conversation sideways.
+starting and ending do not move the conversation sideways. The margin opens
+by default and its control folds it to a narrow column and back; each device
+remembers the choice.
 _Avoid_: task list, agent tree, activity panel
 
 **Live activity**:

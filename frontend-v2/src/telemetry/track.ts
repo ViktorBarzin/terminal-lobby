@@ -61,6 +61,8 @@ export type TlEvent =
   | "layout.reordered"
   | "layout.group_toggled"
   | "sidebar.toggled"
+  // The text view's agent margin folded or opened (tl.to: collapsed | expanded).
+  | "agents.rail_toggled"
   // sharing
   | "share.granted"
   | "share.revoked"

@@ -121,7 +121,8 @@ describe("drilling into an agent", () => {
     expect(v.q(".tl-drill .tl-drill-title")?.textContent).toBe("agent a2");
     expect(sources[sources.length - 1]!.url).toBe("/events/demo/agents/a2?rev=1");
     // Beside the panel, which says which agent is open.
-    expect(v.q(".tl-drill")?.parentElement).toBe(v.q(".tl-agents")?.parentElement);
+    expect(v.q(".tl-drill")?.parentElement).toBe(v.q(".tl-rail")?.parentElement);
+    expect(v.q(".tl-rail .tl-agents")).not.toBeNull();
     expect(v.entry("a2")?.dataset.open).toBe("true");
     expect(v.entry("a1")?.dataset.open).toBe("false");
   });

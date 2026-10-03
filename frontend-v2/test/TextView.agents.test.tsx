@@ -13,8 +13,8 @@
  * An open turn is a user record with nothing settling it: the text view reads
  * the turn off the transcript rather than taking a `working` flag.
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render } from "@solidjs/testing-library";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { fireEvent, render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { AgentSnapshot } from "../src/components/agents.logic";
@@ -111,7 +111,7 @@ describe("the agent panel in the text view", () => {
     // The margin of the reading column: a sibling of the timeline, not a row
     // inside it and not something laid over it.
     const timeline = v.container.querySelector(".tl-timeline");
-    expect(panel?.parentElement).toBe(timeline?.parentElement);
+    expect(panel?.closest(".tl-rail")?.parentElement).toBe(timeline?.parentElement);
     expect(panel?.getAttribute("data-form")).toBe("rail");
   });
 
@@ -137,7 +137,7 @@ describe("the agent panel in the text view", () => {
     const timeline = v.container.querySelector(".tl-timeline");
     const empty = () => v.container.querySelector(".tl-rail-empty");
     expect(v.panel()).toBeNull();
-    expect(empty()?.parentElement).toBe(timeline?.parentElement);
+    expect(empty()?.closest(".tl-rail")?.parentElement).toBe(timeline?.parentElement);
     v.setAgents(snap([agent("a1")]));
     v.setBg({ agents: 1 });
     expect(v.panel()).not.toBeNull();
@@ -279,10 +279,66 @@ describe("the background line, folded into the panel", () => {
       expect(v.strip()).toBeNull();
       // A strip takes no margin, so the dock keeps the whole width.
       expect(v.container.querySelector(".tl-textview")?.hasAttribute("data-rail")).toBe(false);
+      // The strip folds itself, so it carries no margin control.
+      expect(v.container.querySelector(".tl-rail-toggle")).toBeNull();
       // And with nothing running, a narrow view keeps no empty margin either.
       v.setAgents(null);
       v.setBg(undefined);
       expect(v.container.querySelector(".tl-rail-empty")).toBeNull();
+      expect(v.container.querySelector(".tl-rail")).toBeNull();
     });
+  });
+});
+
+// Viktor, 2026-10-03: the margin can be folded away by whoever does not
+// want it, open by default, and this device remembers the choice.
+describe("folding the agent panel's margin away", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  const toggle = (v: ReturnType<typeof mount>) =>
+    v.container.querySelector<HTMLButtonElement>(".tl-rail-toggle");
+  const rail = (v: ReturnType<typeof mount>) => v.container.querySelector(".tl-rail");
+
+  it("is open by default, with a control that says it hides the panel", () => {
+    const v = mount({ agents: snap([agent("a1")]), working: true });
+    expect(toggle(v)?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle(v)?.getAttribute("aria-label")).toBe("Hide the agent panel");
+    expect(v.panel()).not.toBeNull();
+  });
+
+  it("folds to a narrow column that keeps the control to open it again", () => {
+    const v = mount({ agents: snap([agent("a1")]), working: true });
+    fireEvent.click(toggle(v)!);
+    expect(rail(v)?.getAttribute("data-collapsed")).toBe("true");
+    expect(v.panel()).toBeNull();
+    // The way back stays on screen, in the same place.
+    expect(toggle(v)?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle(v)?.getAttribute("aria-label")).toBe("Show the agent panel");
+    // The dock centres on what the folded column leaves.
+    expect(v.container.querySelector(".tl-textview")?.getAttribute("data-rail")).toBe("collapsed");
+    fireEvent.click(toggle(v)!);
+    expect(rail(v)?.hasAttribute("data-collapsed")).toBe(false);
+    expect(v.panel()).not.toBeNull();
+    expect(v.container.querySelector(".tl-textview")?.getAttribute("data-rail")).toBe("true");
+  });
+
+  it("folds the empty margin too, and stays folded when agents arrive", () => {
+    const v = mount({ agents: null });
+    fireEvent.click(toggle(v)!);
+    expect(v.container.querySelector(".tl-rail-empty")).toBeNull();
+    v.setAgents(snap([agent("a1")]));
+    v.setBg({ agents: 1 });
+    expect(v.panel()).toBeNull();
+    expect(rail(v)?.getAttribute("data-collapsed")).toBe("true");
+  });
+
+  it("is remembered on this device", () => {
+    const first = mount({ agents: snap([agent("a1")]), working: true });
+    fireEvent.click(toggle(first)!);
+    first.unmount();
+    const again = mount({ agents: snap([agent("a1")]), working: true });
+    expect(rail(again)?.getAttribute("data-collapsed")).toBe("true");
+    expect(again.panel()).toBeNull();
   });
 });

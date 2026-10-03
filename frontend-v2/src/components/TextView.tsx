@@ -82,6 +82,8 @@ import { isEditingTarget } from "../keybindings/editing";
 import { isCoarsePointer } from "../mobile/pointer";
 import { trustDialogUp } from "../lib/first-prompt";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
+import { lsGet, lsSet } from "../lib/storage";
+import { track } from "../telemetry/track";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import { rememberSent, sentPictures } from "../store/sentPictures";
@@ -261,6 +263,12 @@ function refusal(
  * column, and below it the panel folds into a strip above the transcript.
  */
 const RAIL_MIN_PX = 900;
+/**
+ * Whether this device keeps the agent margin folded. Device-local on purpose:
+ * folding it on a laptop says nothing about the desktop with room to spare.
+ * Absent means open, the default.
+ */
+const RAIL_FOLDED_KEY = "tl:agent-rail:v1";
 
 /**
  * How long a question the transcript shows waits for the lobby's hook to hold
@@ -942,6 +950,14 @@ export const TextView: Component<{
     panelPresent(agentSet()?.set, live() !== undefined, props.background?.(), props.tool?.()),
   );
   const [narrow, setNarrow] = createSignal(false);
+  /** The margin folded to its control alone, by choice (Viktor, 2026-10-03). */
+  const [railFolded, setRailFolded] = createSignal(lsGet(RAIL_FOLDED_KEY) === "collapsed");
+  const toggleRail = (): void => {
+    const next = !railFolded();
+    setRailFolded(next);
+    lsSet(RAIL_FOLDED_KEY, next ? "collapsed" : null);
+    track("agents.rail_toggled", { "tl.to": next ? "collapsed" : "expanded" });
+  };
 
   /**
    * The drill-in (design step 6): tapping an agent in the panel puts its own
@@ -2193,7 +2209,7 @@ export const TextView: Component<{
       // below the transcript centre on what is left of it (app.css). It is
       // kept on a wide view whether or not anything runs, so agents coming
       // and going never move the conversation sideways.
-      data-rail={narrow() ? undefined : "true"}
+      data-rail={narrow() ? undefined : railFolded() ? "collapsed" : "true"}
     >
       {/* What size the pinch has reached, while it is being made. */}
       <Show when={sizing() !== null}>
@@ -2275,27 +2291,60 @@ export const TextView: Component<{
             />
           )}
         </Show>
+        {/* A wide view keeps the margin whether or not anything runs, so
+            agents coming and going never move the conversation sideways. Its
+            control folds it to a narrow column and opens it again from the
+            same spot; a narrow view gets the strip, which folds itself. */}
         <Show
-          when={showAgents() ? agentSet() : null}
-          // With nothing running, a wide view keeps the margin empty rather
-          // than giving its 280px to the transcript and taking it back on the
-          // next agent (Viktor, 2026-10-03).
+          when={!narrow()}
           fallback={
-            <Show when={!narrow()}>
-              <div class="tl-rail-empty" aria-hidden="true" />
+            <Show when={showAgents() ? agentSet() : null}>
+              {(snap) => (
+                <AgentPanel
+                  snapshot={snap()}
+                  form="strip"
+                  // An agent's transcript is read through its session's routes.
+                  onOpen={props.session ? (id) => setDrill(id) : undefined}
+                  openId={drill()}
+                  onBack={() => closeDrill(true)}
+                />
+              )}
             </Show>
           }
         >
-          {(snap) => (
-            <AgentPanel
-              snapshot={snap()}
-              form={narrow() ? "strip" : "rail"}
-              // An agent's transcript is read through its session's routes.
-              onOpen={props.session ? (id) => setDrill(id) : undefined}
-              openId={drill()}
-              onBack={() => closeDrill(true)}
-            />
-          )}
+          <div class="tl-rail" data-collapsed={railFolded() ? "true" : undefined}>
+            <div class="tl-rail-head">
+              <Show when={!railFolded()}>
+                <span class="tl-rail-title">Agents</span>
+              </Show>
+              <button
+                type="button"
+                class="tl-icon-btn tl-rail-toggle"
+                aria-expanded={railFolded() ? "false" : "true"}
+                aria-label={railFolded() ? "Show the agent panel" : "Hide the agent panel"}
+                title={railFolded() ? "Show the agent panel" : "Hide the agent panel"}
+                onClick={toggleRail}
+              >
+                {railFolded() ? "‹" : "›"}
+              </button>
+            </div>
+            <Show when={!railFolded()}>
+              <Show
+                when={showAgents() ? agentSet() : null}
+                fallback={<div class="tl-rail-empty" aria-hidden="true" />}
+              >
+                {(snap) => (
+                  <AgentPanel
+                    snapshot={snap()}
+                    form="rail"
+                    onOpen={props.session ? (id) => setDrill(id) : undefined}
+                    openId={drill()}
+                    onBack={() => closeDrill(true)}
+                  />
+                )}
+              </Show>
+            </Show>
+          </div>
         </Show>
       </div>
       {/* The notice above, for a timeline that is not empty: what this device

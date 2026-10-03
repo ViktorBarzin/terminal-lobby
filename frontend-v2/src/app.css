@@ -1418,23 +1418,61 @@ label.tl-set-row-label {
   font-variant-numeric: tabular-nums;
 }
 .tl-agents[data-form="rail"] {
-  flex: none;
-  width: var(--tl-rail-w);
+  flex: 1 1 auto;
   min-height: 0;
-  border-left: 1px solid var(--border);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 14px 22px 11px;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
-/* The margin with nothing in it. A wide view keeps the rail's width and its
-   hairline whether or not an agent runs, so the conversation's column does not
-   jump 140px each time one starts or ends (TextView, 2026-10-03). */
-.tl-rail-empty {
+/* The margin itself. A wide view keeps it, with its hairline, whether or not
+   an agent runs, so the conversation's column does not jump 140px each time
+   one starts or ends (TextView, 2026-10-03). Its head carries the control that
+   folds it to a 36px column holding that control alone, and opens it again
+   from the same spot; the choice is this device's (TextView RAIL_FOLDED_KEY). */
+.tl-textview[data-rail="collapsed"] {
+  --tl-rail-w: 36px;
+}
+.tl-rail {
   flex: none;
+  display: flex;
+  flex-direction: column;
   width: var(--tl-rail-w);
+  min-height: 0;
   border-left: 1px solid var(--border);
+}
+.tl-rail-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  /* The title lines up with the tally's text below it (11px + 14px). */
+  padding: 9px 9px 0 25px;
+  color: var(--text-muted);
+}
+.tl-rail[data-collapsed] .tl-rail-head {
+  justify-content: center;
+  padding: 9px 0 0;
+}
+.tl-rail-title {
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.tl-rail-toggle {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+.tl-rail-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.tl-rail .tl-agents-tally {
+  padding-top: 6px;
 }
 .tl-agents[data-form="strip"] {
   order: -1; /* above the transcript, which comes first in the markup */
