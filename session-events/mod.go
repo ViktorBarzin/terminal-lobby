@@ -417,6 +417,16 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 		h.dropLocked(prev)
 	}
 	h.bySession[hubKey(osUser, b.Session)] = c
+	// The first hello comes before Claude has written its transcript, and the
+	// mod says hello again naming it once the first row lands. The source
+	// built on the first one kept an empty path for the life of the session,
+	// so no picture could be read back, a subagent's included, and the agent
+	// panel had no directory to list: a phone re-rendering 34 such pictures
+	// drew 421 404s and the edge banned it (2026-10-03). The log is kept.
+	if c.ls != nil && b.Transcript != "" && c.ls.fs.Path() != b.Transcript {
+		c.ls.fs.SetPath(b.Transcript)
+		c.ls.agents.SetDir(sessionio.SessionDir(b.Transcript))
+	}
 	c.pane, c.transcript = b.Pane, b.Transcript
 	if c.ls == nil {
 		c.ls = h.rg.startMod(b.Session, b.Transcript, us.reader, us.agents)

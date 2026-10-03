@@ -165,7 +165,7 @@ func (f *FileSource) searchTruncatedResults(q string, limit int, truncated map[s
 	if len(truncated) == 0 {
 		return nil
 	}
-	matches, err := f.reader.SearchResults(f.path, q, limit)
+	matches, err := f.reader.SearchResults(f.Path(), q, limit)
 	if err != nil {
 		// A search that cannot read the file still answers with what memory
 		// held; reporting nothing at all would be worse than reporting less.

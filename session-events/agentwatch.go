@@ -59,7 +59,11 @@ const bigAgentRead = 1 << 20
 // the tails, the runs and everything else below mu's fields; readers see only
 // the published snapshot.
 type agentWatch struct {
-	dir    string // the session directory, sessionio.SessionDir of the transcript
+	// dir is the session directory, sessionio.SessionDir of the transcript,
+	// read through directory: a mod names the transcript only once Claude has
+	// written it, after the watch is running (SetDir). "" lists nothing.
+	dirMu  sync.Mutex
+	dir    string
 	reader sessionio.AgentReader
 	now    func() time.Time
 	every  time.Duration
@@ -149,6 +153,25 @@ func (aw *agentWatch) run(ctx context.Context) {
 	}
 }
 
+// directory is the session directory the watch lists, "" until it has one.
+func (aw *agentWatch) directory() string {
+	aw.dirMu.Lock()
+	defer aw.dirMu.Unlock()
+	return aw.dir
+}
+
+// SetDir points the watch at the session directory once the transcript is
+// known, and scans it straight away.
+func (aw *agentWatch) SetDir(dir string) {
+	aw.dirMu.Lock()
+	aw.dir = dir
+	aw.dirMu.Unlock()
+	select {
+	case aw.wake <- struct{}{}:
+	default:
+	}
+}
+
 func (aw *agentWatch) watched() bool {
 	aw.mu.Lock()
 	defer aw.mu.Unlock()
@@ -205,7 +228,11 @@ func (aw *agentWatch) Resolve(id string) (string, bool) {
 	if p, ok := aw.TranscriptPath(id); ok {
 		return p, true
 	}
-	files, err := aw.reader.ListAgentFiles(aw.dir)
+	dir := aw.directory()
+	if dir == "" {
+		return "", false
+	}
+	files, err := aw.reader.ListAgentFiles(dir)
 	if err != nil {
 		return "", false
 	}
@@ -238,16 +265,20 @@ type listedRun struct {
 
 // scan lists the session directory once and brings the snapshot up to date.
 func (aw *agentWatch) scan() {
-	files, err := aw.reader.ListAgentFiles(aw.dir)
+	dir := aw.directory()
+	if dir == "" {
+		return
+	}
+	files, err := aw.reader.ListAgentFiles(dir)
 	if err != nil {
 		if !aw.failing {
-			log.Printf("agents %s: listing failed, keeping the last set: %v", aw.dir, err)
+			log.Printf("agents %s: listing failed, keeping the last set: %v", dir, err)
 		}
 		aw.failing = true
 		return
 	}
 	if aw.failing {
-		log.Printf("agents %s: listing works again", aw.dir)
+		log.Printf("agents %s: listing works again", dir)
 		aw.failing = false
 	}
 	cutoff := aw.now().Add(-agentRetention).UnixMilli()
@@ -391,7 +422,7 @@ func (aw *agentWatch) followRuns(runs map[string]*listedRun, cutoff int64) {
 			if l.newest < cutoff {
 				continue // nothing under it written inside the window: never opened
 			}
-			r = &watchedRun{wf: sessionio.NewWorkflow(aw.dir, id, aw.reader), journal: -1, runSize: -1, runTime: -1}
+			r = &watchedRun{wf: sessionio.NewWorkflow(aw.directory(), id, aw.reader), journal: -1, runSize: -1, runTime: -1}
 			aw.runs[id] = r
 		}
 		r.newest = l.newest
@@ -727,7 +758,7 @@ func transcriptName(run, id string) string {
 
 // abs is a listing name as a path under the session directory.
 func (aw *agentWatch) abs(name string) string {
-	return filepath.Join(aw.dir, filepath.FromSlash(name))
+	return filepath.Join(aw.directory(), filepath.FromSlash(name))
 }
 
 func mtimeOf(f *sessionio.AgentFile) int64 {

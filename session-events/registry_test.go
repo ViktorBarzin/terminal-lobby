@@ -174,6 +174,54 @@ func TestHelloAgainKeepsTheLogAndAsksForNoHistory(t *testing.T) {
 	}
 }
 
+// The mod says hello before Claude has written its transcript, and again,
+// naming it, once the first row lands. The second hello used to be taken as a
+// reload and the source kept the empty path it was built with, so every
+// picture read back from the transcript, a subagent's included, answered 404
+// for the life of the session, and the agent panel had no directory to list
+// (2026-10-03: 421 of those 404s banned Viktor's phone at the edge).
+func TestATranscriptNamedByALaterHelloReachesTheSource(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	path := sessionio.TranscriptPath(sessionio.ProjectsRoot(rg.homeBase, "wizard"), "/w", "sid1")
+	agents := filepath.Join(sessionio.SessionDir(path), "subagents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agents, "agent-a1b2c3.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", CWD: "/w"})
+	before, _ := rg.source("wizard", "demo")
+	if before.Path() != "" {
+		t.Fatalf("source path before the transcript exists = %q", before.Path())
+	}
+	ch, cancel := before.Subscribe()
+	defer cancel()
+	// Kept, not rebuilt: history carries no row ids, so a rebuilt log fed
+	// history while the first row was still queued would draw it twice.
+	if _, hist := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", CWD: "/w", Transcript: path}); hist {
+		t.Fatal("naming the transcript rebuilt the log")
+	}
+	fs, ok := rg.source("wizard", "demo")
+	if !ok || fs != before || fs.Path() != path {
+		t.Fatalf("source = %p path %q, want the same source on %q", fs, fs.Path(), path)
+	}
+	if _, got, _, err := rg.agentTranscript("wizard", "demo", "a1b2c3"); err != nil || got != filepath.Join(agents, "agent-a1b2c3.jsonl") {
+		t.Fatalf("agent transcript = %q, %v", got, err)
+	}
+	select {
+	case _, open := <-ch:
+		if !open {
+			t.Fatal("naming the transcript ended the open stream")
+		}
+	default:
+	}
+}
+
 func TestARenamedSessionMovesItsMod(t *testing.T) {
 	rg, _ := newTestRegistry(t, "wizard/old", "wizard/new")
 	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "old", Pane: "%3"})
