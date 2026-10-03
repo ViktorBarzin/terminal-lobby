@@ -416,8 +416,22 @@ function groupTurns(events: Event[]): Turn[] {
   const byKey = new Map<string, Turn>();
   let synthetic = 0;
   let currentKey: string | null = null;
+  // A background agent outlives the turn that launched it, so its work arrives
+  // stamped with whatever turn the main thread is on by then, or with none the
+  // main thread opened at all. It belongs with the call that spawned it: filed
+  // under a later turn it had no call to nest under, and drew its commands and
+  // pictures loose in the main view, and a "Working…" row for a main thread
+  // that was idle (Viktor, 2026-10-03).
+  const callOf = subagentCalls(events);
+  const turnOfCall = new Map<string, string>();
 
   for (const e of events) {
+    const home = e.sidechain && e.agentId ? callOf.get(e.agentId) : undefined;
+    const homeTurn = home ? byKey.get(turnOfCall.get(home) ?? "") : undefined;
+    if (homeTurn) {
+      homeTurn.events.push(e);
+      continue;
+    }
     let key: string;
     if (e.turnId) {
       key = e.turnId;
@@ -428,6 +442,7 @@ function groupTurns(events: Event[]): Turn[] {
       key = currentKey;
     }
     currentKey = key;
+    if (e.kind === "tool_use" && e.toolId) turnOfCall.set(e.toolId, key);
 
     let t = byKey.get(key);
     if (!t) {

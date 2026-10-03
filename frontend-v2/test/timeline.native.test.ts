@@ -506,6 +506,65 @@ describe("subagents", () => {
     const rows = flat(rowsOf(...events));
     expect(heldBy(rows, "call-a")).toEqual([events[3]!.id]);
   });
+
+  // A background agent outlives the turn that launched it. Its work arriving
+  // in a later turn's stream must still go under its call, and must not make
+  // that later turn, or a turn of its own, look like the main thread working
+  // (Viktor, 2026-10-03: the working row and the agent's pictures flickered
+  // into the main view while it ran).
+  const launched = (toolId: string, agentId: string) =>
+    ev({ kind: "tool_result", toolId, body: "launched", result: { agentId } });
+
+  it("keeps a background agent's work under its call when it arrives in a later turn", () => {
+    const events = [
+      prompt("launch it"),
+      spawn("call-a", "first job"),
+      launched("call-a", "agent-a"),
+      ev({ kind: "text", body: "LAUNCHED" }),
+      ev({ kind: "turn_end" }),
+      ev({ kind: "user", body: "and now this", turnId: "t2" }),
+      inner("agent-a", {
+        kind: "tool_use",
+        tool: "Read",
+        toolId: "a-read",
+        body: "{}",
+        turnId: "t2",
+      }),
+      inner("agent-a", { kind: "tool_result", toolId: "a-read", body: "red.png", turnId: "t2" }),
+    ];
+    const rows = flat(rowsOf(...events));
+    expect(heldBy(rows, "call-a")).toEqual([events[6]!.id]);
+    expect(
+      rows.some(
+        (r) =>
+          r.kind === "tool" &&
+          (r as ToolRow).toolId === "a-read" &&
+          r !== callRow(rows, "call-a").children[0],
+      ),
+    ).toBe(false);
+    const working = rows.find((r) => r.kind === "working") as WorkingRow | undefined;
+    expect(working?.tool).toBeUndefined();
+  });
+
+  it("draws no working row for a turn holding only a background agent's work", () => {
+    const events = [
+      prompt("launch it"),
+      spawn("call-a", "first job"),
+      launched("call-a", "agent-a"),
+      ev({ kind: "text", body: "LAUNCHED" }),
+      ev({ kind: "turn_end" }),
+      inner("agent-a", {
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "a-ls",
+        body: "{}",
+        turnId: "t3",
+      }),
+    ];
+    const rows = rowsOf(...events);
+    expect(rows.some((r) => r.kind === "working")).toBe(false);
+    expect(heldBy(flat(rows), "call-a")).toEqual([events[5]!.id]);
+  });
 });
 
 describe("the working row", () => {

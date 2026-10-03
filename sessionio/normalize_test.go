@@ -851,3 +851,34 @@ func TestNormalizeSurvivesAnOriginOfAnotherShape(t *testing.T) {
 		t.Fatalf("got %+v", out)
 	}
 }
+
+// A subagent finishing while the main thread is still working writes an
+// end_turn of its own. Read as the main thread's, it settled the main turn, and
+// the main thread's next record opened another one, so the working row went
+// away and came back. A sidechain record never moves a main-thread turn.
+func TestNormalizeSidechainNeverMovesTheMainTurn(t *testing.T) {
+	n := NewNormalizer("demo")
+	var out []Event
+	for _, l := range []string{
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}`,
+		`{"type":"assistant","message":{"id":"m1","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"tu_a","name":"Agent","input":{"prompt":"look"}}]}}`,
+		`{"type":"user","isSidechain":true,"agentId":"a1","message":{"role":"user","content":[{"type":"text","text":"look"}]}}`,
+		`{"type":"assistant","isSidechain":true,"agentId":"a1","message":{"id":"s1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"seen"}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_a","content":"seen"}]}}`,
+		`{"type":"assistant","message":{"id":"m2","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}`,
+	} {
+		out = append(out, n.Line([]byte(l))...)
+	}
+	ends := 0
+	for _, e := range out {
+		if e.TurnID != "t1" {
+			t.Errorf("%s (sidechain=%v) in turn %q, want t1", e.Kind, e.Sidechain, e.TurnID)
+		}
+		if e.Kind == KindTurnEnd {
+			ends++
+		}
+	}
+	if ends != 1 || out[len(out)-1].Kind != KindTurnEnd {
+		t.Fatalf("want exactly one turn_end, last; got %v", kinds(out))
+	}
+}
