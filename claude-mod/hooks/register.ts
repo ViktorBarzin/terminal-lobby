@@ -11,11 +11,15 @@ import { TranscriptStamp } from './lib/stamp.ts';
 import { Decided } from './lib/decided.ts';
 import { OpenDialogs } from './lib/open.ts';
 import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
+import { steer } from './lib/steer.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
 
-const MOD_VERSION = '0.1.0';
+const MOD_VERSION = '0.2.0';
+// The command ops runCommand runs, named in every hello so session-events
+// sends a mod only what it can do (steer arrived in 0.2.0).
+const OPS = ['prompt', 'abort', 'answer', 'decide', 'model', 'history', 'steer'];
 const DEFAULT_URL = 'http://127.0.0.1:7685';
 const DRAIN_MS = 1500;
 
@@ -173,6 +177,7 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
       hello.model = await $.session.model();
       hello.version = (await $.session.version()).version;
       hello.mod = MOD_VERSION;
+      hello.ops = OPS;
       return hello;
     },
     history: () => historyFields($),
@@ -244,6 +249,16 @@ async function runCommand($: EngineInterface, c: Command): Promise<void> {
           const e = await $.command.run({ command: 'effort', args: String(c.effort) });
           if (e.exitCode) { ok = false; error = e.text || `effort exited ${e.exitCode}`; }
         }
+        break;
+      }
+      case 'steer': {
+        // A message the person typed to a subagent open in the Text view.
+        const r = await steer(
+          { list: () => $.agent.list(), send: (args) => $.session.send(args) },
+          String(c.agentId ?? ''),
+          String(c.text ?? ''),
+        );
+        if (!r.ok) { ok = false; error = r.error; }
         break;
       }
       case 'history': {
@@ -422,6 +437,9 @@ export const register: Register = (on) => {
         const ev: Omit<ModEvent, 't'> = { type: 'turn_start', turnId: e.turnId, text: e.text };
         if (agentId !== undefined) ev.agentId = agentId;
         send(ev);
+        // A subagent starting is when the lobby can first message it, and the
+        // engine's list is what says so; otherwise it is sent only as turns end.
+        if (agentId !== undefined) send({ type: 'agents', agents: await $.agent.list() });
         if (agentId === undefined) {
           const pane = await $.env.get('TMUX_PANE');
           const name = pane ? await tmuxSessionName($, pane) : '';
