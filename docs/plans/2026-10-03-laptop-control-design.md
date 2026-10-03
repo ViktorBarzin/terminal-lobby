@@ -72,6 +72,39 @@ flowchart LR
   end
 ```
 
+## Persistent shell
+
+Added 2026-10-03. Viktor: *"I think we should also have some persistent shell so
+we don't have to login on each tool call"*. Computer use already runs over one
+long-lived connection (cua-driver over a single ssh stdio session, Windows-MCP
+over HTTP), so this covers shell commands only.
+
+| area | decision |
+|---|---|
+| connection | SSH ControlMaster with ControlPersist in the ssh config `homelab laptop` uses, so no command authenticates again |
+| shell | one persistent shell per Claude session, opened on its first command and closed when the session ends |
+| where | a visible second pane in the Claude session's tmux session, running ssh into the laptop. Claude's commands and their output appear there live, and people can watch it in the lobby |
+| capture | `homelab laptop run` writes the command into the pane and reads output up to a marker that carries the exit code. Pagers are turned off through the environment (`PAGER=cat` and similar) |
+| parallel calls | queued, one at a time, so the shell's state stays consistent |
+| long or stuck commands | after a timeout, return the output so far and report the command as still running. Claude reads more later or sends Ctrl-C with `homelab laptop interrupt` |
+| people typing | the person goes first. While a command a person typed is running, or a half-typed line sits at the prompt, Claude's next command waits and Claude is told why. Claude continues from whatever state the person left |
+| link drop | the remote shell ends; the wrapper reopens it and tells Claude its state was reset |
+| Windows admin | unchanged: one UAC approval per admin command, and no elevated process stays running. Keeping one alive would need a channel from the standard account into it, which anything running as that user could also use |
+
+```mermaid
+sequenceDiagram
+  participant C as Claude (devvm)
+  participant W as homelab laptop run
+  participant P as shell pane (tmux)
+  participant L as laptop shell
+  C->>W: run "df -h /"
+  W->>W: wait for queue and for an idle prompt
+  W->>P: send command + end marker
+  P->>L: over the shared ssh connection
+  L-->>P: output, then marker with exit code
+  W-->>C: output and exit code (or partial output after the timeout)
+```
+
 ## Facts found while designing
 
 - The devvm is not a tailnet node today. The Headscale ACL refers to it by its
