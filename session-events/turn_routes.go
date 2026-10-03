@@ -70,6 +70,39 @@ type promptDriver interface {
 	CapturePane(osUser, session string) (string, error)
 }
 
+// promptBody is what POST /prompt/{session} takes.
+type promptBody struct {
+	Text string `json:"text"`
+	// AwaitReady asks this to wait until the session can actually take the
+	// text, and to answer 503 rather than send it if it cannot.
+	//
+	// For Claude, ready is its mod having said hello under the session's name
+	// (servePromptViaMod). For a harness whose prompts are typed into the pane,
+	// it is the pane drawing its input line: a session tmux has just created
+	// accepts send-keys immediately, while the TUI in its pane takes seconds to
+	// draw its input, and text sent into that window is lost with every layer
+	// reporting success. So the FIRST prompt of a session asks for the wait
+	// (frontend-v2/src/lib/first-prompt.ts). Off by default, which is every
+	// other caller: a session someone is looking at is ready by definition, and
+	// the check costs a capture-pane.
+	AwaitReady bool `json:"awaitReady"`
+	// Tool is the harness in the pane, the value the session list carries.
+	// Absent means Claude, which is every caller from before pi. For pi, ready
+	// means pi has titled its pane `π - <dir>`, which it does once startup has
+	// finished and any trust question is answered; Claude's ❯ says nothing
+	// about pi. For codex, ready means its input line with no menu over it
+	// (AwaitCodexReady).
+	Tool string `json:"tool"`
+	// SinceSendMs is how long before this request the person pressed Send, set
+	// only by the New-session composer's first prompt. It marks the prompt for
+	// timing: prompt.landed records Send to Accepted and Send to Shown, with
+	// the server's own clock measuring everything after the request arrived.
+	SinceSendMs *int64 `json:"sinceSendMs"`
+	// Hidden says the page was hidden at some point since Send, when a phone's
+	// backgrounded tab can stretch the browser's share of the time.
+	Hidden bool `json:"hidden"`
+}
+
 // handlePrompt types a prompt into the session.
 //
 // No turn gate. Claude Code queues typed input itself (its queue-operation
@@ -99,28 +132,7 @@ type promptDriver interface {
 func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
-		var body struct {
-			Text string `json:"text"`
-			// AwaitReady asks this to wait until the pane can actually take the
-			// text, and to answer 503 rather than inject if it cannot.
-			//
-			// A session tmux has just created accepts send-keys immediately,
-			// while the Claude in its pane takes another ~2s to draw its input,
-			// and text sent into that window is lost with every layer reporting
-			// success. That is invisible to a caller and expensive to the person
-			// who typed it, so the FIRST prompt of a session asks for the wait
-			// (frontend-v2/src/lib/first-prompt.ts). Off by default, which is
-			// every other caller: a session someone is looking at is ready by
-			// definition, and the check costs a capture-pane.
-			AwaitReady bool `json:"awaitReady"`
-			// Tool is the harness in the pane, the value the session list
-			// carries. Absent means Claude, which is every caller from before
-			// pi. For pi, ready means pi has titled its pane `π - <dir>`, which
-			// it does once startup has finished and any trust question is
-			// answered; Claude's ❯ says nothing about pi. For codex, ready
-			// means its input line with no menu over it (AwaitCodexReady).
-			Tool string `json:"tool"`
-		}
+		var body promptBody
 		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Text == "" {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
@@ -129,7 +141,7 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 		// the process, so nothing is typed, no dialog can catch the Enter, and
 		// a prompt sent mid-turn waits for the turn to end.
 		if h := sessionio.Harness(body.Tool); h == "" || h == sessionio.HarnessClaude {
-			servePromptViaMod(w, r, rg, drv, osUser, session, body.Text, body.AwaitReady)
+			servePromptViaMod(w, r, rg, drv, osUser, session, body)
 			return
 		}
 		pi := sessionio.Harness(body.Tool) == sessionio.HarnessPi
@@ -221,24 +233,39 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 
 // servePromptViaMod sends a prompt to a Claude session through its mod.
 //
-// A session the lobby has just created has no mod yet: Claude takes a couple
-// of seconds to start, and its mod says hello as it does. With awaitReady the
-// route waits for that, as it used to wait for the input line. A Claude asking
+// A session the lobby has just created may have no mod under its name yet, for
+// one of two reasons. A cold start's Claude takes a couple of seconds to boot,
+// and its mod says hello as it does. A claimed pre-warm slot's mod said hello
+// long ago under the SLOT's name, and the claim renamed the session under it;
+// it learns the new name only when asked (modHub.follow). Measured 2026-10-03,
+// before the route asked: a claimed slot's first prompt waited for the mod's
+// own retry, p90 16.2s. So the route asks first, and with awaitReady waits for
+// whichever hello comes, all inside one PromptReadyWait. A Claude asking
 // whether to trust its folder loads no mod until it is answered, so that is
 // said by name.
-func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv promptDriver, osUser, session, text string, awaitReady bool) {
+func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv promptDriver, osUser, session string, p promptBody) {
+	start := time.Now()
 	c := rg.mods.conn(osUser, session)
-	if c == nil && awaitReady {
-		hello, stop := rg.mods.awaitHello(osUser, session)
-		if c = rg.mods.conn(osUser, session); c == nil {
-			t := time.NewTimer(PromptReadyWait)
-			select {
-			case <-hello:
-			case <-t.C:
-			case <-r.Context().Done():
-			}
-			t.Stop()
+	if c == nil {
+		var hello <-chan struct{}
+		stop := func() {}
+		if p.AwaitReady {
+			hello, stop = rg.mods.awaitHello(osUser, session)
+		}
+		if _, ok := rg.mods.follow(r.Context(), osUser, session, PromptReadyWait); ok {
 			c = rg.mods.conn(osUser, session)
+		}
+		if c == nil && p.AwaitReady {
+			if c = rg.mods.conn(osUser, session); c == nil {
+				t := time.NewTimer(max(0, PromptReadyWait-time.Since(start)))
+				select {
+				case <-hello:
+				case <-t.C:
+				case <-r.Context().Done():
+				}
+				t.Stop()
+				c = rg.mods.conn(osUser, session)
+			}
 		}
 		stop()
 	}
@@ -254,7 +281,7 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 		http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
 		return
 	}
-	ack, err := c.send(r.Context(), modCommand{Op: "prompt", Text: text})
+	ack, err := c.send(r.Context(), modCommand{Op: "prompt", Text: p.Text})
 	if err != nil {
 		http.Error(w, "the session's Claude did not take the prompt", http.StatusBadGateway)
 		return
@@ -264,8 +291,17 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 		return
 	}
 	events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
-		"tl.session": session, "tl.count": len(text), "tl.client": "mod",
+		"tl.session": session, "tl.count": len(p.Text), "tl.client": "mod",
 	})
+	if p.SinceSendMs != nil {
+		// The Send press, on this clock: how long ago the browser says it was,
+		// before this request arrived.
+		sent := start.Add(-time.Duration(max(0, *p.SinceSendMs)) * time.Millisecond)
+		c.markFirstPrompt(firstPromptMark{
+			session: session, user: osUser, text: p.Text, sent: sent,
+			accepted: time.Now(), hidden: p.Hidden,
+		})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

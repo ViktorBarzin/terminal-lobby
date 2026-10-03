@@ -378,6 +378,10 @@ func main() {
 	// turn settles (piusage.go). The same two gates as its neighbour, and the
 	// same store: a reading is tool "pi" beside Claude's.
 	root.HandleFunc("POST /hooks/pi-usage", localhostOnly(peerOwnsClaim(handlePiUsage(spend))))
+	// tmux-user-attach, the moment it claims a pre-warm slot (firstprompt.go):
+	// the slot's mod is asked to say hello under the session's new name before
+	// the first prompt arrives for it. Same two gates as its neighbours.
+	root.HandleFunc("POST /hooks/claimed", localhostOnly(peerOwnsClaim(handleClaimed(rg))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {

@@ -100,6 +100,8 @@ interface Wire {
     awaitReady: boolean;
     tool?: string;
   }[];
+  /** When each delivery was told Send was pressed, and whether the page hid. */
+  timed: { sentAt: number | undefined; hidden: boolean | undefined }[];
   uploads: { files: readonly File[]; session: string }[];
   /** What each upload answers with, in order; the last answer repeats. */
   chips: DraftAttachment[][];
@@ -165,6 +167,7 @@ function mount(
             awaitReady: o.awaitReady ?? false,
             tool: o.tool,
           });
+          wire.timed.push({ sentAt: o.sentAt, hidden: o.hidden?.() });
           const i = Math.min(wire.delivered.length - 1, wire.results.length - 1);
           const ok = wire.results[i] ?? true;
           if (!ok && wire.refused) o.onRefused?.(wire.refused);
@@ -178,6 +181,7 @@ function mount(
 
 const emptyWire = (): Wire => ({
   delivered: [],
+  timed: [],
   uploads: [],
   chips: [[]],
   results: [true],
@@ -674,7 +678,9 @@ describe("<NewSessionComposer> — the command it runs", () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand } }));
     const m = mount(new FakeApi(), { claude: true, codex: true, pi: true, shell: true });
     await m.store.refresh();
-    await waitFor(() => expect(chosen(pick(m.container, "Command for new session"))).toBe("claude"));
+    await waitFor(() =>
+      expect(chosen(pick(m.container, "Command for new session"))).toBe("claude"),
+    );
     m.store.dispose();
   });
 
@@ -1245,6 +1251,26 @@ describe("<NewSessionComposer> — the first prompt", () => {
       lines: ["Fix the deploy\nit 500s on the second push"],
       awaitReady: true,
     });
+    m.store.dispose();
+  });
+
+  // session-events times the first prompt from the Send press (prompt.landed),
+  // so the delivery is told when that was, on the page's monotonic clock.
+  it("tells the delivery when Send was pressed", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    const before = performance.now();
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.timed.length).toBe(1));
+    const { sentAt, hidden } = w.timed[0]!;
+    expect(sentAt).toBeGreaterThanOrEqual(before);
+    expect(sentAt).toBeLessThanOrEqual(performance.now());
+    expect(hidden).toBe(false);
     m.store.dispose();
   });
 

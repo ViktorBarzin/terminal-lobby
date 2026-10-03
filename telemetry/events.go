@@ -265,7 +265,14 @@ var knownEvents = map[string]bool{
 	"notify.badge_set": true,
 
 	// -- the Claude conversation (session-events) --------------------------
-	"claude.prompt_sent":   true,
+	"claude.prompt_sent": true,
+	// A New-session composer's first prompt, timed from the Send press
+	// (docs/plans/2026-10-03-first-prompt-latency-design.md): tl.post_ms to
+	// Accepted (the mod's ack), tl.settle_ms to Shown (Claude's record of it),
+	// tl.first = true, tl.n = its LENGTH, tl.hidden when the page was hidden
+	// since Send. The journey design's (2026-09-12) name and attributes; this
+	// arm emits from session-events because the browser rarely sees Shown.
+	"prompt.landed":        true,
 	"claude.cancelled":     true,
 	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
 	"claude.state_changed": true, // running/awaiting/done transition (tl.to)

@@ -12,6 +12,7 @@ import {
   firstPromptDelivery,
   FIRST_PROMPT_LADDER,
   PI_FIRST_PROMPT_LADDER,
+  watchHidden,
 } from "../src/lib/first-prompt";
 
 /** A fetch that answers each call from a script, recording what was sent. */
@@ -58,7 +59,7 @@ describe("deliverFirstPrompt", () => {
     expect(await deliver({ ...f, ...c, awaitReady: true })).toBe(true);
     expect(f.sent).toEqual(["do the thing", "do the thing", "do the thing"]);
     expect(f.waited).toEqual([true, true, true]);
-    expect(c.waited).toEqual([700, 1600, 3000]);
+    expect(c.waited).toEqual([0, 1600, 3000]);
   });
 
   it("does not ask a command that draws no prompt to wait for one", async () => {
@@ -78,7 +79,7 @@ describe("deliverFirstPrompt", () => {
     ).toBe(true);
     expect(f.sent).toEqual(["/model sonnet", "do the thing"]);
     // One rung, then the gap between the two lines.
-    expect(c.waited).toEqual([700, 250]);
+    expect(c.waited).toEqual([0, 250]);
   });
 
   it("resumes at the line that did not land, never re-sending one that did", async () => {
@@ -188,8 +189,53 @@ describe("deliverFirstPrompt", () => {
     expect(seen[0]).toContain("/prompt/k7m2q9x4tp0z");
   });
 
-  it("uses the ladder stampTitleWhenAlive already uses", () => {
-    expect(FIRST_PROMPT_LADDER).toEqual([700, 1600, 3000, 6000]);
+  it("tries at once, and leaves the waiting to the server", () => {
+    // The first rung was 700ms, from when nothing could hold a request for a
+    // session that did not exist yet. session-events now holds it (up to 4s)
+    // until the session can take it, so for a warm slot that 700ms was most of
+    // the time to Accepted (measured 2026-10-03, median 0.9s).
+    expect(FIRST_PROMPT_LADDER).toEqual([0, 1600, 3000, 6000]);
+  });
+
+  it("tells the server how long ago Send was pressed, on the last line only", async () => {
+    // session-events times the first prompt from the Send press to Accepted
+    // and to Shown (prompt.landed); it measures everything after the request
+    // arrives, and this is the part before.
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_u: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(null, { status: bodies.length === 2 ? 503 : 204 });
+    }) as unknown as typeof fetch;
+    let t = 1000;
+    const c = fastClock();
+    await deliver({
+      fetchImpl,
+      sleep: async (ms) => {
+        t += ms;
+        await c.sleep(ms);
+      },
+      lines: ["/model sonnet", "do the thing"],
+      awaitReady: true,
+      sentAt: 900,
+      now: () => t,
+      hidden: () => true,
+    });
+    expect(bodies[0]).not.toHaveProperty("sinceSendMs");
+    // The last line's first try was refused; the try that landed says the
+    // time as of its own request.
+    expect(bodies[1]).toMatchObject({ text: "do the thing", sinceSendMs: 350, hidden: true });
+    expect(bodies[2]).toMatchObject({ text: "do the thing", sinceSendMs: 1950, hidden: true });
+  });
+
+  it("says nothing about Send when it was not told when that was", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_u: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    await deliver({ fetchImpl, ...fastClock(), awaitReady: true });
+    expect(bodies[0]).not.toHaveProperty("sinceSendMs");
+    expect(bodies[0]).not.toHaveProperty("hidden");
   });
 
   it("does not hold the caller while it waits", async () => {
@@ -301,5 +347,41 @@ describe("the harness the first prompt names", () => {
     expect(await deliver({ fetchImpl, ...c, awaitReady: true, tool: "codex" })).toBe(false);
     expect(bodies.map((b) => b.tool)).toEqual(FIRST_PROMPT_LADDER.map(() => "codex"));
     expect(bodies.map((b) => b.awaitReady)).toEqual(FIRST_PROMPT_LADDER.map(() => true));
+  });
+});
+
+describe("watchHidden", () => {
+  /** A document whose visibility the test sets. */
+  function page(state: DocumentVisibilityState) {
+    const doc = new EventTarget() as Document & { visibilityState: DocumentVisibilityState };
+    Object.defineProperty(doc, "visibilityState", { get: () => state, configurable: true });
+    return {
+      doc,
+      set(next: DocumentVisibilityState) {
+        state = next;
+        doc.dispatchEvent(new Event("visibilitychange"));
+      },
+    };
+  }
+
+  it("remembers that the page hid, even once it is back", () => {
+    const p = page("visible");
+    const w = watchHidden(p.doc);
+    expect(w.hidden()).toBe(false);
+    p.set("hidden");
+    p.set("visible");
+    expect(w.hidden()).toBe(true);
+  });
+
+  it("counts a page already hidden when the watch starts", () => {
+    expect(watchHidden(page("hidden").doc).hidden()).toBe(true);
+  });
+
+  it("stops listening when stopped", () => {
+    const p = page("visible");
+    const w = watchHidden(p.doc);
+    w.stop();
+    p.set("hidden");
+    expect(w.hidden()).toBe(false);
   });
 });

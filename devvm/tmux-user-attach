@@ -535,6 +535,22 @@ if [[ "$cmd_key" == claude && -z "$model$effort" && -z "${renamed:-}" ]]; then
         if [[ "$name" =~ $MINTED_RE ]]; then
             tmux set-option -t "=$name:" @tl_born "$name" >/dev/null 2>&1 || true
         fi
+        # And tell session-events the slot's new name. The slot's Claude mod
+        # said hello under the SLOT's name and learns a new one only when asked,
+        # so until it is, the first prompt the browser sends finds no mod under
+        # this name. Measured 2026-10-03, before this post existed: that wait
+        # ran to the mod's retry backoff, p90 16.2s. Backgrounded and
+        # best-effort like the stamps above: nothing here may delay the attach,
+        # and session-events' prompt route asks the mod itself if this is lost.
+        # The name is a lobby name ([A-Za-z0-9_-]) and the user an account
+        # name, so neither needs escaping in the JSON.
+        if command -v curl >/dev/null 2>&1 && [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            printf '{"user":"%s","session":"%s"}' "$(id -un)" "$name" \
+                | curl -s --connect-timeout 1 --max-time 3 -X POST \
+                    -H 'Content-Type: application/json' --data-binary @- \
+                    "${TL_CLAIMED_ENDPOINT:-http://localhost:7685/hooks/claimed}" \
+                    >/dev/null 2>&1 &
+        fi
         logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'${was_speculative:+ (was speculative)}"
         # Re-warm for whoever comes next — but only a STANDING slot. A
         # speculative one was a guess about a single create, and replacing it
