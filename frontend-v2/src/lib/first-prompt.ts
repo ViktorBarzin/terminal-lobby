@@ -25,12 +25,15 @@ import type { ModelHarness } from "./models";
  *    landed at +2s and +3s, with no error at any offset.
  *
  * So delivery walks a ladder, and asks the SERVER to hold each attempt until
- * the pane can take it. The readiness check lives there because that is where
- * the evidence is: `sessionio.AwaitInputReady` watches the pane draw Claude's
- * input box (its `❯` under the box's rule) and then hold still for 300ms,
- * which is the same check the T3 bridge already runs after a resurrection,
- * for the same reason. Nothing about a pane's input line reaches the browser,
- * so a browser-side version of this could only ever be a proxy for it.
+ * the session can take it. The readiness check lives there because that is
+ * where the evidence is. For Claude, which takes its prompts through the
+ * lobby's mod since 2026-10-02 (ADR-0036), ready is the mod having said hello
+ * under the session's name; a claimed pre-warm slot's mod is asked to move to
+ * the new name by the claim itself and again by the prompt route
+ * (session-events firstprompt.go). For pi and codex, whose prompts are still
+ * typed, it is the pane drawing their input line and holding still. Nothing
+ * about either reaches the browser, so a browser-side version of this could
+ * only ever be a proxy for it.
  *
  * Claude's folder-trust dialog, raised on its first start in a repository
  * nobody has trusted, draws a `❯` of its own on "No, exit". The server
@@ -41,11 +44,15 @@ import type { ModelHarness } from "./models";
 /**
  * The ladder a first prompt retries on, in ms of wait BEFORE each attempt.
  *
- * The same rungs `store.stampTitleWhenAlive` and `quickRefreshBurst` use, for
- * the same reason: they are how long it takes a just-created session to show
- * up. 11.3s in total.
+ * The first try goes at once. Its rung was 700ms, from when nothing could hold
+ * a request for a session that did not exist yet; session-events now holds
+ * each attempt (PromptReadyWait, 4s) until the session can take it, so for a
+ * warm slot that 700ms was most of the time to Accepted (median 0.9s, measured
+ * 2026-10-03). The later rungs are the ones `store.stampTitleWhenAlive` and
+ * `quickRefreshBurst` use: how long a just-created session takes to show up.
+ * 10.6s in total.
  */
-export const FIRST_PROMPT_LADDER: readonly number[] = [700, 1600, 3000, 6000];
+export const FIRST_PROMPT_LADDER: readonly number[] = [0, 1600, 3000, 6000];
 
 /**
  * Pi's ladder: Claude's four rungs, then more, about 76s of waiting in all.
@@ -84,12 +91,13 @@ export interface DeliverFirstPromptOptions {
   /** The lines to send, in order. Empty ones are dropped. */
   lines: readonly string[];
   /**
-   * Ask the server to wait for the pane to be able to take the text.
+   * Ask the server to wait for the session to be able to take the text.
    *
-   * `session-events` answers 503 rather than injecting when it cannot, which
-   * this treats like any other "not yet". The check is `sessionio`'s own — the
-   * pane drawing Claude's input box and then holding still — so it reads the input
-   * line rather than guessing from anything the browser can see.
+   * `session-events` answers 503 rather than sending when it cannot, which
+   * this treats like any other "not yet". The check is the server's own — a
+   * Claude's mod under the session's name, or a pi or codex pane drawing its
+   * input line — so it reads the session rather than guessing from anything
+   * the browser can see.
    *
    * Only for a command that draws something the server can wait on, which is
    * Claude, pi and codex (see `firstPromptDelivery`). Asking for it where nothing will
@@ -113,6 +121,25 @@ export interface DeliverFirstPromptOptions {
   /** Told the reason of a 409 refusal ("trust-open", session-events
    *  refusal.go), which ends the delivery. */
   onRefused?: (reason: string) => void;
+  /**
+   * When Send was pressed, on the `now` clock. Set by the New-session
+   * composer, and only there: the last line's request then says how long ago
+   * that was (`sinceSendMs`), which marks it for session-events to time from
+   * Send to Accepted and to Shown (prompt.landed). It measures the rest on its
+   * own clock.
+   */
+  sentAt?: number;
+  /** injectable for tests; defaults to performance.now. */
+  now?: () => number;
+  /** Whether the page was hidden at any point since Send, when a phone's
+   *  backgrounded tab can stretch the browser's share of the time. */
+  hidden?: () => boolean;
+}
+
+/** What a request says about Send, for the line that carries it. */
+interface SendTiming {
+  sinceSendMs: number;
+  hidden: boolean;
 }
 
 /**
@@ -170,6 +197,24 @@ export function firstPromptDelivery(h: ModelHarness | null): {
   }
 }
 
+/**
+ * Watch whether the page is hidden at any point from now on, for a first
+ * prompt's timing (`hidden`). A phone that backgrounds the tab after Send can
+ * stretch the browser's share of the time; such samples are flagged rather
+ * than mixed in. `stop` ends the watch.
+ */
+export function watchHidden(doc: Document = document): {
+  hidden: () => boolean;
+  stop: () => void;
+} {
+  let seen = doc.visibilityState === "hidden";
+  const on = (): void => {
+    if (doc.visibilityState === "hidden") seen = true;
+  };
+  doc.addEventListener("visibilitychange", on);
+  return { hidden: () => seen, stop: () => doc.removeEventListener("visibilitychange", on) };
+}
+
 /** What one POST /prompt means for whether to try again. */
 type Attempt = "ok" | "later" | "no";
 
@@ -180,12 +225,13 @@ async function post(
   tool: FirstPromptTool | undefined,
   fetchImpl: typeof fetch,
   onRefused?: (reason: string) => void,
+  timing?: SendTiming,
 ): Promise<Attempt> {
   try {
     const res = await fetchImpl(promptUrl(session), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tool ? { text, awaitReady, tool } : { text, awaitReady }),
+      body: JSON.stringify({ text, awaitReady, ...(tool ? { tool } : {}), ...timing }),
       credentials: "same-origin",
     });
     if (res.ok) return "ok";
@@ -260,13 +306,28 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
   const waitToTheEnd = pi || o.tool === "codex";
   const ladder = o.ladder ?? (pi ? PI_FIRST_PROMPT_LADDER : FIRST_PROMPT_LADDER);
   const gapMs = o.gapMs ?? LINE_GAP_MS;
+  const now = o.now ?? (() => performance.now());
+  const sentAt = o.sentAt;
+  /** The Send timing for line `i`, or nothing: only the last line is timed. */
+  const timing = (i: number): SendTiming | undefined =>
+    sentAt === undefined || i !== lines.length - 1
+      ? undefined
+      : { sinceSendMs: Math.max(0, Math.round(now() - sentAt)), hidden: o.hidden?.() ?? false };
 
   let sent = 0;
   for (let rung = 0; rung < ladder.length; rung++) {
     await sleep(ladder[rung]!);
     const wait = (o.awaitReady ?? false) && (waitToTheEnd || rung < ladder.length - 1);
     while (sent < lines.length) {
-      const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl, o.onRefused);
+      const r = await post(
+        o.session,
+        lines[sent]!,
+        wait,
+        o.tool,
+        fetchImpl,
+        o.onRefused,
+        timing(sent),
+      );
       if (r === "no") return false;
       if (r === "later") break; // next rung, resuming at this line
       sent += 1;

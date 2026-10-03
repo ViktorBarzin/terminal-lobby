@@ -58,7 +58,21 @@ var (
 	modSidRe     = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 	modSessionRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	modPaneRe    = regexp.MustCompile(`^%[0-9]{1,8}$`)
+	modNameRe    = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
+
+// modSessionMax bounds the session name a mod may say hello under. A pre-warm
+// slot is named for its directory past the 64 characters a client may address
+// (tmux-api/prewarm.go), so its mod has to be let in under a longer name than
+// any route accepts: ~/code/terminal-lobby's slot is 69. Refused, the slot's
+// mod said no hello in any of 141 warm-ups (2026-09-26 to 2026-10-03), and a
+// claimed slot's first prompt waited on its backoff, up to 23s.
+const modSessionMax = 4096
+
+// validModSession reports whether a mod may say hello under name.
+func validModSession(name string) bool {
+	return len(name) <= modSessionMax && modNameRe.MatchString(name)
+}
 
 // modHello is the mod's first request.
 type modHello struct {
@@ -137,6 +151,9 @@ type modConn struct {
 	// with its connection when the Claude dies, so a held poll is the one
 	// reading that says the process is still there.
 	polls int
+	// firstPrompts are composer first prompts the mod accepted and Claude has
+	// not yet recorded, oldest first (firstprompt.go).
+	firstPrompts []firstPromptMark
 }
 
 // alive reports whether the mod is still there to keep the session's state
@@ -339,7 +356,7 @@ func (h *modHub) handleHello() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var b modHello
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, hookBodyLimit)).Decode(&b) != nil ||
-			!modSidRe.MatchString(b.SID) || !modSessionRe.MatchString(b.Session) || !modPaneRe.MatchString(b.Pane) {
+			!modSidRe.MatchString(b.SID) || !validModSession(b.Session) || !modPaneRe.MatchString(b.Pane) {
 			http.Error(w, "bad body (need sid, session, pane)", http.StatusBadRequest)
 			return
 		}
@@ -576,6 +593,8 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		case sessionio.ModByeEvent:
 			c.closeDialog(fs, "")
 			bye = true
+		case sessionio.ModRowEvent:
+			c.firstPromptShown(ev, time.Now())
 		}
 		fs.Feed(ev)
 		c.mu.Lock()
@@ -719,7 +738,7 @@ func (c *modConn) followRename(user, session, pane string) string {
 		return ""
 	}
 	now := h.paneSession(user, pane)
-	if now == "" || now == session || !modSessionRe.MatchString(now) {
+	if now == "" || now == session || !validModSession(now) {
 		return ""
 	}
 	h.mu.Lock()

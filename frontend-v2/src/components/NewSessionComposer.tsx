@@ -45,6 +45,7 @@ import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import {
   deliverFirstPrompt,
+  watchHidden,
   type FirstPromptTool,
   firstPromptDelivery,
   TRUST_NOTICE,
@@ -374,12 +375,16 @@ export const NewSessionComposer: Component<{
    * the toaster rather than back into a field that is no longer on screen.
    */
   const submit = async (text: string, attached: readonly DraftAttachment[]): Promise<boolean> => {
+    // The Send press, which a first prompt is timed from (prompt.landed).
+    const sentAt = performance.now();
+    const shown = watchHidden();
     // The project list is empty until the first layout fetch lands, so a
     // prompt sent in that gap would resolve to Ungrouped and then write
     // Ungrouped back as the remembered project. Waited on before anything
     // below hands the warm slot or the held files over, so a refusal here
     // leaves the composer exactly as it was.
     if (!(await props.store.ensureLayout())) {
+      shown.stop();
       showToast("The lobby is still loading. Try again in a moment.", "warning");
       return false;
     }
@@ -419,16 +424,21 @@ export const NewSessionComposer: Component<{
     // and every session landed in Ungrouped however many had gone elsewhere.
     props.onProject(project);
     // A shell has no conversation to prompt: the text was its NAME.
-    if (shell) return true;
+    if (shell) {
+      shown.stop();
+      return true;
+    }
     void sendFirstPrompt({
       session: id,
       text,
+      sentAt,
+      hidden: shown.hidden,
       files: picked.map((p) => p.file),
       tokens: picked.map((p) => p.token),
       ...delivery,
       deliver,
       upload,
-    });
+    }).finally(shown.stop);
     return true;
   };
 
@@ -968,6 +978,10 @@ async function sendFirstPrompt(o: {
   /** How the server should deliver it (lib/first-prompt.ts, firstPromptDelivery). */
   awaitReady: boolean;
   tool?: FirstPromptTool;
+  /** The Send press on performance.now's clock, and whether the page has hid
+   *  since: what the delivery's timing is measured from (prompt.landed). */
+  sentAt: number;
+  hidden: () => boolean;
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
 }): Promise<void> {
@@ -992,6 +1006,8 @@ async function sendFirstPrompt(o: {
     awaitReady: o.awaitReady,
     ...(o.tool ? { tool: o.tool } : {}),
     onRefused: (reason) => (refused = reason),
+    sentAt: o.sentAt,
+    hidden: o.hidden,
   });
   if (ok || lines.length === 0) return;
   // The session exists and is what the person is now looking at, so the text

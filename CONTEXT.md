@@ -934,6 +934,24 @@ popover with a mouse and a bottom sheet on a phone, and a pick closes it.
 _Avoid_: dial, footer, toolbar
 
 **First prompt**:
+The text typed into the **New-session composer**, delivered to the session that
+Send created. How long it takes is timed from the Send press to two moments,
+**Accepted** and **Shown**, and "arrived" means neither until one is named.
+_Avoid_: initial message, opening prompt
+
+**Accepted** (a prompt):
+The session's Claude has taken the prompt and its turn has begun. Everything up
+to this moment is the lobby's own path, so it is the part the lobby can make
+faster.
+_Avoid_: delivered, sent (both say nothing about Claude)
+
+**Shown** (a prompt):
+Claude has written its own record of the prompt into the conversation, which is
+when it appears there as something said. Comes after **Accepted** by Claude's
+own write time, which the lobby does not control.
+_Avoid_: landed, arrived, rendered
+
+**First prompt**:
 What the **New-session composer** sends to a session it has just created: the
 message, and nothing else. It carried a `/model` line ahead of the message
 until 2026-09-06; the model and the effort are now flags on the process the
