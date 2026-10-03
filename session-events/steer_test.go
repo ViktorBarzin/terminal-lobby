@@ -152,7 +152,11 @@ func TestSteerabilityFollowsTheEngineFirst(t *testing.T) {
 		want     bool
 		note     string
 	}{
-		{"running in the engine", done, listed("running", "general-purpose"), true, true, ""},
+		{"running in the engine and on disk", running, listed("running", "general-purpose"), true, true, ""},
+		// The mod reports the list as a turn completes, while the engine still
+		// calls the subagent running (measured live, 2026-10-03): the file's
+		// ended turn is the truer word for a plain subagent.
+		{"a subagent the engine has not caught up on", done, listed("running", "general-purpose"), true, false, sessionio.SteerFinished},
 		{"an idle teammate the engine still runs", done, listed("running", "teammate"), true, true, ""},
 		{"completed in the engine", running, listed("completed", "general-purpose"), true, false, sessionio.SteerFinished},
 		{"not listed yet, running on disk", running, nil, true, true, ""},

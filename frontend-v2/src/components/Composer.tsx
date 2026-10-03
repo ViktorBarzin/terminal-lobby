@@ -121,6 +121,8 @@ export const Composer: Component<{
   /** The field's accessible name; "Message to send to the session" unless an
    *  open agent is the one being messaged. */
   label?: string;
+  /** No `+`: the field takes no files and offers no commands (an open agent). */
+  noPlus?: boolean;
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
@@ -440,6 +442,7 @@ export const Composer: Component<{
         commandsOk={props.commandsOk}
         draftKey={props.session}
         onAttach={props.onAttach}
+        noPlus={props.noPlus}
         inertReason={props.inertReason}
         offstage={props.offstage}
         onTakeControl={props.onTakeControl}

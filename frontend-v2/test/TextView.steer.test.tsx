@@ -113,6 +113,11 @@ describe("the composer while an agent is open", () => {
     const v = mount(agent());
     v.open();
     expect(v.field().placeholder).toBe("Message count to five…");
+    // None of the main thread's extras: no files, no slash commands. The one
+    // `+` left is the main composer's, kept mounted and hidden underneath.
+    expect(
+      v.container.querySelectorAll('[aria-label="Add a photo, a file or a command"]'),
+    ).toHaveLength(1);
     v.send("stop and report");
     await waitFor(() => expect(v.posts).toHaveLength(1));
     expect(v.posts[0]!.url).toContain("/events/demo/agents/a1/message");

@@ -667,6 +667,15 @@ class Guard:
 
     def check_events(self, method: str, path: str) -> Optional[str]:
         m = re.match(r"^/(prompt|cancel|keys|answer-text|answer|model)/([^/]+)", path)
+        # A message to one of a session's agents (session-events steer.go).
+        steer = re.match(r"^/events/([^/]+)/agents/[^/]+/message$", path)
+        if steer and method == "POST":
+            m = None
+            verb, session = "message an agent of", unquote(steer.group(1))
+            if not self.may_drive(session):
+                return (f"refusing to {verb} session {session!r} — that would type "
+                        f"into a live Claude; only qa-* sessions and the ones this "
+                        f"run created accept input")
         if m and method == "POST":
             verb, session = m.group(1), unquote(m.group(2))
             if not self.may_drive(session):
@@ -911,10 +920,21 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # arrive.
     async def events_proxy(request: web.Request) -> web.StreamResponse:
         url = f"{SESSION_EVENTS}{request.rel_url.raw_path}"
+        # Not every /events/ route is a stream: a message to an agent is a POST
+        # with a body (session-events steer.go), which production's ingress
+        # forwards like any other. Dropped here, it reached session-events
+        # empty and came back "bad body (need text)" (2026-10-03).
+        body = None
+        if request.method not in ("GET", "HEAD"):
+            body = await request.read()
+            reason = guard.check_events(request.method, request.rel_url.path)
+            if reason:
+                return guard.deny(reason, request.rel_url.path)
         try:
             async with request.app["client"].request(
                 request.method, url, params=request.rel_url.query,
                 headers=fwd_headers(request, auth=True),
+                data=body,
                 allow_redirects=False,
             ) as upstream:
                 resp_headers = {k: v for k, v in upstream.headers.items()

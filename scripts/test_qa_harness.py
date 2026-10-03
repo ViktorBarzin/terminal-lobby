@@ -236,6 +236,16 @@ def test_cancel_real_session_blocked(guard):
     assert guard.check_events("POST", "/cancel/main") is not None
 
 
+def test_steer_real_session_blocked(guard):
+    """A message to a live session's agent types into a live Claude too."""
+    reason = guard.check_events("POST", "/events/main/agents/a1/message")
+    assert reason and "live Claude" in reason
+
+
+def test_steer_qa_session_allowed(guard):
+    assert guard.check_events("POST", "/events/qa-composer/agents/a1/message") is None
+
+
 def test_events_read_never_blocked(guard):
     """Reading any session's stream is allowed — SSE cannot mutate."""
     assert guard.check_events("GET", "/events/main") is None

@@ -2644,6 +2644,7 @@ export const TextView: Component<{
           <Composer
             placeholder={`Message ${drillTitle().slice(0, 48)}…`}
             label="Message to send to the agent"
+            noPlus
             pending={[]}
             hidden={composerHidden()}
             textSize={textSize()}
