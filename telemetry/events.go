@@ -148,6 +148,7 @@ var knownEvents = map[string]bool{
 	"layout.group_toggled":   true, // collapse/expand (tl.kind)
 	"sidebar.toggled":        true,
 	"agents.rail_toggled":    true, // the text view's agent margin folded/opened (tl.to)
+	"agents.steer_sent":      true, // a message to an open agent: tl.result sent|unconfirmed|gone|finished|not-addressable|refused
 
 	// -- workspaces ---------------------------------------------------------
 	// A workspace document written (PUT /workspaces), which is what every

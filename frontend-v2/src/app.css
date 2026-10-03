@@ -2060,6 +2060,14 @@ label.tl-set-row-label {
 .tl-row-user[data-sending] .tl-bubble-user {
   opacity: 0.55;
 }
+/* A message to an agent waits for the agent's next step, which can be minutes
+   for a teammate, so it says what it is waiting on (steer.logic). */
+.tl-steer-wait {
+  flex: none;
+  margin-bottom: 10px;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
 .tl-sending {
   flex: none;
   width: 14px;

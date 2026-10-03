@@ -134,6 +134,13 @@ one tap away and the choice sticks per session. See
 
 ![text mode, with the work log opened](docs/screenshots/text-mode.png)
 
+**Steering an agent**: open an agent from the agent panel and the composer
+messages that agent instead of the main thread. A running subagent reads the
+message at its next tool call and changes course; an idle teammate reads it
+when it next runs. Until then the message waits in the agent's transcript as a
+dimmed bubble. Finished agents and workflow members are read-only. See the
+`steer` op in `docs/adr/0036-claude-speaks-to-the-lobby-through-a-mod.md`.
+
 **Workspaces** put several sessions on screen at once. Drag a session onto a
 tile to split it and drag a divider to resize. Splitting never moves a running
 terminal: the tiles position slots in a fixed DOM order, so a session keeps its

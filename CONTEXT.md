@@ -1067,6 +1067,16 @@ by default and its control folds it to a narrow column and back; each device
 remembers the choice.
 _Avoid_: task list, agent tree, activity panel
 
+**Steer**:
+To message a running subagent from the Text view: with an agent open in the
+drill-in, the composer sends to that agent instead of the main thread, and the
+message waits as a dimmed bubble in the agent's transcript until the agent
+reads it, at its next tool boundary, or when an idle teammate next runs.
+Finished agents and workflow members are read-only. Distinct from a
+**First prompt** or any prompt, which only ever goes to the main thread.
+_Avoid_: chat with the agent, inject, interrupt (it neither stops the agent's
+current step nor reaches it before that step ends)
+
 **Live activity**:
 The one-line answer to "what is this agent doing right now", read from the
 last `tool_use` block in the agent's own **agent transcript**, or from the

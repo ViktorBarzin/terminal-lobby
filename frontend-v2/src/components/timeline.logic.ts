@@ -68,6 +68,8 @@ export interface UserRow {
   record?: string;
   /** Sent from here, and the session has not said it took it yet. */
   sending?: true;
+  /** A message the person sent this agent from the lobby (steer.logic). */
+  steer?: true;
 }
 export interface MessageRow {
   kind: "message";
@@ -868,6 +870,7 @@ function collectTurnRows(turn: Turn): {
           ...(e.images?.length ? { images: e.images } : {}),
           ...(e.images?.length && e.record ? { record: e.record } : {}),
           ...(e.sending ? { sending: true as const } : {}),
+          ...(e.steer ? { steer: true as const } : {}),
         };
         // A subagent's prompt is its own first row, never the turn's.
         if (e.sidechain) add(row, e);

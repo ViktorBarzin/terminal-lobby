@@ -113,13 +113,19 @@ socket), the way the hook routes do.
 ```json
 {"sid": "uuid", "pane": "%12", "tmux": "/tmp/tmux-1000/default,123,0",
  "session": "tmux-session-name", "cwd": "/home/u/code", "transcript": "/home/u/.claude/projects/-home-u-code/uuid.jsonl",
- "model": "claude-opus-5-5", "version": "2.1.287", "mod": "0.1.0"}
+ "model": "claude-opus-5-5", "version": "2.1.287", "mod": "0.2.0",
+ "ops": ["prompt", "abort", "answer", "decide", "model", "history", "steer"]}
 ```
 
 Answer: `{"token": "…", "history": true|false}`. The token authenticates every
 later call for this sid. `history: true` asks the mod to send what the session
 already holds, because session-events has no log for it (it restarted, or this
 is a resumed conversation).
+
+`ops` names the command ops the mod runs, so session-events sends a mod only
+what it can do. A mod from before the field (0.1.0) sends none; a route that
+needs a newer op, such as `steer`, answers 501 for that session instead of
+queueing a command the mod would refuse.
 
 `transcript` is present only once the file exists, and Claude creates it with
 the first row it stores, so a new session's first hello names none. The mod says
@@ -187,8 +193,20 @@ Held for up to 25 s. Answer: `{"commands": [ … ]}`, possibly empty.
 | `decide` | `id`, `toolId`, `decision` (`allow`/`deny`), `reason?` | resolves a held `tool.check` |
 | `model` | `id`, `model`, `effort?` | `$.command.run({command: "model", args})`, then `effort` |
 | `history` | `id` | sends a fresh `history` event |
+| `steer` | `id`, `agentId`, `text` | `$.session.send({to: {agentId}, text})` with the person prefix, if `$.agent.list()` lists the agent running and not a workflow |
 
 Every command is answered with an `ack` event.
+
+A `steer` is the person messaging a subagent open in the Text view (added
+2026-10-03). The engine frames a plugin's message as the coordinator's, so the
+text opens with "The person watching this session in the lobby says:"
+(`sessionio.SteerPrefix`, which the drill-in strips to show only what was
+typed). Measured on CLI 2.1.288: a running subagent reads it at its next tool
+boundary, as a `queued_command` attachment; an idle teammate reads it when it
+next runs, as a user record in its `<teammate-message>` envelope. Finished
+agents are read-only by choice, though the engine would resume one. A refused
+`ack` names the agent's state first (`finished: …`, `not-addressable: …`),
+which session-events answers 409, and anything else 502.
 
 ## Consequences
 - `claude-tmux-state` and `claude-se-hook` leave Claude's managed hooks, except

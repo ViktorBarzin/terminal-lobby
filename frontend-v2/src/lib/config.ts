@@ -244,6 +244,14 @@ export function agentEarlierUrl(
   );
 }
 
+/** POST target for a message the person sends an agent open in the drill-in
+ *  (session-events steer.go), beside the drill-in's own routes. */
+export function agentMessageUrl(session: string, agent: string): string {
+  return withActAs(
+    `${API_BASE}/events/${encodeURIComponent(session)}/agents/${encodeURIComponent(agent)}/message`,
+  );
+}
+
 /** GET target for one of an agent's tool results in full, after the wire
  *  capped it. */
 export function agentResultUrl(session: string, agent: string, toolId: string): string {

@@ -215,6 +215,8 @@ func TestAgentWatchSeesANewAgentWithoutARestart(t *testing.T) {
 		Depth: 1, ToolUseID: "toolu_main", State: sessionio.AgentRunning,
 		StartedAt: agentMS(-time.Minute), LastActivityAt: agentMS(-50 * time.Second),
 		Tool: "Read", ToolDetail: "/w/README.md", ToolCalls: 1, OutputTokens: 10,
+		// No mod has said it can steer, so the agent cannot be messaged.
+		SteerNote: sessionio.SteerOldMod,
 	}
 	if len(set.Agents) != 1 || set.Agents[0] != want {
 		t.Fatalf("agents\n got %+v\nwant [%+v]", set.Agents, want)

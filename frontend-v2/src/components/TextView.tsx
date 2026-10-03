@@ -76,6 +76,8 @@ import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork, ClaudeState, SessionTool } from "../types/lobby";
 import { AgentPanel } from "./AgentPanel";
 import { AgentTranscript } from "./AgentTranscript";
+import { steerNote, type PendingSteer } from "./steer.logic";
+import { steerAgent } from "../lib/steer-api";
 import { panelPresent, type AgentSnapshot } from "./agents.logic";
 import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
@@ -1006,6 +1008,72 @@ export const TextView: Component<{
       viewEl?.querySelector<HTMLButtonElement>("button.tl-agents-bar");
     opener?.focus({ preventScroll: true });
   };
+  /**
+   * Steering (steer.logic): while an agent is open, the composer messages it
+   * instead of the main thread.
+   *
+   * Whether it can be messaged comes from the agent set, which decides it from
+   * the engine's own list (session-events steer.go). Turning the field
+   * read-only waits 2 s for the set to agree with itself, so a set that
+   * wavers for a frame never greys the field out under someone typing; opening
+   * an agent that cannot be messaged shows that at once. A refusal that is the
+   * agent's own state is the mod's word, not the set's, so it applies at once
+   * and keeps the field read-only for that agent.
+   */
+  const [steers, setSteers] = createSignal<PendingSteer[]>([]);
+  let steerSeq = 0;
+  const [steerRefused, setSteerRefused] = createSignal<ReadonlyMap<string, string>>(new Map());
+  const rawSteerNote = createMemo(() => {
+    const id = drill();
+    if (id === null) return undefined;
+    const refused = steerRefused().get(id);
+    return refused !== undefined ? `Read-only: ${refused}` : steerNote(drillInfo());
+  });
+  const [steerHeld, setSteerHeld] = createSignal<string | undefined>(undefined);
+  const STEER_HOLD_MS = 2000;
+  let steerTimer: ReturnType<typeof setTimeout> | undefined;
+  let steerOpened: string | null = null;
+  createEffect(
+    on([drill, rawSteerNote], ([id, note]) => {
+      clearTimeout(steerTimer);
+      const opened = id !== steerOpened;
+      steerOpened = id;
+      const refused = id !== null && untrack(steerRefused).has(id);
+      if (note === undefined || opened || refused || untrack(steerHeld) !== undefined) {
+        setSteerHeld(note);
+        return;
+      }
+      steerTimer = setTimeout(() => setSteerHeld(untrack(rawSteerNote)), STEER_HOLD_MS);
+    }),
+  );
+  onCleanup(() => clearTimeout(steerTimer));
+  const drillTitle = (): string => {
+    const a = drillInfo();
+    return (a?.name || a?.description || "this agent").trim();
+  };
+  /** Send the composer's text to the open agent. Resolves whether it left, so
+   *  a refusal puts the words back in the field. */
+  const steerSend = async (text: string): Promise<boolean> => {
+    const id = drill();
+    const session = props.session;
+    if (id === null || !session || !text.trim()) return false;
+    const pending: PendingSteer = { id: -++steerSeq, agent: id, text, at: Date.now() };
+    setSteers((all) => [...all, pending]);
+    const out = await steerAgent(session, id, text);
+    if (out.kind === "sent") return true;
+    if (out.kind === "unconfirmed") {
+      props.notify?.(
+        "The agent's session did not confirm the message. It may still arrive.",
+        "warning",
+      );
+      return true;
+    }
+    setSteers((all) => all.filter((p) => p.id !== pending.id));
+    if (out.final) setSteerRefused((m) => new Map(m).set(id, out.message));
+    props.notify?.(out.message, "warning");
+    return false;
+  };
+
   // Escape goes back from the view the keystrokes are going to (a workspace
   // shows several), and never from a field being typed into. A key some other
   // layer has claimed, an open file preview for one, is left to it.
@@ -2288,6 +2356,8 @@ export const TextView: Component<{
               registerToEnd={(fn) => {
                 drillToEnd = fn;
               }}
+              steers={steers().filter((p) => p.agent === id)}
+              onSteerRead={(read) => setSteers((all) => all.filter((p) => p.id !== read))}
             />
           )}
         </Show>
@@ -2506,8 +2576,10 @@ export const TextView: Component<{
               ? "Run a command…"
               : undefined
         }
-        hidden={composerHidden() && !typingBehind()}
-        offstage={typingBehind()}
+        // Kept mounted under an open agent's composer, so its draft, its
+        // history and Stop's hand-back are all where they were on Back.
+        hidden={(composerHidden() && !typingBehind()) || drill() !== null}
+        offstage={typingBehind() && drill() === null}
         textSize={textSize()}
         // The open turn's row, which decides Stop, and what the session still
         // owes once the transcript has closed the turn: an agent or a workflow
@@ -2562,6 +2634,27 @@ export const TextView: Component<{
           props.register?.(api);
         }}
       />
+      {/* While an agent is open, the field messages it (steer.logic). Keyed on
+          the agent, so each one starts from an empty field, and with none of
+          the main thread's controls: no mode, model, commands, attachments,
+          queue or Stop. The main thread's own cards still dock over it, since
+          they hold the whole session until answered. */}
+      <Show when={drill()} keyed>
+        {(_agent) => (
+          <Composer
+            placeholder={`Message ${drillTitle().slice(0, 48)}…`}
+            label="Message to send to the agent"
+            pending={[]}
+            hidden={composerHidden()}
+            textSize={textSize()}
+            onSend={steerSend}
+            onStop={() => {}}
+            onResolve={() => {}}
+            inertReason={props.inertReason ?? steerHeld()}
+            onTakeControl={props.inertReason ? props.onTakeControl : undefined}
+          />
+        )}
+      </Show>
     </div>
   );
 };

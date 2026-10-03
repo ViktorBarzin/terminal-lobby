@@ -101,6 +101,11 @@ const UserRowView: Component<{
       <Show when={props.row.sending}>
         <SendingSpinner />
       </Show>
+      {/* A message to an agent waits for the agent to reach its next step,
+          which for a teammate can be minutes, so the bubble says so. */}
+      <Show when={props.row.steer && props.row.sending}>
+        <span class="tl-steer-wait">Waiting for the agent to read it</span>
+      </Show>
       <div class="tl-bubble-user">
         {/* Still a <pre>: the message's own whitespace is significant, and an
             <img>/<button> is phrasing content, so substituting a path in place

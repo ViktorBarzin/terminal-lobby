@@ -1,5 +1,6 @@
 import { createEffect, createMemo, For, onCleanup, onMount, Show, type Component } from "solid-js";
 import type { AgentInfo, WorkflowInfo } from "../types/events";
+import { unreadSteers, withSteers, type PendingSteer } from "./steer.logic";
 import { createAgentStream } from "../store/agent-stream";
 import type { NotifyKind } from "../store/session";
 import { deriveRows } from "./timeline.logic";
@@ -16,8 +17,9 @@ const TICK_MS = 1000;
  * It is the session timeline's own rendering, so the agent's thinking, its
  * tool calls and their payloads open exactly as a session's do. One thing
  * differs: nothing folds. An agent is one long turn, and putting it behind
- * "Worked for 4m" would hide the work the reader opened it to see. It is read
- * only; nothing here types to the agent.
+ * "Worked for 4m" would hide the work the reader opened it to see. The
+ * composer below it messages the agent while one is open (steer.logic); what
+ * was sent waits here as a dimmed bubble until the agent reads it.
  *
  * The header names the agent in the words its panel entry used, so the two
  * read as one thing, and it carries the way back. The elapsed digits are
@@ -44,12 +46,26 @@ export const AgentTranscript: Component<{
    *  (MessagesTimeline `onAtEnd`, `registerToEnd`). */
   onAtEnd?: (atEnd: boolean) => void;
   registerToEnd?: (toEnd: () => void) => void;
+  /** Messages sent to this agent that its transcript may not show yet. */
+  steers?: readonly PendingSteer[];
+  /** One of those has shown up in the transcript. */
+  onSteerRead?: (id: number) => void;
 }> = (props) => {
   const stream = createAgentStream(props.session, props.agent, {
     notify: props.notify,
   });
   createEffect(() => (props.parked ? stream.park() : stream.unpark()));
-  const rows = createMemo(() => deriveRows(stream.events, { fold: false, group: false }));
+  // Which of the messages sent to this agent its transcript does not show yet.
+  // `seen` outlives each derivation on purpose: it is what tells a repeated
+  // message from the one before it (unreadSteers).
+  const seen = new Map<number, number>();
+  const unread = createMemo(() => unreadSteers(stream.events, props.steers ?? [], seen));
+  createEffect(() => {
+    const waiting = new Set(unread().map((p) => p.id));
+    for (const p of props.steers ?? []) if (!waiting.has(p.id)) props.onSteerRead?.(p.id);
+  });
+  const events = createMemo(() => withSteers(stream.events, unread()));
+  const rows = createMemo(() => deriveRows(events(), { fold: false, group: false }));
   const head = createMemo(() => (props.info ? drillHead(props.info, props.run) : undefined));
   const title = () => head()?.title ?? props.agent;
 
@@ -115,7 +131,7 @@ export const AgentTranscript: Component<{
           owns={false}
           label={`Agent transcript: ${title()}`}
           start="Start of this agent's transcript"
-          events={stream.events}
+          events={events()}
           rows={rows()}
           opening={stream.opening()}
           hasEarlier={stream.hasEarlier()}

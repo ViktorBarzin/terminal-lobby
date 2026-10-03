@@ -118,6 +118,9 @@ export const Composer: Component<{
   /** The field's placeholder, when the session is not Claude's: "Ask Codex,
    *  or run a command…", "Run a command…" for a shell. */
   placeholder?: string | undefined;
+  /** The field's accessible name; "Message to send to the session" unless an
+   *  open agent is the one being messaged. */
+  label?: string;
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
@@ -429,7 +432,7 @@ export const Composer: Component<{
       <PromptField
         textSize={props.textSize}
         onSend={send}
-        label="Message to send to the session"
+        label={props.label ?? "Message to send to the session"}
         placeholder={props.placeholder ?? "Ask Claude, or run a command…"}
         history={props.history}
         onListDir={props.onListDir}

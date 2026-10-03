@@ -181,6 +181,10 @@ src/
                          questions. A PlanAnswer is an approve row by number
                          AND label, or one line of feedback that either sends
                          the plan back or approves with it
+    steer-api.ts         POST a message to an agent open in the drill-in
+                         (session-events steer.go): sent, unconfirmed (504,
+                         may still arrive, so the words are not handed back)
+                         or refused, final when it is the agent's own state
     http.ts              The transport: a deadline on every request and
                          same-origin credentials. Without a deadline a fetch on
                          a half-open connection never settles, which is what a
@@ -789,8 +793,14 @@ src/
     agents.logic.ts      PURE panel derivation: when it shows, row order and
                          nesting, workflow phases, the tally, the formatting
     AgentTranscript.tsx  The drill-in: one agent's own transcript in the
-                         session timeline's place, read only, with a header
-                         naming the agent and a way back to the session
+                         session timeline's place, with a header naming the
+                         agent and a way back to the session. The composer
+                         messages the agent while it is open, and a sent
+                         message waits here dimmed until the agent reads it
+    steer.logic.ts       PURE steering: the read-only note for an agent the
+                         composer cannot message, and the waiting bubbles a
+                         sent message draws until the agent's transcript
+                         shows it
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
     rows.tsx             One view per canonical item (diff, output, todo, …).
                          A plan row's header is its outcome; once answered its

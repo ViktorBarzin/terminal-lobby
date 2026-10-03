@@ -103,6 +103,9 @@ export interface Event {
    * browser that the session has not taken yet, which draws dimmed.
    */
   sending?: boolean;
+  /** A message the person sent a subagent from the lobby, in that agent's own
+   *  stream (session-events steer.go). */
+  steer?: boolean;
   /**
    * Never on the wire. Set by `withStreaming` (store/stream.ts) on the stand-in
    * for a content block Claude is still writing. Its body is read live from the
@@ -310,6 +313,7 @@ function eventFrom(o: Record<string, unknown>): Event | null {
   if (typeof o.meta === "string") ev.meta = o.meta as MetaKind;
   if (typeof o.bytes === "number") ev.bytes = o.bytes;
   if (o.sidechain === true) ev.sidechain = true;
+  if (o.steer === true) ev.steer = true;
   if (typeof o.agentId === "string" && o.agentId) ev.agentId = o.agentId;
   if (o.truncated === true) ev.truncated = true;
   if (o.context && typeof o.context === "object") {
@@ -447,6 +451,11 @@ export interface AgentInfo {
    *  Bash sent to the background, a Monitor, an Agent it launched. Absent when
    *  not, and from a server that predates the field. */
   waiting?: boolean;
+  /** Whether the person can message this agent from the composer now, decided
+   *  from the engine's own agent list; absent from a server before steering. */
+  steerable?: boolean;
+  /** Why not, when not: "finished", "workflow" or "old-mod". */
+  steerNote?: string;
 }
 
 export type WorkflowState = "running" | "done" | "failed" | "killed";
@@ -524,6 +533,8 @@ function parseAgent(v: unknown): AgentInfo | null {
     outputTokens: count(o.outputTokens),
     result: text(o.result),
     ...(o.waiting === true ? { waiting: true } : {}),
+    ...(o.steerable === true ? { steerable: true } : {}),
+    ...(typeof o.steerNote === "string" && o.steerNote ? { steerNote: o.steerNote } : {}),
   };
 }
 
