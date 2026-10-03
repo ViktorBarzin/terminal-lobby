@@ -275,6 +275,13 @@ var knownEvents = map[string]bool{
 	"claude.state_set":     true,
 	"events.stream_opened": true, // SSE attach (tl.bytes, tl.count = the opening backfill)
 	"events.stream_closed": true,
+	// A Text view asked for a session no mod has said hello for (tl.session,
+	// tl.reason = shell | starting | nomod | exited). Only shell is a 404; the
+	// rest hold the stream until the mod connects.
+	"events.no_stream": true,
+	// A held stream for a starting Claude ended (tl.ms, tl.outcome = hello |
+	// timeout | left): how long a new Claude takes to reach the lobby.
+	"events.starting_ended": true,
 	// A Browser panel or card watching a session browser through
 	// session-events (docs/plans/2026-10-01-session-browser-design.md):
 	// tl.session, tl.mode = control|watch (the attach-mode ceiling, not
@@ -285,6 +292,11 @@ var knownEvents = map[string]bool{
 	// Text-view load, from the reverse-open design (2026-08-28).
 	"text.first_paint": true, // stream open -> first row on screen (tl.ms, tl.count)
 	"text.window_grew": true, // a step back through history (tl.bytes, tl.count, tl.reason)
+	// A Text view on screen for two seconds with no rows (CONTEXT.md "Blank"),
+	// with the stream's state and what it has received, so a blank names its
+	// own cause. blank_ended says how long it lasted and why it ended.
+	"text.blank":       true,
+	"text.blank_ended": true,
 
 	// -- server-side health -------------------------------------------------
 	"api.error":    true, // an unexpected server failure (tl.kind)

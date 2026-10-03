@@ -170,7 +170,11 @@ type modHub struct {
 	// not care. A stream opened on a name no mod said hello with asks it, so
 	// a session renamed after its last turn is followed (follow).
 	sessionPanes func(osUser, session string) []string
-	now          func() time.Time
+	// paneProcs lists each pane's foreground command and start command; nil
+	// in tests that do not care. It tells a starting Claude from a shell and
+	// from one that exited (whyNoStream).
+	paneProcs func(osUser, session string) []paneProc
+	now       func() time.Time
 
 	mu        sync.Mutex
 	byToken   map[string]*modConn

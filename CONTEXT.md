@@ -961,6 +961,19 @@ Claude.
 _Avoid_: chat view, console view, text mode (the mode is the switch's state,
 the view is the thing rendered)
 
+**Blank** (Text view):
+A **Text view** that has been on screen for two seconds with no rows drawn. It
+says nothing about why: a conversation with no messages yet is blank, and so is
+one whose stream never connected. A blank ends when rows appear, the person
+leaves, or the stream closes.
+_Avoid_: empty (a conversation is empty, a view is blank), white screen
+
+**Starting** (Claude):
+A **Session** whose pane is running Claude before Claude has told the lobby it
+is there. A new session spends its first several seconds here. The Text view
+waits through it instead of reporting that the session has no conversation.
+_Avoid_: booting, loading, warming (a **Pre-warm slot** is a different thing)
+
 **Item type**:
 What a tool call *did*, independent of which tool did it: `file_read`,
 `file_change`, `command_execution`, `web_search`, `image_view`,

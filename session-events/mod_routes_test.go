@@ -164,7 +164,7 @@ func TestTheStreamSaysNoModUntilHello(t *testing.T) {
 			t.Error("a session with a Claude state is not a Claude session")
 			return
 		}
-		serveNoMod(rec, req, rg, time.Hour)
+		serveNoStream(rec, req, rg, time.Hour, noStreamNoMod, nil, 0)
 	}()
 	time.Sleep(30 * time.Millisecond)
 	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})

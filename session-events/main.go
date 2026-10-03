@@ -85,6 +85,18 @@ func main() {
 		}
 		return strings.Fields(string(out))
 	}
+	rg.mods.paneProcs = func(osUser, session string) []paneProc {
+		out, err := injector.Command(osUser, "list-panes", "-s", "-t", "="+session, "-F", "#{pane_current_command}\t#{pane_start_command}").Output()
+		if err != nil {
+			return nil
+		}
+		procs := []paneProc{}
+		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+			cmd, start, _ := strings.Cut(line, "\t")
+			procs = append(procs, paneProc{Cmd: cmd, Start: start})
+		}
+		return procs
+	}
 	go rg.sweepEvery(ctx, SweepInterval)
 	// Claudes started before the mod existed are restarted once they are safe
 	// to, so each gets a stream (rollout.go).
@@ -96,19 +108,28 @@ func main() {
 		// A session renamed after its mod's last turn is followed: the mod
 		// in its pane is asked to say hello under the new name (mod.go).
 		ls, ok := rg.mods.follow(r.Context(), osUserFrom(r.Context()), r.PathValue("session"), modFollowWait)
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		if !ok {
-			// A Claude that started before the lobby's mod existed has no
-			// stream. It is restarted once it is safe to (rollout.go), and the
-			// stream says so until then, ending the moment the mod says hello
-			// so the reader reconnects onto it.
-			if claudeSession(injector, osUserFrom(r.Context()), r.PathValue("session")) {
-				serveNoMod(w, r, rg, *hb)
+			// No mod has said hello for this session. A new Claude is still
+			// starting, and the stream waits for it rather than answering 404,
+			// which left a new session's Text view on "No messages yet." for
+			// up to 45 s while the terminal showed the reply (2026-10-03). A
+			// Claude from before the mod is restarted onto it once safe
+			// (rollout.go). Every case ends the stream the moment the mod says
+			// hello, so the reader reconnects onto it.
+			why := rg.mods.whyNoStream(injector, osUser, session)
+			events.Emit("events.no_stream", osUser, telemetry.Attrs{
+				"tl.session": session, "tl.reason": string(why),
+			})
+			if why == noStreamShell {
+				http.Error(w, "session not registered", http.StatusNotFound)
 				return
 			}
-			http.Error(w, "session not registered", http.StatusNotFound)
+			serveNoStream(w, r, rg, *hb, why, func() noStream {
+				return rg.mods.whyNoStream(injector, osUser, session)
+			}, StartingWait)
 			return
 		}
-		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		// The opening cost, recorded where it is actually known. Nothing
 		// measured this before: the reverse open exists to shrink it, and a
 		// change nobody can see the size of is a change nobody can verify.
@@ -117,6 +138,9 @@ func main() {
 			events.Emit("events.stream_opened", osUser, telemetry.Attrs{
 				"tl.session": session, "tl.client": "api",
 				"tl.bytes": bytes, "tl.count": count,
+				// A resume backfills nothing and counts nothing, so without
+				// this a reconnect reads as an empty open.
+				"tl.resume": parseLastEventID(r) > 0,
 			})
 		})
 		events.Emit("events.stream_closed", osUser, telemetry.Attrs{
