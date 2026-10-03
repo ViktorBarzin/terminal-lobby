@@ -1,6 +1,12 @@
 import { batch, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
-import { SseClient, type ReadyFrame, type SessionState, type SseStatus } from "../sse/client";
+import {
+  SseClient,
+  type FrameCounts,
+  type ReadyFrame,
+  type SessionState,
+  type SseStatus,
+} from "../sse/client";
 import { track } from "../telemetry/track";
 import { HIDDEN_SUSPEND_MS, OFFSCREEN_SUSPEND_MS } from "../terminal/battery";
 import {
@@ -191,6 +197,15 @@ export interface SessionStore {
    * the mod connects.
    */
   noMod: Accessor<boolean>;
+  /** The `nomod` frame said Claude is not running in this session at all. */
+  claudeExited: Accessor<boolean>;
+  /**
+   * Claude is starting and has not reached the lobby yet (the `starting`
+   * frame). Cleared by the `ready` once its mod connects, or by a `nomod`.
+   */
+  starting: Accessor<boolean>;
+  /** What the stream has delivered so far, by frame, for the blank telemetry. */
+  frames: () => FrameCounts;
   /**
    * Close the stream because nobody is reading this session, keeping every
    * event, cursor and pending prompt held.
@@ -419,6 +434,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
    */
   let streamWork: StreamState = NO_STREAM;
   const [noMod, setNoMod] = createSignal(false);
+  const [claudeExited, setClaudeExited] = createSignal(false);
+  const [starting, setStarting] = createSignal(false);
   /**
    * Where the next step back begins.
    *
@@ -775,6 +792,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     step = 0;
     dropStream();
     setNoMod(false);
+    setClaudeExited(false);
+    setStarting(false);
     // Nothing has been dropped from a transcript that no longer exists, and the
     // new one opens at its newest end the way any first open does.
     droppedBelow = 0;
@@ -812,8 +831,17 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     },
     // No history is coming, so the opening hold is let go now rather than
     // after its timeout, and a resume has nothing more to catch up on.
-    onNoMod: () => {
+    onNoMod: (n) => {
+      setStarting(false);
+      setClaudeExited(n.claude === "exited");
       setNoMod(true);
+      setCatchingUp(false);
+      release();
+    },
+    // The same for a Claude still starting: nothing is held back for a window
+    // that only comes once its mod connects.
+    onStarting: () => {
+      setStarting(true);
       setCatchingUp(false);
       release();
     },
@@ -845,6 +873,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     onReady: (r: ReadyFrame) => {
       setCatchingUp(false);
       setNoMod(false);
+      setClaudeExited(false);
+      setStarting(false);
       dropStream();
       // A reverse open names where the next step back begins; a resume does
       // not, because the client's own cursor is the correct one and clobbering
@@ -1382,6 +1412,9 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     agents,
     stream,
     noMod,
+    claudeExited,
+    starting,
+    frames: () => client.frames(),
     park,
     unpark,
     parked,

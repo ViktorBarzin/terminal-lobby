@@ -76,6 +76,10 @@ export type TlEvent =
   // jump).
   | "text.first_paint"
   | "text.window_grew"
+  // The Text view on screen for two seconds with no rows (CONTEXT.md "Blank",
+  // telemetry/blank.ts), and when that ended (tl.why: rows | left | closed).
+  | "text.blank"
+  | "text.blank_ended"
   // A picture in the Text view opened full size (2026-09-24). tl.kind is file |
   // block and tl.source is bubble | prose | tool, never the path or the image.
   | "text.picture_opened"

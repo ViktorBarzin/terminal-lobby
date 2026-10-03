@@ -678,3 +678,46 @@ describe("the nomod frame", () => {
     expect(got).toEqual([{}]);
   });
 });
+
+/**
+ * A new session's Claude takes seconds to reach the lobby. The server holds the
+ * stream open with a `starting` frame instead of answering 404, and ends it at
+ * the hello (session-events/nomod.go).
+ */
+describe("the starting frame", () => {
+  it("hands its wait to onStarting", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onStarting: (s) => got.push(s) });
+    h.client.connect();
+    h.sources[0]!.emit("starting", { waitS: 30 });
+    expect(got).toEqual([{ waitS: 30 }]);
+  });
+
+  it("passes on that Claude has exited", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onNoMod: (n) => got.push(n) });
+    h.client.connect();
+    h.sources[0]!.emit("nomod", { claude: "exited" });
+    expect(got).toEqual([{ claude: "exited" }]);
+  });
+});
+
+/**
+ * What the stream has delivered, by frame, for the blank telemetry: it is what
+ * tells "nothing arrived" from "it arrived and was not drawn".
+ */
+describe("frame counts", () => {
+  it("counts each kind of frame and each error", async () => {
+    const h = harness(() => 200);
+    h.client.connect();
+    const s = h.sources[0]!;
+    s.emit("state", { mode: "default" });
+    s.emit("back", { id: 2, kind: "user", session: "sess" });
+    s.emit("back", { id: 1, kind: "user", session: "sess" });
+    s.emit("ready", { head: 2, epoch: "aaaa" });
+    s.onmessage?.({ data: JSON.stringify({ id: 3, kind: "text", session: "sess" }) });
+    s.onerror?.({});
+    await Promise.resolve();
+    expect(h.client.frames()).toMatchObject({ state: 1, back: 2, ready: 1, live: 1, errors: 1 });
+  });
+});

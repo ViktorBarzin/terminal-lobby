@@ -493,6 +493,12 @@ export const TextView: Component<{
    * it is idle; until then the view says so and offers the Terminal.
    */
   noMod?: boolean;
+  /** With noMod: Claude is not running in this session at all, so no restart
+   *  is coming (store/session.ts `claudeExited`). */
+  claudeExited?: boolean;
+  /** Claude is starting and has not reached the lobby yet (store/session.ts
+   *  `starting`, CONTEXT.md "Starting"). */
+  starting?: boolean;
 }> = (props) => {
   const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
   // What the transcript says, plus what it has not caught up with. A prompt
@@ -2158,10 +2164,17 @@ export const TextView: Component<{
    */
   const noModNote = (cls: string) => (
     <div class={cls} role="note">
-      <span>
-        This session started before the lobby could stream it. It restarts on its own when it's
-        idle; the terminal works meanwhile.
-      </span>
+      <Show
+        when={props.claudeExited}
+        fallback={
+          <span>
+            This session started before the lobby could stream it. It restarts on its own when it's
+            idle; the terminal works meanwhile.
+          </span>
+        }
+      >
+        <span>Claude isn't running in this session.</span>
+      </Show>
       <Show when={props.onOpenTerminal}>
         <button type="button" class="tl-linkbtn" onClick={() => props.onOpenTerminal?.()}>
           Open the Terminal
@@ -2196,8 +2209,16 @@ export const TextView: Component<{
         <MessagesTimeline
           // A session with no transcript here has no stream to open (404), and
           // one that started before the mod sends no history to wait for.
-          opening={props.noTranscript || props.noMod ? false : props.opening}
-          empty={props.noMod ? noModNote("tl-empty-state tl-nomod-note") : undefined}
+          opening={props.noTranscript || props.noMod || props.starting ? false : props.opening}
+          empty={
+            props.noMod ? (
+              noModNote("tl-empty-state tl-nomod-note")
+            ) : props.starting ? (
+              <div class="tl-empty-state tl-starting-note" role="status">
+                Starting Claude…
+              </div>
+            ) : undefined
+          }
           owns={props.onScreen !== false}
           events={shown()}
           rows={drawnRows()}

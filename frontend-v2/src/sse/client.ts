@@ -20,6 +20,31 @@ export type { ReadyFrame, SessionState };
 export interface NoModFrame {
   /** When the server restarts the session onto the mod: "when-idle". */
   restart?: string;
+  /** "exited": Claude ran in this session and is not running now, so no
+   *  restart is coming. */
+  claude?: string;
+}
+
+/**
+ * The `starting` frame: Claude is running in the session, or about to be, and
+ * has not reached the lobby yet (CONTEXT.md "Starting"). The server holds the
+ * stream and ends it when the mod says hello, which reconnects the client onto
+ * the ordinary exchange. If no hello comes within `waitS` a `nomod` frame
+ * follows on the same stream.
+ */
+export interface StartingFrame {
+  waitS?: number;
+}
+
+/** What one client's streams have delivered, by frame, since it was made. */
+export interface FrameCounts {
+  state: number;
+  back: number;
+  live: number;
+  ready: number;
+  nomod: number;
+  starting: number;
+  errors: number;
 }
 
 /**
@@ -169,6 +194,8 @@ export interface SseClientOptions {
    * never replays it.
    */
   onDelta?: (d: StreamDelta) => void;
+  /** Claude is starting and has not reached the lobby (the `starting` frame). */
+  onStarting?: (s: StartingFrame) => void;
   /** The session has no mod connection yet (the `nomod` frame). */
   onNoMod?: (n: NoModFrame) => void;
   /** injectable for tests; defaults to the browser EventSource. */
@@ -225,6 +252,7 @@ export class SseClient {
       | "onAgents"
       | "onDelta"
       | "onNoMod"
+      | "onStarting"
     >
   > &
     Pick<
@@ -239,6 +267,7 @@ export class SseClient {
       | "onAgents"
       | "onDelta"
       | "onNoMod"
+      | "onStarting"
     >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -252,6 +281,15 @@ export class SseClient {
   private lastActivityAt = 0;
   private stopped = false;
   private status: SseStatus = "connecting";
+  private readonly counts: FrameCounts = {
+    state: 0,
+    back: 0,
+    live: 0,
+    ready: 0,
+    nomod: 0,
+    starting: 0,
+    errors: 0,
+  };
   private readonly onVisible = () => {
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
       this.instantRetry();
@@ -273,6 +311,7 @@ export class SseClient {
       onAgents: opts.onAgents,
       onDelta: opts.onDelta,
       onNoMod: opts.onNoMod,
+      onStarting: opts.onStarting,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -305,6 +344,11 @@ export class SseClient {
     return new EventSource(url) as unknown as EventSourceLike;
   }
 
+  /** What this client's streams have delivered so far, by frame. */
+  frames(): FrameCounts {
+    return { ...this.counts };
+  }
+
   /** Open the stream and start listening. Idempotent while a source is live. */
   connect(): void {
     if (this.stopped || this.source) return;
@@ -325,6 +369,7 @@ export class SseClient {
       // Anything the socket delivered is proof of life — including a frame this
       // client then throws away, so record it before the parse and dedup gates.
       this.markAlive();
+      this.counts.live++;
       const e = parseLive(ev.data);
       if (!e) return;
       // A delta carries no id (it is sent without an `id:` line), so it is
@@ -343,6 +388,7 @@ export class SseClient {
     // held, never replay from the bottom of the backfill.
     es.addEventListener?.("back", (ev) => {
       this.markAlive();
+      this.counts.back++;
       const e = parseEvent(ev.data);
       if (!e) return;
       if (e.id > this.lastEventId) this.lastEventId = e.id;
@@ -350,6 +396,7 @@ export class SseClient {
     });
     es.addEventListener?.("state", (ev) => {
       this.markAlive();
+      this.counts.state++;
       const s = parseJSON<SessionState>(ev.data);
       if (s) this.o.onState?.(s);
     });
@@ -360,7 +407,13 @@ export class SseClient {
     });
     es.addEventListener?.("nomod", (ev) => {
       this.markAlive();
+      this.counts.nomod++;
       this.o.onNoMod?.(parseJSON<NoModFrame>(ev.data) ?? {});
+    });
+    es.addEventListener?.("starting", (ev) => {
+      this.markAlive();
+      this.counts.starting++;
+      this.o.onStarting?.(parseJSON<StartingFrame>(ev.data) ?? {});
     });
     es.addEventListener?.("epoch", (ev) => {
       this.markAlive();
@@ -371,6 +424,7 @@ export class SseClient {
     });
     es.addEventListener?.("ready", (ev) => {
       this.markAlive();
+      this.counts.ready++;
       // A server on the older contract sends the last replayed id here, which
       // parses as a number rather than an object; either way the frame only
       // has to mean "the opening exchange is over".
@@ -429,6 +483,7 @@ export class SseClient {
 
   private onError(): void {
     if (this.stopped) return;
+    this.counts.errors++;
     this.closeSource();
     void this.classifyFailure();
   }

@@ -172,3 +172,48 @@ describe("the nomod frame in the session store", () => {
     dispose();
   });
 });
+
+describe("the starting frame in the session store", () => {
+  it("says Claude is starting, stops waiting for a window, and clears at ready", () => {
+    installEventSource();
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+      cb();
+      return 1;
+    });
+    let store!: ReturnType<typeof createSessionStore>;
+    const dispose = createRoot((d) => {
+      store = createSessionStore("demo");
+      return d;
+    });
+    sources[0]!.emit("starting", { waitS: 30 });
+    expect(store.starting()).toBe(true);
+    expect(store.opening()).toBe(false);
+    expect(store.frames().starting).toBe(1);
+
+    sources[0]!.emit("ready", { head: 0, epoch: "cccc" });
+    expect(store.starting()).toBe(false);
+    dispose();
+  });
+
+  it("gives way to the nomod note, and tells an exited Claude apart", () => {
+    installEventSource();
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+      cb();
+      return 1;
+    });
+    let store!: ReturnType<typeof createSessionStore>;
+    const dispose = createRoot((d) => {
+      store = createSessionStore("demo");
+      return d;
+    });
+    sources[0]!.emit("starting", { waitS: 30 });
+    sources[0]!.emit("nomod", { claude: "exited" });
+    expect(store.starting()).toBe(false);
+    expect(store.noMod()).toBe(true);
+    expect(store.claudeExited()).toBe(true);
+
+    sources[0]!.emit("ready", { head: 2, epoch: "dddd" });
+    expect(store.claudeExited()).toBe(false);
+    dispose();
+  });
+});

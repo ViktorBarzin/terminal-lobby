@@ -75,6 +75,7 @@ import { panelLayout } from "./browser.logic";
 import type { BrowserCardHost } from "./BrowserCard";
 import type { BrowserState } from "../lib/browser-stream";
 import { track } from "../telemetry/track";
+import { watchBlank } from "../telemetry/blank";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -924,6 +925,46 @@ export const SessionView: Component<{
   });
 
   const rows = createMemo(() => deriveRows(store.events));
+
+  // A person looking at a Text view with nothing in it (telemetry/blank.ts).
+  // What is drawn is counted on screen rather than from `rows`, because rows
+  // that exist and never reach the screen are one of the things this exists
+  // to tell apart.
+  let textSection: HTMLElement | undefined;
+  watchBlank({
+    session,
+    watching: () => onScreen() && mode() === "text" && !preloading() && !windowAway(),
+    drawn: () => textSection?.querySelectorAll("[data-eid], [data-eids]").length ?? 0,
+    closed: () => store.status() === "closed",
+    attrs: () => {
+      const f = store.frames();
+      const nav = typeof navigator !== "undefined" ? navigator : undefined;
+      return {
+        "tl.sse": store.status(),
+        "tl.started": store.started(),
+        "tl.parked": store.parked(),
+        "tl.opening": store.opening(),
+        "tl.starting": store.starting(),
+        "tl.nomod": store.noMod(),
+        "tl.exited": store.claudeExited(),
+        "tl.f_state": f.state,
+        "tl.f_back": f.back,
+        "tl.f_live": f.live,
+        "tl.f_ready": f.ready,
+        "tl.f_nomod": f.nomod,
+        "tl.f_starting": f.starting,
+        "tl.f_err": f.errors,
+        "tl.events": store.events.length,
+        "tl.rows": rows().length,
+        "tl.claude": props.claudeState?.() ?? "",
+        "tl.tool": props.tool?.() ?? "",
+        "tl.standalone":
+          (nav as { standalone?: boolean } | undefined)?.standalone === true ||
+          (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches),
+      };
+    },
+    track,
+  });
   const pending = createMemo(() => pendingPermissions(store.events));
 
   // ---- file preview surface (roadmap pillar #6) ---------------------------
@@ -1765,6 +1806,7 @@ export const SessionView: Component<{
           class="tl-view"
           classList={{ "tl-hidden": mode() !== "text" }}
           aria-hidden={mode() !== "text"}
+          ref={textSection}
         >
           <TextView
             onScreen={onScreen()}
@@ -1800,6 +1842,8 @@ export const SessionView: Component<{
             onOpenTerminal={() => setMode("terminal")}
             stream={store.stream}
             noMod={store.noMod()}
+            claudeExited={store.claudeExited()}
+            starting={store.starting()}
             sessionState={store.state()}
             onListDir={listDir}
             session={session}

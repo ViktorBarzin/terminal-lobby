@@ -31,6 +31,8 @@ function mount(over: {
   events?: () => Event[];
   stream?: () => StreamState;
   noMod?: () => boolean;
+  claudeExited?: () => boolean;
+  starting?: () => boolean;
   onOpenTerminal?: () => void;
 }) {
   g.EventSource = class {
@@ -50,6 +52,8 @@ function mount(over: {
       onResolve={() => {}}
       stream={over.stream}
       noMod={over.noMod?.()}
+      claudeExited={over.claudeExited?.()}
+      starting={over.starting?.()}
       onOpenTerminal={over.onOpenTerminal}
     />
   ));
@@ -142,5 +146,37 @@ describe("<TextView> for a session that started before the mod", () => {
     expect(container.querySelector(".tl-nomod-note")).not.toBeNull();
     setNoMod(false);
     expect(container.querySelector(".tl-nomod-note")).toBeNull();
+  });
+});
+
+describe("<TextView> while Claude starts", () => {
+  it("says Claude is starting in place of the empty timeline", () => {
+    const { container } = mount({ events: () => [], starting: () => true });
+    expect(container.querySelector(".tl-starting-note")?.textContent).toContain("Starting Claude…");
+    expect(container.textContent).not.toContain("No messages yet.");
+  });
+
+  it("clears once the conversation arrives", () => {
+    const [starting, setStarting] = createSignal(true);
+    const { container } = mount({ events: () => [], starting });
+    setStarting(false);
+    expect(container.querySelector(".tl-starting-note")).toBeNull();
+  });
+});
+
+describe("<TextView> for a session whose Claude exited", () => {
+  it("says Claude is not running, offers the Terminal, and promises no restart", () => {
+    const open = vi.fn();
+    const { container } = mount({
+      events: () => [],
+      noMod: () => true,
+      claudeExited: () => true,
+      onOpenTerminal: open,
+    });
+    const note = container.querySelector(".tl-nomod-note")!;
+    expect(note.textContent).toContain("Claude isn't running in this session.");
+    expect(note.textContent).not.toContain("restarts on its own");
+    fireEvent.click(note.querySelector("button")!);
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });
