@@ -236,7 +236,8 @@ the boot. Two lifetimes: a standing slot, refilled after each claim and
 never collected, and a speculative one, warmed when a create input opens
 and collected by TTL if nobody commits. A claim is a `tmux rename-session`
 onto the slot, which is atomic and refuses a name already in use, and that
-is the whole concurrency story. Slots are named past the length limit a
+is the whole concurrency story: Send claims the slot, and the new session's
+terminal claims it when Send did not, whichever comes first. Slots are named past the length limit a
 client may address, so the lobby never lists one; the rename is also why a
 claimed session's **Created** cannot be tmux's own `session_created`.
 _Avoid_: pool session, warm session, spare session

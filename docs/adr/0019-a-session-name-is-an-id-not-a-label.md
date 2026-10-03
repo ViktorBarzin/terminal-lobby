@@ -125,3 +125,13 @@ enumeration.
 Ids do not survive a session being killed and recreated. A restored session keeps
 its id because the name is what `tmux-persist` restores; a session someone kills
 and starts again is a new session with a new id, as it was with names.
+
+## Amendment, 2026-10-03: Send also claims the slot
+
+ADR-0038 adds a second, server-side claim of a new session's pre-warm slot: the
+New-session composer's Send asks tmux-api to claim it, so the first prompt does
+not wait for the terminal to attach. The property above still holds as a
+fallback. The browser still mints the id, the attach still claims or creates the
+session when Send's claim did not happen, and the atomic rename settles which of
+the two got there first, so creation still works while tmux-api is down. What
+changed is that creation now usually does reach a server, as an optimisation.
