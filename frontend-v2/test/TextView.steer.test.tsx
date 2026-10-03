@@ -87,6 +87,10 @@ function mount(a: AgentInfo, status = 204, body = "") {
       onSend={onSend}
       onStop={() => {}}
       onResolve={() => {}}
+      // What SessionView passes when nobody else holds the session: an empty
+      // reason, not an absent one (SessionView inertReason). Absent here, the
+      // tests passed while the live field never went read-only (2026-10-03).
+      inertReason=""
     />
   ));
   const open = () =>

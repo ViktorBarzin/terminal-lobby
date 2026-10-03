@@ -2651,7 +2651,8 @@ export const TextView: Component<{
             onSend={steerSend}
             onStop={() => {}}
             onResolve={() => {}}
-            inertReason={props.inertReason ?? steerHeld()}
+            // `||`, not `??`: a session nobody else holds passes "" here.
+            inertReason={props.inertReason || steerHeld()}
             onTakeControl={props.inertReason ? props.onTakeControl : undefined}
           />
         )}
