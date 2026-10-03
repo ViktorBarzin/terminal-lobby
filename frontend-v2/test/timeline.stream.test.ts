@@ -104,3 +104,50 @@ describe("the live group beside a streaming reply", () => {
     expect(state).toEqual({ kind: "working", done: 0, since: 1_000 });
   });
 });
+
+// A background agent finishing makes the main thread reply with no prompt to
+// open its turn, so the reply streams while the last turn on screen is one that
+// already ended. Joining that turn drew the words inside its settled group
+// ("Ran 1 agent, wrote 1 reply"), then the stored row opened a turn of its own
+// and they jumped there, with a working row flashing between (2026-10-03).
+describe("a reply streamed after the turn ended", () => {
+  const settled = [
+    ev({ id: 1, kind: "user", body: "launch it", turnId: "t1", at: 1_000 }),
+    ev({ id: 2, kind: "tool_use", tool: "Agent", toolId: "a1", body: "{}", turnId: "t1" }),
+    ev({ id: 3, kind: "tool_result", toolId: "a1", body: "launched", turnId: "t1" }),
+    ev({ id: 4, kind: "text", body: "LAUNCHED", turnId: "t1" }),
+    ev({ id: 5, kind: "turn_end", turnId: "t1" }),
+    ev({ id: 6, kind: "state", body: 'Agent "probe" finished', turnId: "t1" }),
+  ];
+  const ofTurn = (rows: TimelineRow[], key: string) =>
+    JSON.stringify(rows.filter((r) => r.kind !== "working" && r.turnKey === key));
+
+  it("opens a turn of its own instead of joining the ended one", () => {
+    const before = deriveRows(settled);
+    const streaming = deriveRows(withStreaming(settled, applyDelta(NO_STREAM, delta("DONE"))));
+    expect(ofTurn(streaming, "t1")).toBe(ofTurn(before, "t1"));
+    const last = drawn(streaming).at(-1)!;
+    expect(last).toMatchObject({ kind: "message", streaming: true });
+    expect(last.turnKey).not.toBe("t1");
+  });
+
+  it("leaves the ended turn alone when the stored reply lands", () => {
+    const before = deriveRows(settled);
+    const stored = [
+      ...settled,
+      ev({ id: 7, kind: "text", body: "DONE", turnId: "t2" }),
+      ev({ id: 8, kind: "turn_end", turnId: "t2" }),
+    ];
+    expect(ofTurn(deriveRows(stored), "t1")).toBe(ofTurn(before, "t1"));
+  });
+
+  it("still joins an open turn whose last event is a subagent's", () => {
+    const open = [
+      ev({ id: 1, kind: "user", body: "go", turnId: "t1" }),
+      ev({ id: 2, kind: "turn_end", turnId: "t0" }),
+      ev({ id: 3, kind: "text", body: "inner", turnId: "t1", sidechain: true, agentId: "x" }),
+    ].filter((e) => e.id !== 2);
+    const rows = deriveRows(withStreaming(open, applyDelta(NO_STREAM, delta("main"))));
+    expect(drawn(rows).at(-1)!.turnKey).toBe("t1");
+  });
+});
