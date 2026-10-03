@@ -61,17 +61,9 @@ func toLines(ss []string) [][]byte {
 	return out
 }
 
-func at(s string) time.Time {
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		panic(err)
-	}
-	return t
-}
-
 // subagentsOf is an agentView over a fixed set of subagent transcripts.
-func subagentsOf(now time.Time, files map[string][]string) agentView {
-	return agentView{now: now, read: func(id string) ([][]byte, bool) {
+func subagentsOf(files map[string][]string) agentView {
+	return agentView{read: func(id string) ([][]byte, bool) {
 		f, ok := files[id]
 		return toLines(f), ok
 	}}
@@ -87,28 +79,26 @@ func TestInterimNoticeClosesOnceTheSubagentIsIdle(t *testing.T) {
 		name  string
 		main  []string
 		files map[string][]string
-		now   string
 		want  int
 	}{
 		// The rv3-flow repro at the moment of the answer: the subagent's
-		// Monitor still had 31 s to run, and an event from it could have
-		// woken the subagent again.
-		{"its monitor is still armed", main, map[string][]string{rv3Agent: rv3Sub()}, "2026-10-02T18:55:41.6Z", 1},
-		{"its monitor has expired", main, map[string][]string{rv3Agent: rv3Sub()}, "2026-10-02T18:56:13Z", 0},
+		// Monitor still had 31 s to run, but nothing it sends can wake a
+		// subagent that has stopped (see rvbgcAgent below).
+		{"its monitor is still armed", main, map[string][]string{rv3Agent: rv3Sub()}, 0},
 		// Nothing to read is what every turn had before: keep holding.
-		{"its transcript cannot be read", main, nil, "2026-10-02T18:56:13Z", 1},
+		{"its transcript cannot be read", main, nil, 1},
 		// After the first notice the sleep was still running.
 		{"its own background command is running", firstOnly,
-			map[string][]string{rv3Agent: rv3Sub()[:4]}, "2026-10-02T18:57:00Z", 1},
+			map[string][]string{rv3Agent: rv3Sub()[:4]}, 1},
 		// The sleep's notice woke the subagent: its next notice is still to
 		// come, and the interim one is not the answer.
 		{"it was woken after its last notice", firstOnly,
-			map[string][]string{rv3Agent: rv3Sub()[:5]}, "2026-10-02T18:57:00Z", 1},
+			map[string][]string{rv3Agent: rv3Sub()[:5]}, 1},
 		{"it answered after its last notice", firstOnly,
-			map[string][]string{rv3Agent: rv3Sub()}, "2026-10-02T18:57:00Z", 1},
+			map[string][]string{rv3Agent: rv3Sub()}, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := backgroundOutstanding(toLines(c.main), subagentsOf(at(c.now), c.files))
+			got := backgroundOutstanding(toLines(c.main), subagentsOf(c.files))
 			if len(got) != c.want {
 				t.Fatalf("outstanding %v, want %d", got, c.want)
 			}
@@ -157,6 +147,76 @@ func TestTurnSettlesWhenTheSubagentsLastNoticeOnlyLooksInterim(t *testing.T) {
 			f.appendTranscript(testOSUser, "c1", userLine("launch one background subagent", "2026-10-02T18:54:31.5Z"))
 			f.appendTranscript(testOSUser, "c1", rv3Main()...)
 			f.setAgentTranscript(testOSUser, "c1", rv3Agent, sub...)
+			f.setState(testOSUser, "c1", "done")
+		}()
+	}
+
+	task := h.sendMessage("c1", "launch one background subagent")
+	v := h.waitStatus(task, StatusDone, StatusFailed)
+	if v.Status != StatusDone || v.Result != "SUBAGENT-DONE-42" || v.BackgroundRunning {
+		t.Fatalf("status %q result %q background %v error %q, want done SUBAGENT-DONE-42 with nothing running",
+			v.Status, v.Result, v.BackgroundRunning, v.Error)
+	}
+}
+
+// Measured live on 2026-10-03 (conversation rv-bg-c, Claude Code 2.1.287): a
+// background subagent armed a 20-minute Monitor waiting for a file and
+// answered at once. When the file appeared at 04:16:44 the Monitor's event
+// ("rv-fire-c-77 appeared", status completed) was only enqueued in the main
+// session; the subagent's transcript got nothing after its answer and the
+// main session never dequeued it. A stopped subagent's Monitor therefore
+// cannot make its task-id notify again, and the turn held until the Monitor's
+// timeout: 206 s after the answer for a 240 s Monitor (rv-ui-bg), and past 9
+// minutes for a 20-minute one.
+const rvbgcAgent = "a79072afef8f10561"
+
+var (
+	rvbgcSubPrompt  = `{"type":"user","isSidechain":true,"timestamp":"2026-10-03T04:14:16.317Z","message":{"role":"user","content":"Step 1: use the Monitor tool to arm a monitor with an until-loop that waits for the file /var/tmp/claude-1000/rv-fire-c-77 to appear, timeout 20 minutes. Do NOT wait for it. Step 2: return exactly SUBAGENT-DONE-42."}}`
+	rvbgcSubMonitor = `{"type":"user","isSidechain":true,"timestamp":"2026-10-03T04:14:21.087Z","message":{"role":"user","content":[{"tool_use_id":"toolu_01WCX9P1SFKwdrEyYdmNMfRn","type":"tool_result","content":"Monitor started (task bpeuv9015, expires in 20m unless the source ends first)"}]},"toolUseResult":{"taskId":"bpeuv9015","timeoutMs":1200000,"persistent":false}}`
+	rvbgcSubAnswer  = `{"type":"assistant","isSidechain":true,"timestamp":"2026-10-03T04:14:23.297Z","message":{"role":"assistant","content":[{"type":"text","text":"SUBAGENT-DONE-42"}]}}`
+)
+
+func rvbgcSub() []string { return []string{rvbgcSubPrompt, rvbgcSubMonitor, rvbgcSubAnswer} }
+
+func rvbgcMain() []string {
+	return append(agentLaunchLines(rvbgcAgent, "2026-10-03T04:14:16.300Z"),
+		assistantLine("LAUNCHED", "2026-10-03T04:14:18.0Z"),
+		agentNoticeLine(rvbgcAgent, "SUBAGENT-DONE-42", true, "2026-10-03T04:14:23.442Z"),
+		assistantLine("SUBAGENT-DONE-42", "2026-10-03T04:14:25.326Z"),
+	)
+}
+
+// The subagent's armed Monitor does not hold its interim notice open, however
+// long the Monitor has left to run.
+func TestStoppedSubagentsMonitorDoesNotHoldItsNotice(t *testing.T) {
+	got := backgroundOutstanding(toLines(rvbgcMain()), subagentsOf(map[string][]string{rvbgcAgent: rvbgcSub()}))
+	if len(got) != 0 {
+		t.Fatalf("outstanding %v, want none", got)
+	}
+}
+
+// The session's own Monitor is another matter: its events do reach the
+// session and start a turn, so it stays outstanding while armed.
+func TestSessionsOwnMonitorStillHolds(t *testing.T) {
+	own := strings.Replace(rvbgcSubMonitor, `"isSidechain":true,`, "", 1)
+	got := backgroundOutstanding(toLines([]string{own}), subagentsOf(nil))
+	if len(got) != 1 || got[0] != "bpeuv9015" {
+		t.Fatalf("outstanding %v, want [bpeuv9015]", got)
+	}
+}
+
+// End to end through the turn runner: the subagent armed a 20-minute Monitor
+// and answered. The task settles on the answer, not at the Monitor's timeout.
+func TestTurnSettlesDespiteTheSubagentsArmedMonitor(t *testing.T) {
+	h := newHarness(t)
+	h.readyConversation("c1")
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.setStateLocked(k, "running")
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.appendTranscript(testOSUser, "c1", userLine("launch one background subagent", "2026-10-03T04:14:12Z"))
+			f.appendTranscript(testOSUser, "c1", rvbgcMain()...)
+			f.setAgentTranscript(testOSUser, "c1", rvbgcAgent, rvbgcSub()...)
 			f.setState(testOSUser, "c1", "done")
 		}()
 	}
