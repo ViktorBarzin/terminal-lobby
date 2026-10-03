@@ -18,6 +18,9 @@ import (
 // gate absorbed it: a missing map yields no accounts, so an identity resolves
 // to nobody and the handler answers 403. Tests that want a populated map call
 // withUserMap, which overrides the path for their duration.
+//
+// It also keeps the real tmux-user-attach the suite runs from reaching
+// session-events on this box.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "tmux-api-test")
 	if err != nil {
@@ -29,6 +32,11 @@ func TestMain(m *testing.M) {
 		Config:     authuser.Config{MultiUser: "on"},
 	}
 	mapPath = actAsGate.MapPath
+	// tmux-user-attach posts each claim to session-events (POST /hooks/claimed).
+	// The suite runs the real script, and on a deployed box localhost:7685 is
+	// the LIVE service, so the post goes to a port nothing listens on instead.
+	// A test that checks the post replaces curl itself (stubCurl).
+	_ = os.Setenv("TL_CLAIMED_ENDPOINT", "http://127.0.0.1:9/hooks/claimed")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

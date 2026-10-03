@@ -67,7 +67,7 @@ func TestAClaimTellsSessionEventsTheNewName(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("%d posts, want 1", len(got))
 	}
-	if !strings.Contains(strings.Join(got[0].args, " "), "http://localhost:7685/hooks/claimed") {
+	if !strings.Contains(strings.Join(got[0].args, " "), os.Getenv("TL_CLAIMED_ENDPOINT")) {
 		t.Fatalf("posted to %q", got[0].args)
 	}
 	var body struct{ User, Session string }
