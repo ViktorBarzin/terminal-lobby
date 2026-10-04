@@ -170,6 +170,39 @@ sequenceDiagram
 - tmux-api's journal after an install shows each stale slot replaced once,
   5 s apart.
 
+## Result
+
+Shipped in 0.102.0 on 2026-10-04, with two follow-up fixes found while
+verifying it live. Measured through the deployed lobby on desktop
+(scripts/qa-harness.py and Playwright):
+
+| create | Send to prompt on screen | Send to Accepted | Send to Shown |
+|---|---|---|---|
+| default model, `~/code` | 206 ms | 510 ms (server) | 1067 ms |
+| Haiku picked in the Model sheet, `~/code` | 146 ms | 421 ms (browser), slot `warm` | |
+
+Before this change a create with a model picked always booted Claude cold.
+
+- **After the install**, tmux-api replaced the three stale slots within 5 s of
+  starting (emo's home, wizard's home, `tripit`). Every slot then carried the
+  installed mod id.
+- **A Model sheet pick** started a speculative slot booted with
+  `--model 'claude-haiku-4-5-20251001'` about 2 s later. Send claimed it.
+- **Picking Default again** released that slot through tmux-api.
+
+Two defects turned up during verification and are fixed:
+
+- `slot_is_stale` read a missing slot as stale, because tmux 3.4 answers
+  `display -t '=<missing>:'` with exit 0 and no output. Every create in a
+  directory with no slot logged a drop and started a standing refill there,
+  and the claim would have reported `stale` instead of `none`.
+- The tmux-api attach tests had no `systemctl` stub, so each run booted a real
+  Claude slot in `/tmp`.
+
+Not verified: the phone (iPhone or Android), and the alert firing. The
+counters start from zero at each tmux-api restart, so the alert has no history
+to fire on yet.
+
 ## Open questions
 
 - **Why some Claude boots take 9 to 21 s.** Verified: the delay is on the
