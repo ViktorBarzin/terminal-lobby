@@ -2250,15 +2250,21 @@ label.tl-set-row-label {
   cursor: zoom-in;
   max-width: 100%;
 }
-/* 96px tall and cropped from the top: a full-page capture (11 of the 85
+/* A fixed box, cropped from the top: a full-page capture (11 of the 85
    screenshots in the census) would otherwise shrink to a sliver a few pixels
-   wide. The lightbox shows all of it. */
+   wide. The lightbox shows all of it.
+
+   The box is the same before the picture arrives as after. Sized by the
+   picture (width: auto, 64px until it loaded and up to 320px once it had), a
+   strip of them wrapped onto more lines as each batch decoded, and everything
+   below moved down a line at a time while a picture-heavy session filled:
+   jumps of 84, 168, 336 and 420px, one per batch, measured at a phone width on
+   2026-10-04 (Viktor: "the screen flickers when scrolling through the images"). */
 .tl-tool-thumb img {
   display: block;
   height: 96px;
-  width: auto;
-  min-width: 64px;
-  max-width: min(100%, 320px);
+  width: 128px;
+  max-width: 100%;
   object-fit: cover;
   object-position: top;
   border: 1px solid var(--border);
@@ -2687,6 +2693,7 @@ label.tl-set-row-label {
 }
 .tl-group-pics .tl-tool-thumb img {
   height: 76px;
+  width: 120px;
   border: 1px solid var(--border-strong);
   border-radius: 9px;
   background: var(--bg-card);

@@ -630,6 +630,88 @@ export const MessagesTimeline: Component<{
     });
   };
 
+  /**
+   * The row the reader is looking at, held still while something lands above it.
+   *
+   * Both compensations below measured the OLDEST row's move, which is right for
+   * rows inserted above everything and misses a row that grows between the
+   * oldest one and the reader. History arrives in byte-sized windows that can
+   * cut a turn in two (sessionio backfill.go), so a window can rebuild a turn
+   * already on screen: its work group becomes a fold and the fold's picture strip
+   * gains lines. Measured on a picture-heavy session at a phone width
+   * (2026-10-04): what sat at the centre of the screen jumped 252px while the
+   * oldest row stayed put (Viktor: the screen flickers "due to reordering of
+   * messages").
+   *
+   * So each of them notes the first top-level row at or below the top of the
+   * view just before its own change, and puts that row back where it was after.
+   * Top-level rows are the scroller's own children, in order down the page, so
+   * the row is found by bisection and a long transcript costs a handful of
+   * layout reads, not one per row. When that row has left the DOM (a rebuilt
+   * row is a new element), the caller falls back to the oldest-row arithmetic.
+   */
+  let readerRow: HTMLElement | null = null;
+  let readerOffset = 0;
+  const noteReader = (): void => {
+    readerRow = null;
+    const el = scroller;
+    if (!el) return;
+    const rows = Array.from(el.children).filter(
+      (c): c is HTMLElement => c instanceof HTMLElement && c.matches(ANCHOR_ROW_SELECTOR),
+    );
+    const top = el.scrollTop;
+    let lo = 0;
+    let hi = rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid]!.offsetTop >= top) hi = mid;
+      else lo = mid + 1;
+    }
+    const row = rows[lo];
+    if (!row) return;
+    readerRow = row;
+    readerOffset = row.offsetTop - top;
+  };
+  /** Put the noted row back where it sat. False when there is none to hold. */
+  const holdReader = (): boolean => {
+    const el = scroller;
+    const row = readerRow;
+    readerRow = null;
+    if (!el || !row || !row.isConnected) return false;
+    const target = Math.max(0, row.offsetTop - readerOffset);
+    if (target !== el.scrollTop) {
+      selfScrollTop = target;
+      el.scrollTop = target;
+    }
+    return true;
+  };
+
+  // Every change to the events, while the reader is scrolled up: the row is
+  // noted before the DOM is updated (a computation runs ahead of the render)
+  // and held after it (an effect runs behind it). This is the path the opening
+  // stream's later history takes, and an earlier window's too, so it covers
+  // both. At the live end the pin keeps the reader at the bottom instead.
+  let eventHolds = 0;
+  createComputed(
+    on(
+      () => props.events,
+      () => {
+        if (untrack(pinned) || untrack(() => props.hidden)) readerRow = null;
+        else noteReader();
+      },
+      { defer: true },
+    ),
+  );
+  createEffect(
+    on(
+      () => props.events,
+      () => {
+        if (holdReader()) eventHolds++;
+      },
+      { defer: true },
+    ),
+  );
+
   // Rows mount from the newest end, a chunk per frame, until all of them are
   // up. This is NOT virtualization: nothing is ever unmounted, so scrolling and
   // searching still reach the whole window (see the note above).
@@ -653,6 +735,7 @@ export const MessagesTimeline: Component<{
     // the reader down (measured: 5,780px, ending back at the live end).
     const anchor = el?.querySelector<HTMLElement>(ANCHOR_ROW_SELECTOR);
     const before = anchor?.offsetTop ?? 0;
+    if (!pinned()) noteReader();
     setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS));
     if (!el) return;
     // At the bottom, being at the bottom IS the position to keep — and it is
@@ -670,7 +753,7 @@ export const MessagesTimeline: Component<{
       el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
       return;
     }
-    if (!anchor) return;
+    if (holdReader() || !anchor) return;
     el.scrollTop = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
   };
 
@@ -1271,6 +1354,7 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     const anchor = el?.querySelector<HTMLElement>(ANCHOR_ROW_SELECTOR);
     const before = anchor?.offsetTop ?? 0;
+    const holds = eventHolds;
     try {
       await props.onLoadEarlier();
     } catch (err) {
@@ -1289,7 +1373,10 @@ export const MessagesTimeline: Component<{
       // background mount uses, for the same reason. It runs even on a failed
       // load: a rejected fetch that left this flag set would disable reaching
       // back for the rest of the session.
-      if (el && anchor) {
+      if (eventHolds !== holds) {
+        // The window's events already held the reader's own row still, which
+        // is what the arithmetic below approximates from the oldest row.
+      } else if (el && anchor) {
         const compensated = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
         // Writing scrollTop fires a scroll event of its own. Left unmarked, that
         // event asks for another window, and if the one that just arrived is
