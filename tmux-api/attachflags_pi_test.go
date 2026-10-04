@@ -59,6 +59,8 @@ func runAttachCalls(t *testing.T, args ...string) [][]string {
 	write("tmux", "#!/usr/bin/env bash\n{ for a in \"$@\"; do printf '%s\\x1f' \"$a\"; done; printf '\\n'; } >> "+
 		shellQuote(logPath)+"\nexit 0\n")
 	write("systemd-run", "#!/usr/bin/env bash\nwhile [[ \"$1\" == -* ]]; do shift; done\nexec \"$@\"\n")
+	// Keeps a claim's refill away from the real user manager (attachflags_test.go).
+	write("systemctl", "#!/usr/bin/env bash\nexit 0\n")
 	write("logger", "#!/usr/bin/env bash\nexit 0\n")
 	home := t.TempDir()
 	write("getent", "#!/usr/bin/env bash\nprintf 'tl:x:1000:1000::%s:/bin/bash\\n' "+shellQuote(home)+"\nexit 0\n")

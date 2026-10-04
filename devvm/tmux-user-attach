@@ -127,8 +127,14 @@ mod_id=''
 
 # slot_is_stale SLOT: the slot exists and was warmed under another mod, or under
 # a build too old to stamp one.
+#
+# has-session first, because tmux 3.4 answers `display -t '=<missing>:'` with
+# exit 0 and nothing printed, which would read as a slot with no stamp: every
+# create in a directory with no slot logged a drop and refilled a standing slot
+# there (found 2026-10-04).
 slot_is_stale() {
     [[ -n "$mod_id" ]] || return 1
+    tmux has-session -t "=$1" 2>/dev/null || return 1
     local stamp
     stamp="$(tmux display -p -t "=$1:" '#{@tl_mod_id}' 2>/dev/null)" || return 1
     [[ "$stamp" != "$mod_id" ]]

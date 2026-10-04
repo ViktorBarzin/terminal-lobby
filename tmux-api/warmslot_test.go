@@ -124,6 +124,18 @@ func TestClaimOnlySaysWhatItFound(t *testing.T) {
 			t.Fatalf("no slot: said %q, want none", out)
 		}
 	})
+	// tmux 3.4 answers `display -t '=<missing>:'` with exit 0 and nothing
+	// printed, which read as a slot stamped with no mod: a create in a
+	// directory with no slot logged "dropped slot", said stale, and started a
+	// standing refill there (found 2026-10-04).
+	t.Run("none, with a mod installed", func(t *testing.T) {
+		h := newBornHarness(t)
+		h.session("other")
+		out := strings.TrimSpace(h.runScript(installMod(h, "new"), bornID, t.TempDir(), "claude", "", "", "claim"))
+		if out != "none" {
+			t.Fatalf("no slot with a mod installed: said %q, want none", out)
+		}
+	})
 	t.Run("stale", func(t *testing.T) {
 		h := newBornHarness(t)
 		dir := t.TempDir()
