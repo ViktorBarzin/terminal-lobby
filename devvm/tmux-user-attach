@@ -41,6 +41,15 @@ if [[ "${6:-}" == claim ]]; then
     [[ "$name" =~ $MINTED_RE ]] || exit 0
     claim_only=yes
 fi
+# A 6th argument of `prewarm` or `pool` warms a slot, speculative or standing,
+# exactly as TL_POOL_WARM (and TL_POOL_SPECULATIVE) do from the systemd units.
+# tmux-api warms by argument because a unit instance carries one string, and a
+# speculative slot is a directory, a model and an effort; and an argument for
+# the reason claim is one, sudo's env_reset.
+case "${6:-}" in
+    prewarm) TL_POOL_WARM=1 TL_POOL_SPECULATIVE=1 ;;
+    pool)    TL_POOL_WARM=1 TL_POOL_SPECULATIVE= ;;
+esac
 
 # Resolve this user's home from the password database rather than trusting
 # $HOME, the same way tmux-user-dirlist does. `sudo -H` at every in-repo call
@@ -88,11 +97,21 @@ start_dir="${2:-$home}"
 # only symptom is that pre-warming quietly stops helping. realpath also
 # collapses `..` and symlinks, and both sides derive the name here, so they
 # cannot disagree.
+#
+# A model and an effort ($2, $3) are part of the name too, for the reason the
+# directory is: a running Claude cannot be re-flagged, so a slot booted on one
+# model is no use to a create asking for another. With neither, the name is
+# the directory's alone, as it was before slots carried flags.
 POOL_PREFIX='__terminal_lobby_prewarmed_pool_slot_'
 pool_slot_name() {
-    local d
+    local d s
     d="$(realpath -m -- "$1" 2>/dev/null)" || d="$1"
-    printf '%s%s' "$POOL_PREFIX" "$(printf '%s' "${d:-$1}" | tr -c 'a-zA-Z0-9' '_')"
+    s="$(printf '%s' "${d:-$1}" | tr -c 'a-zA-Z0-9' '_')"
+    if [[ -n "${2:-}${3:-}" ]]; then
+        s+="__model_$(printf '%s' "${2:-}" | tr -c 'a-zA-Z0-9' '_')"
+        s+="__effort_$(printf '%s' "${3:-}" | tr -c 'a-zA-Z0-9' '_')"
+    fi
+    printf '%s%s' "$POOL_PREFIX" "$s"
 }
 
 # Which build of the lobby's Claude mod is installed: a content hash the package
@@ -116,11 +135,9 @@ slot_is_stale() {
 }
 
 # TL_POOL_WARM=1 means "create the slot for $start_dir, detached, and exit"
-# rather than "attach a session". The name is derived, never taken from $1.
+# rather than "attach a session". The name is derived, never taken from $1: the
+# warm block below folds the directory, model and effort into it.
 warm="${TL_POOL_WARM:-}"
-if [[ "$warm" == 1 ]]; then
-    name="$(pool_slot_name "$start_dir")"
-fi
 
 # TL_POOL_SPECULATIVE=1 marks a slot warmed on a guess — the lobby opened a
 # create input, so someone is probably about to make a session here, but nobody
@@ -408,6 +425,15 @@ if [[ "$warm" == 1 ]]; then
         logger -t tmux-user-attach "pool: refusing to warm with cmd='${cmd_key:-<none>}' (only 'claude' is pooled)"
         exit 64
     }
+    # A standing slot is always on Default; only a speculative one, a guess
+    # about one create, carries the model and effort that create will ask for.
+    if [[ "$speculative" != 1 && -n "$model$effort" ]]; then
+        model="" effort=""
+        resolve_cmd "$cmd_key"
+        launch_flags "$cmd_key"
+        tmux_cmd=("$user_shell" -lic "$cmd")
+    fi
+    name="$(pool_slot_name "$start_dir" "$model" "$effort")"
     # A slot warmed under another mod is replaced: it would hand out the old one.
     if tmux has-session -t "=$name" 2>/dev/null && slot_is_stale "$name"; then
         logger -t tmux-user-attach "pool: replacing slot for '$start_dir' warmed under another mod"
@@ -441,6 +467,11 @@ if [[ "$warm" == 1 ]]; then
     if [[ -n "$mod_id" ]]; then
         tmux set-option -t "=$name:" @tl_mod_id "$mod_id" >/dev/null 2>&1 || true
     fi
+    # What the slot is, so a slot gone stale can be rebuilt as the same slot.
+    # Its name cannot answer that: the directory is folded into it lossily.
+    tmux set-option -t "=$name:" @tl_slot_dir "$(realpath -m -- "$start_dir" 2>/dev/null || printf '%s' "$start_dir")" >/dev/null 2>&1 || true
+    tmux set-option -t "=$name:" @tl_slot_model "$model" >/dev/null 2>&1 || true
+    tmux set-option -t "=$name:" @tl_slot_effort "$effort" >/dev/null 2>&1 || true
     if [[ "$speculative" == 1 ]]; then
         # `=name:` and not `=name`: set-option rejects the bare exact form, and
         # plain `name` would resolve by unambiguous PREFIX — which could stamp a
@@ -492,18 +523,21 @@ fi
 # finds the freshly renamed session and attaches it, ignoring -c and the
 # command as it always does for a session that already exists.
 #
-# A slot is warmed with NO model or effort flags, and a running Claude cannot be
-# re-flagged — so a create that asked for either must not claim one. It takes
-# the cold path instead, which is the cheaper of the two: ~2.4s to boot with the
-# flags against ~9ms to claim and then ~4s driving the picker to the same place.
-if [[ "$cmd_key" == claude && -z "$model$effort" && -z "${renamed:-}" ]]; then
-    slot="$(pool_slot_name "$start_dir")"
+# A running Claude cannot be re-flagged, so a create claims only the slot
+# warmed with the same model and effort, which pool_slot_name puts in the name.
+# A create whose choice has no slot takes the cold path, the cheaper of the
+# two: ~2.4s to boot with the flags against ~9ms to claim and then ~4s driving
+# the picker to the same place.
+pool_found=none
+if [[ "$cmd_key" == claude && -z "${renamed:-}" ]]; then
+    slot="$(pool_slot_name "$start_dir" "$model" "$effort")"
     # A slot warmed under another mod is dropped, not claimed, and this create
     # takes the cold path while the refill boots one on the installed mod. A
     # speculative slot is not refilled, for the reason the refill below gives.
     if [[ "$name" != "$slot" ]] && slot_is_stale "$slot"; then
         was_speculative="$(tmux display -p -t "=$slot:" '#{@tl_speculative}' 2>/dev/null || true)"
         tmux kill-session -t "=$slot" >/dev/null 2>&1 || true
+        pool_found=stale
         logger -t tmux-user-attach "pool: dropped slot for '$start_dir' warmed under another mod"
         if [[ -z "$was_speculative" && "$scope_ok" == yes ]]; then
             systemctl --user start --no-block \
@@ -585,9 +619,10 @@ fi
 
 # Claim-only stops here, whatever happened above: everything below attaches or
 # creates, and the browser's own attach will do that when it arrives. It says
-# whether it claimed, which is all tmux-api needs to know.
+# what it found: `claimed`, `stale` (a slot on an older mod, dropped), or
+# `none`, which the composer reports beside the first prompt's timing.
 if [[ "$claim_only" == yes ]]; then
-    [[ "${claimed:-}" == yes ]] && echo claimed
+    if [[ "${claimed:-}" == yes ]]; then echo claimed; else echo "$pool_found"; fi
     exit 0
 fi
 

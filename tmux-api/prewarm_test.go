@@ -43,46 +43,18 @@ func TestPrewarmSlotNameMatchesShell(t *testing.T) {
 	}
 
 	for _, dir := range dirs {
-		// Source the script's own function rather than a copy of it. The script
-		// exits early without TL_POOL_WARM, so sourcing it in a subshell that
-		// only calls the function is enough to read the real definition.
+		// The script's own function, cut out of it, rather than a copy that
+		// could keep agreeing with a rule the script no longer follows.
 		out, err := exec.Command("bash", "-c",
 			`set -euo pipefail
-			 POOL_PREFIX='__terminal_lobby_prewarmed_pool_slot_'
-			 pool_slot_name() {
-			     local d
-			     d="$(realpath -m -- "$1" 2>/dev/null)" || d="$1"
-			     printf '%s%s' "$POOL_PREFIX" "$(printf '%s' "${d:-$1}" | tr -c 'a-zA-Z0-9' '_')"
-			 }
-			 pool_slot_name "$1"`, "bash", dir).Output()
+			 eval "$(sed -n '/^POOL_PREFIX=/,/^}/p' "$1")"
+			 pool_slot_name "$2"`, "bash", script, dir).Output()
 		if err != nil {
 			t.Fatalf("shell derivation for %q failed: %v", dir, err)
 		}
 		want := string(out)
-		if got := prewarmSlotName(dir); got != want {
+		if got := prewarmSlotName(dir, "", ""); got != want {
 			t.Errorf("prewarmSlotName(%q)\n  go:    %q\n  shell: %q", dir, got, want)
-		}
-	}
-}
-
-// The inlined copy above must stay identical to the script's. If someone edits
-// pool_slot_name and not the test, the comparison above would keep passing
-// against a stale rule, so the script is checked for the lines that matter.
-func TestShellSlotNameDerivationIsUnchanged(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "devvm", "tmux-user-attach"))
-	if err != nil {
-		t.Skipf("tmux-user-attach not readable: %v", err)
-	}
-	src := string(b)
-	for _, want := range []string{
-		`POOL_PREFIX='__terminal_lobby_prewarmed_pool_slot_'`,
-		`d="$(realpath -m -- "$1" 2>/dev/null)" || d="$1"`,
-		`tr -c 'a-zA-Z0-9' '_'`,
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("tmux-user-attach no longer contains %q — the Go derivation in\n"+
-				"prewarmSlotName and the copy in TestPrewarmSlotNameMatchesShell must be\n"+
-				"updated to match, or slots warmed by the shell become unreachable.", want)
 		}
 	}
 }
@@ -121,7 +93,7 @@ func TestCreatedStampMatchesShell(t *testing.T) {
 // reach of attach, rename and kill.
 func TestPrewarmSlotNameIsUnaddressable(t *testing.T) {
 	for _, dir := range []string{"/", "/a", "/home/wizard/code", "/home/wizard"} {
-		name := prewarmSlotName(dir)
+		name := prewarmSlotName(dir, "", "")
 		if sessionNameRe.MatchString(name) {
 			t.Errorf("prewarmSlotName(%q) = %q, which sessionNameRe ACCEPTS — a client could address it", dir, name)
 		}

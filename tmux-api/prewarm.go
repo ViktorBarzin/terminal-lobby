@@ -74,7 +74,10 @@ const (
 // ways — the lobby's project store holds `/home/wizard/code/terminal-lobby/`
 // with a trailing slash next to `/home/wizard/code/tripit` without one — and
 // each spelling would otherwise get a slot of its own.
-func prewarmSlotName(dir string) string {
+//
+// A model and an effort are folded on after the directory, under the same
+// markers the shell uses, and with neither the name is the directory's alone.
+func prewarmSlotName(dir, model, effort string) string {
 	// EvalSymlinks and not just Clean, because the shell side uses realpath,
 	// which resolves links as well as tidying the text. Clean alone would agree
 	// on every ordinary path and disagree on a symlinked one — the worst shape
@@ -86,20 +89,32 @@ func prewarmSlotName(dir string) string {
 	}
 	var b strings.Builder
 	b.WriteString(poolSlotPrefix)
-	// Byte-wise, not rune-wise, because the shell side folds with `tr`, which
-	// works on bytes: a two-byte character becomes TWO underscores there and
-	// would become one here. Only non-ASCII paths differ, so ranging over runes
-	// agrees on everything anyone is likely to try and disagrees exactly where
-	// nobody would look.
-	for i := 0; i < len(clean); i++ {
-		c := clean[i]
+	foldSlotPart(&b, clean)
+	if model != "" || effort != "" {
+		b.WriteString("__model_")
+		foldSlotPart(&b, model)
+		b.WriteString("__effort_")
+		foldSlotPart(&b, effort)
+	}
+	return b.String()
+}
+
+// foldSlotPart writes s with every byte outside [A-Za-z0-9] as '_'.
+//
+// Byte-wise, not rune-wise, because the shell side folds with `tr`, which
+// works on bytes: a two-byte character becomes TWO underscores there and
+// would become one here. Only non-ASCII paths differ, so ranging over runes
+// agrees on everything anyone is likely to try and disagrees exactly where
+// nobody would look.
+func foldSlotPart(b *strings.Builder, s string) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
 			b.WriteByte(c)
 		} else {
 			b.WriteByte('_')
 		}
 	}
-	return b.String()
 }
 
 // prewarmAllowedDir answers whether this user may ask for a slot in dir.
@@ -201,7 +216,7 @@ func handlePrewarm(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	slot := prewarmSlotName(body.Dir)
+	slot := prewarmSlotName(body.Dir, "", "")
 
 	if r.Method == http.MethodDelete {
 		// Release only ever kills a MARKED slot. Without that check a release

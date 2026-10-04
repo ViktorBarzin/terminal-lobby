@@ -204,14 +204,17 @@ func TestAttachAddsNothingToAShellOrTheDefault(t *testing.T) {
 	}
 }
 
-// A slot is warmed with no flags and a running Claude cannot be re-flagged, so
-// a create that asked for either must not claim one. The stub tmux answers
-// success to everything, including the rename, so a claim that was attempted at
-// all shows up as a rename-session in the output.
-func TestAttachDoesNotClaimAWarmSlotForAFlaggedCreate(t *testing.T) {
+// A running Claude cannot be re-flagged, so a create that asked for a model or
+// an effort claims only the slot warmed with the same ones, never the default.
+// The stub tmux answers success to everything, including the rename, so the
+// slot a claim was attempted on shows up in the output.
+func TestAttachClaimsOnlyTheSlotWithTheSameFlags(t *testing.T) {
 	flagged := runAttach(t, "flagcase", "/tmp", "claude", "opus", "")
-	if strings.Contains(flagged, "rename-session") {
-		t.Errorf("a flagged create tried to claim a slot warmed without them:\n%s", flagged)
+	if strings.Contains(flagged, "rename-session -t ="+prewarmSlotName("/tmp", "", "")+" ") {
+		t.Errorf("a flagged create tried to claim the default slot:\n%s", flagged)
+	}
+	if !strings.Contains(flagged, "rename-session -t ="+prewarmSlotName("/tmp", "opus", "")+" ") {
+		t.Errorf("a flagged create did not try its own slot:\n%s", flagged)
 	}
 	// Without a choice it still claims, which is the head start everything else
 	// keeps.
@@ -253,14 +256,6 @@ func TestAttachStampsTheClaimTime(t *testing.T) {
 		t.Errorf("the stamp ran before the speculative mark was cleared:\n%s", claimed)
 	}
 
-	// A flagged create cannot claim a slot warmed without those flags, so it
-	// takes the cold path — where session_created is already the moment the
-	// session became somebody's and there is nothing to correct.
-	_, flagged := runAttachWithLog(t, "flagcase", "/tmp", "claude", "opus", "")
-	if strings.Contains(flagged, createdStampOption) {
-		t.Errorf("a create that never claimed a slot stamped %s anyway:\n%s",
-			createdStampOption, flagged)
-	}
 }
 
 // The lobby starts Claude with permission checks off, as start-claude.sh and
@@ -332,7 +327,7 @@ func runPool(t *testing.T, warm bool, slotMod, installed string) string {
 // dropped instead of claimed, and the create takes the cold path.
 func TestAttachDropsASlotWarmedOnAnOlderMod(t *testing.T) {
 	calls := runPool(t, false, "old", "new")
-	slot := "=" + prewarmSlotName("/tmp")
+	slot := "=" + prewarmSlotName("/tmp", "", "")
 	if !strings.Contains(calls, "tmux kill-session -t "+slot) {
 		t.Errorf("a stale slot was not dropped:\n%s", calls)
 	}
@@ -363,7 +358,7 @@ func TestAttachDropsASlotWithNoStamp(t *testing.T) {
 // The warm is where the slot learns which mod it booted with, and where a
 // stale standing slot is replaced rather than declared "already warm".
 func TestWarmStampsTheModAndReplacesAStaleSlot(t *testing.T) {
-	slot := "=" + prewarmSlotName("/tmp")
+	slot := "=" + prewarmSlotName("/tmp", "", "")
 	stale := runPool(t, true, "old", "new")
 	for _, want := range []string{"tmux kill-session -t " + slot, "new-session -d", "set-option -t " + slot + ": @tl_mod_id new"} {
 		if !strings.Contains(stale, want) {

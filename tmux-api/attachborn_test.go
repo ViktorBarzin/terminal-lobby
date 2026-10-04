@@ -131,11 +131,12 @@ func (h *bornHarness) attach(args ...string) string {
 }
 
 // slotName asks the script itself, so the test cannot drift from it.
-func (h *bornHarness) slotName(dir string) string {
+// flags is the model and effort, in that order, for a flagged slot.
+func (h *bornHarness) slotName(dir string, flags ...string) string {
 	h.t.Helper()
-	out, err := exec.Command("bash", "-c",
-		`eval "$(sed -n '/^POOL_PREFIX=/,/^}/p' "$1")"; pool_slot_name "$2"`,
-		"_", h.script, dir).Output()
+	out, err := exec.Command("bash", append([]string{"-c",
+		`eval "$(sed -n '/^POOL_PREFIX=/,/^}/p' "$1")"; shift; pool_slot_name "$@"`,
+		"_", h.script, dir}, flags...)...).Output()
 	if err != nil {
 		h.t.Fatalf("slot name: %v", err)
 	}
