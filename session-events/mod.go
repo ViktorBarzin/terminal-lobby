@@ -688,7 +688,7 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 	defer c.applyMu.Unlock()
 	h := c.hub
 	c.mu.Lock()
-	ls, sid, stamps := c.ls, c.sid, c.stamps
+	ls, sid, stamps, newMod := c.ls, c.sid, c.stamps, c.instance != ""
 	c.mu.Unlock()
 	if ls == nil {
 		if !stamps {
@@ -698,7 +698,10 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 	}
 	fs := ls.fs
 	var merged stampWrite
-	bye, state := false, false
+	// state says the batch carries the session's whole state: a level, or the
+	// last history chunk of a mod from before levels. moved says the fold's
+	// state left what was last written at some step, even if it came back.
+	bye, state, moved := false, false, false
 	for _, ev := range evs {
 		if modOwnDialog(ev) {
 			continue
@@ -712,7 +715,10 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 				c.historyChunks++
 			} else {
 				c.historyOwed, c.historyChunks = false, 0
-				state = true
+				// A 0.3.0 mod's snapshot ends in its level, which may come in
+				// the next batch with the dialogs: the history alone would
+				// write a session with a dialog open as done in between.
+				state = !newMod
 			}
 			c.mu.Unlock()
 		case sessionio.ModAckEvent:
@@ -740,6 +746,9 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		fs.Feed(ev)
 		c.mu.Lock()
 		w := c.st.apply(ev, h.now())
+		if c.st.state != c.st.written.state {
+			moved = true
+		}
 		c.mu.Unlock()
 		merged = mergeWrites(merged, w)
 	}
@@ -747,14 +756,28 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 	// The four state options are diffed against what was last written, and
 	// written in full on the first state-bearing apply after a hello, after a
 	// failed write, and on a bye. A manual state therefore lasts until the
-	// derived state next changes: nothing re-asserts an unchanged value.
+	// derived state next changes: nothing re-asserts an unchanged value. A
+	// change that came back within the batch (a whole turn in one POST) is
+	// a change, and writes the state.
+	//
+	// After a 0.3.0 mod's hello nothing is written until its level: the
+	// fold rebuilt from part of a snapshot is not the session's state.
 	c.mu.Lock()
 	full := bye || c.fullNext || (state && c.fullOnState)
+	hold := newMod && c.fullOnState && !state && !bye
 	if state {
 		c.fullOnState = false
 	}
 	opts := c.st.opts()
-	flush := c.st.flush(full)
+	var flush stampWrite
+	if !hold {
+		flush = c.st.flush(full)
+		if moved && opts.state != "" {
+			flush.put(sessionio.OptionState, opts.state)
+		}
+	} else {
+		opts = c.st.written
+	}
 	c.mu.Unlock()
 	merged = mergeWrites(merged, flush)
 	merged.from, merged.to = flush.from, flush.to
@@ -924,9 +947,23 @@ func (c *modConn) write(w stampWrite) bool {
 
 // setAll stamps every option, stopping at the first failure: a session that
 // cannot take one cannot take the rest. It returns the name that failed.
+//
+// @claude_state goes last. The push sender sends its "finished" push when it
+// reads done, with @claude_reply as the body, so a state written before the
+// reply beside it could carry the previous turn's reply.
 func (c *modConn) setAll(user, session string, set map[string]string) (string, error) {
-	for name, v := range set {
-		if err := c.hub.stamp.SetOption(user, session, name, v); err != nil {
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if (names[i] == sessionio.OptionState) != (names[j] == sessionio.OptionState) {
+			return names[j] == sessionio.OptionState
+		}
+		return names[i] < names[j]
+	})
+	for _, name := range names {
+		if err := c.hub.stamp.SetOption(user, session, name, set[name]); err != nil {
 			return name, err
 		}
 	}
@@ -1005,9 +1042,16 @@ func (h *modHub) handlePoll() http.HandlerFunc {
 		for {
 			c.mu.Lock()
 			// A newer hello replaced this token: the module that holds it was
-			// reloaded away, and a command handed to it would never run.
+			// reloaded away, and a command handed to it would never run. The
+			// wake this poll may have taken was meant for the poll that holds
+			// the current token, so it is passed on.
 			if c.token != token {
+				wake := c.wake
 				c.mu.Unlock()
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
 				http.Error(w, "superseded by a newer hello", http.StatusConflict)
 				return
 			}

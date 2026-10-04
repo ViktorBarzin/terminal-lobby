@@ -80,6 +80,13 @@ export class Link {
     if (this.#started) this.#schedule(this.#gap());
   }
 
+  // The conversation ended (/clear, resume): what a snapshot keeps (acks, the
+  // summary, command failures) belongs to it and not to the next one, whose
+  // hello asks for a snapshot that drops everything else.
+  forgetConversation(): void {
+    this.#queue.dropTypes(KEPT_BY_SNAPSHOT);
+  }
+
   // Forget the token and say hello again, e.g. after the tmux session was
   // renamed or the conversation was cleared.
   rehello(): void {
@@ -153,24 +160,26 @@ export class Link {
       this.#retryAt = this.#deps.now() + backoffMs(this.#helloFails++, this.#deps.random);
       return;
     }
-    this.#helloFails = 0;
-    this.#retryAt = 0;
     // A rehello asked for while this one was in flight: the body went out
     // with what was true before it (the old session name, no transcript yet),
     // so the token is dropped and #pump says hello again. Keeping it lost the
     // second hello, and with it the transcript stamp, for 3 of 8 conversations
-    // created together on 2026-10-02.
+    // created together on 2026-10-02. Asked again below, after the snapshot is
+    // read: the first row lands, or the session is renamed, during that read too.
     if (this.#helloAsks !== asked) return;
     const resent: ModEvent[] = [];
-    if (body.history === true) {
-      // Dropped before the snapshot is read, so an event queued while it is
-      // read follows it rather than being lost with the rest.
-      this.#queue.keepOnly(KEPT_BY_SNAPSHOT);
+    // What is queued now is in the snapshot about to be read, and goes once it
+    // has been; anything queued while it is read follows it.
+    const covered = body.history === true ? this.#queue.snapshot() : null;
+    if (covered) {
       try {
         const h = await this.#deps.history();
         resent.push(...historyEvents(this.#deps.now(), h.messages, h.running));
       } catch {
-        // No history to offer; the server keeps owing one and asks again.
+        // The server asks for a history only in a hello's reply, so a read
+        // that failed is a failed hello: say it again later, queue untouched.
+        this.#retryAt = this.#deps.now() + backoffMs(this.#helloFails++, this.#deps.random);
+        return;
       }
     }
     // Read after the history, so a dialog answered meanwhile is not resent.
@@ -184,6 +193,10 @@ export class Link {
     } catch {
       // The next level, at most 30 s away, says it instead.
     }
+    if (this.#helloAsks !== asked) return;
+    this.#helloFails = 0;
+    this.#retryAt = 0;
+    if (covered) this.#queue.drop(covered, KEPT_BY_SNAPSHOT);
     if (resent.length > 0) this.#queue.prepend(...resent);
     this.#token = body.token;
     this.#wakeToken();

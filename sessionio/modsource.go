@@ -125,6 +125,13 @@ type ModEvent struct {
 	// Asks are the tool ids of the dialogs open now, oldest first. Their
 	// bodies came in earlier ask, plan and permission events.
 	Asks []string `json:"asks,omitempty"`
+	// Reply and Notice are a level's newest main-thread reply (the answer of
+	// the last turn that ended with one) and newest PushNotification, each
+	// with the t of the event that first carried it; absent when the mod has
+	// none. A turn that ended while session-events was down has its reply
+	// only here.
+	Reply  *ModNote `json:"reply,omitempty"`
+	Notice *ModNote `json:"notice,omitempty"`
 	// More is set on every chunk of a long history but the last (ADR-0036).
 	More bool `json:"more,omitempty"`
 
@@ -134,6 +141,12 @@ type ModEvent struct {
 	Error string `json:"error,omitempty"`
 	// Op is the failed command's op.
 	Op string `json:"op,omitempty"`
+}
+
+// ModNote is a text and the time the mod first saw it, in ms.
+type ModNote struct {
+	T    int64  `json:"t"`
+	Text string `json:"text"`
 }
 
 // ModMessage is a stored row's message: how the transcript files it and its
@@ -179,6 +192,14 @@ const (
 // waiting on its own background work included.
 func (s AgentStatus) Over() bool {
 	return s == AgentStatusCompleted || s == AgentStatusFailed || s == AgentStatusKilled
+}
+
+// Working reports whether the agent's loop has work in hand: pending (not
+// started yet), running, or waiting on background work of its own. An idle
+// agent sits between turns until a message wakes it, which is also how a
+// finished subagent that can be resumed may be listed.
+func (s AgentStatus) Working() bool {
+	return s == AgentStatusPending || s == AgentStatusRunning || s == AgentStatusWaiting
 }
 
 // ModHistoryMessage is one message as $.session.messages() returns it.

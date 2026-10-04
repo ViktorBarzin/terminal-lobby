@@ -71,10 +71,21 @@ export class EventQueue {
     this.#items.unshift(...batch);
   }
 
-  // Drops every queued event whose type is not in `types`: what a snapshot
-  // about to be sent already says. Not counted as dropped.
-  keepOnly(types: ReadonlySet<ModEventType>): void {
-    this.#items = this.#items.filter((e) => types.has(e.type));
+  // The events queued now, to drop once a snapshot read after this moment
+  // has been taken (drop).
+  snapshot(): ReadonlySet<ModEvent> {
+    return new Set(this.#items);
+  }
+
+  // Drops the events of `covered` still queued, except those whose type is in
+  // `keep`: what a snapshot already says. Not counted as dropped.
+  drop(covered: ReadonlySet<ModEvent>, keep: ReadonlySet<ModEventType>): void {
+    this.#items = this.#items.filter((e) => !covered.has(e) || keep.has(e.type));
+  }
+
+  // Drops every queued event of these types. Not counted as dropped.
+  dropTypes(types: ReadonlySet<ModEventType>): void {
+    this.#items = this.#items.filter((e) => !types.has(e.type));
   }
 
   // The next batch, oldest first: at most `limit` events and, past the first,

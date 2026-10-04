@@ -7,5 +7,7 @@
   "agents": [
     {"id": "a1b2c3d4e5f6", "type": "general-purpose", "status": "running", "name": "builder", "description": "Run the build"}
   ],
-  "asks": ["toolu_02", "toolu_04"]
+  "asks": ["toolu_02", "toolu_04"],
+  "reply": {"t": 1790899990000, "text": "Two files: a and b."},
+  "notice": {"t": 1790899980000, "text": "build is green"}
 }

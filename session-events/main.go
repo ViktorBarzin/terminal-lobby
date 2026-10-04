@@ -57,6 +57,33 @@ func main() {
 		return
 	}
 
+	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
+		if _, port, err := net.SplitHostPort(*addr); err == nil {
+			*addr = net.JoinHostPort(b, port)
+		}
+	}
+	// The socket comes first. systemd passes it as fd 3, which stays open
+	// across exec until listen takes it over, so a child started before this
+	// line (tmux, a privop reader running as another user) would inherit the
+	// listening socket.
+	ln, inherited, err := listen(*addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	from := "bound here"
+	if inherited {
+		from = "held by systemd"
+		host, _, _ := net.SplitHostPort(*addr)
+		allow, err := bindAllows(host)
+		if err != nil {
+			log.Fatalf("TL_BIND %q: %v", host, err)
+		}
+		if allow != nil {
+			ln = boundListener{Listener: ln, allow: allow}
+			from += ", narrowed to " + host
+		}
+	}
+
 	self, err := user.Current()
 	if err != nil {
 		log.Fatalf("cannot determine current user: %v", err)
@@ -387,32 +414,10 @@ func main() {
 	root.HandleFunc("POST /hooks/claimed", localhostOnly(peerOwnsClaim(handleClaimed(rg))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
-	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
-		if _, port, err := net.SplitHostPort(*addr); err == nil {
-			*addr = net.JoinHostPort(b, port)
-		}
-	}
 	actAsGate.Configure("session-events", *addr)
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	go timing.Run(ctx.Done())
-	ln, inherited, err := listen(*addr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	from := "bound here"
-	if inherited {
-		from = "held by systemd"
-		host, _, _ := net.SplitHostPort(*addr)
-		allow, err := bindAllows(host)
-		if err != nil {
-			log.Fatalf("TL_BIND %q: %v", host, err)
-		}
-		if allow != nil {
-			ln = boundListener{Listener: ln, allow: allow}
-			from += ", narrowed to " + host
-		}
-	}
 	srv := &http.Server{Handler: timing.Wrap(root)}
 	log.Printf("session-events listening on %s (%s; usermap=%s, homeBase=%s)", ln.Addr(), from, *mapPath, *homeBase)
 	if err := serveUntil(ctx, srv, ln, shutdownGrace); err != nil {

@@ -135,7 +135,7 @@ test('a prepended level gives way to a newer one already queued', () => {
   assert.deepEqual(got.map((e) => `${e.type}@${e.t}`), ['history@0', 'level@9']);
 });
 
-test('keepOnly drops what a snapshot covers and keeps acks in order, uncounted', () => {
+test('drop removes what a snapshot covers, keeps acks in order and what came after, uncounted', () => {
   const q = new EventQueue();
   q.push(row('a', 1));
   q.push(ack('c1', 2));
@@ -143,7 +143,9 @@ test('keepOnly drops what a snapshot covers and keeps acks in order, uncounted',
   q.push({ type: 'summary', t: 4, text: 'Title' });
   q.push({ type: 'command_failed', t: 5, id: 'c2', op: 'prompt', error: 'dropped: no' });
   q.push(level());
-  q.keepOnly(new Set(['ack', 'summary', 'command_failed']));
-  assert.deepEqual(q.take().map((e) => e.type), ['ack', 'summary', 'command_failed']);
+  const covered = q.snapshot();
+  q.push(row('later', 6));
+  q.drop(covered, new Set(['ack', 'summary', 'command_failed']));
+  assert.deepEqual(q.take().map(label), ['ack', 'summary', 'command_failed', 'row:later']);
   assert.equal(q.dropped, 0);
 });

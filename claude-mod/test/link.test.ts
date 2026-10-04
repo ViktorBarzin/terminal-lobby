@@ -4,7 +4,7 @@ import { Link } from '../hooks/lib/link.ts';
 import type { LinkDeps, Reply } from '../hooks/lib/link.ts';
 import { Pending } from '../hooks/lib/pending.ts';
 import type { HelloBody } from '../hooks/lib/wire.ts';
-import { ack, ask, level, permission, row } from './events.ts';
+import { ack, ask, level, permission, row, turnEnd } from './events.ts';
 
 // A manual clock: timers and sleeps fire only when the test advances time.
 class FakeClock {
@@ -495,6 +495,111 @@ test('a dialog closed before the hello is not resent', async () => {
   link.send(row('a'));
   link.start();
   await clock.advance(100);
+  const events = (server.of('events')[0]?.body as { events: { type: string }[] }).events;
+  assert.deepEqual(events.map((e) => e.type), ['row']);
+});
+
+// Refute finding 3: a rehello asked while the snapshot is read (the first row
+// landing, a rename) must not be overwritten by the token of the hello that
+// was already answered; that lost the transcript stamp.
+test('a rehello asked while the snapshot is read sends another hello', async () => {
+  let releaseHistory!: () => void;
+  const { clock, server, link } = setup({
+    history: () => new Promise((resolve) => { releaseHistory = () => resolve({ messages: [], running: false }); }),
+  });
+  server.replies.hello = [{ status: 200, body: { token: 'tok1', history: true } }];
+  link.start();
+  await clock.advance(10);
+  assert.equal(server.of('hello').length, 1);
+  link.rehello();
+  releaseHistory();
+  await clock.advance(5000);
+  assert.equal(server.of('hello').length, 2, 'the rehello was swallowed');
+});
+
+test('a rehello asked while the level is read sends another hello', async () => {
+  let releaseLevel!: () => void;
+  const { clock, server, link } = setup({
+    level: () => new Promise((resolve) => { releaseLevel = () => resolve(level()); }),
+  });
+  link.start();
+  await clock.advance(10);
+  link.rehello();
+  releaseLevel();
+  await clock.advance(5000);
+  assert.equal(server.of('hello').length, 2);
+});
+
+// Refute finding 5: the server asks for a history only in a hello reply, so a
+// read that fails must leave the hello failed, and nothing queued is dropped.
+test('a history read that fails is a failed hello: retried, and the queue is kept', async () => {
+  let fail = true;
+  const { clock, server, link } = setup({
+    history: async () => {
+      if (fail) throw new Error('messages failed');
+      return { messages: [], running: false };
+    },
+  });
+  server.defaults.hello = { status: 200, body: { token: 'tok1', history: true } };
+  link.send(row('kept'));
+  link.start();
+  await clock.advance(10);
+  assert.equal(server.of('hello').length, 1);
+  assert.equal(server.of('events').length, 0, 'no events without a snapshot');
+  fail = false;
+  await clock.advance(1000);
+  assert.equal(server.of('hello').length, 2, 'the hello is said again');
+  const events = (server.of('events')[0]?.body as { events: { type: string }[] }).events;
+  assert.deepEqual(events.map((e) => e.type), ['history']);
+});
+
+test('events queued while the snapshot is read follow it, and only what was queued before is dropped', async () => {
+  let releaseHistory!: () => void;
+  const { clock, server, link } = setup({
+    history: () => new Promise((resolve) => { releaseHistory = () => resolve({ messages: [], running: false }); }),
+  });
+  server.replies.hello = [{ status: 200, body: { token: 'tok1', history: true } }];
+  link.send(row('before'));
+  link.start();
+  await clock.advance(10);
+  link.send(row('during'));
+  releaseHistory();
+  await clock.advance(100);
+  const events = (server.of('events')[0]?.body as { events: { type: string; uuid?: string }[] }).events;
+  assert.deepEqual(events.map((e) => e.uuid ?? e.type), ['history', 'during']);
+});
+
+// Refute finding 1: the snapshot drops a queued turn_end, so what it wrote
+// (@claude_reply, the finished push's text) must come with the level instead.
+test('a turn_end queued across a restart is dropped by the snapshot; the level is what carries its reply', async () => {
+  const lv = level({ reply: { t: 5, text: 'All done: deployed v2' } });
+  const { clock, server, link } = setup({ level: async () => lv });
+  server.replies.events = [{ status: 409, body: null }];
+  server.replies.hello = [
+    { status: 200, body: { token: 'tok1', history: false } },
+    { status: 200, body: { token: 'tok2', history: true } },
+  ];
+  link.start();
+  await clock.advance(10);
+  link.send({ ...turnEnd('T9'), answer: 'All done: deployed v2' });
+  await clock.advance(5000);
+  const posted = server.of('events').slice(1).flatMap((c) => (c.body as { events: { type: string }[] }).events);
+  assert.deepEqual(posted.map((e) => e.type), ['history', 'level']);
+  assert.deepEqual(posted[1], lv);
+});
+
+// Refute NIT 8: what survives a snapshot must not cross into the next conversation.
+test('forgetting the conversation drops the queued acks, summary and failures too', async () => {
+  const { clock, server, link } = setup();
+  server.defaults.hello = new Error('down');
+  link.start();
+  link.send(ack('c1'));
+  link.send({ type: 'summary', t: 0, text: 'Old title' });
+  link.send({ type: 'command_failed', t: 0, id: 'c2', op: 'prompt', error: 'x' });
+  link.send(row('r'));
+  link.forgetConversation();
+  server.defaults.hello = { status: 200, body: { token: 'tok1', history: false } };
+  await clock.advance(2000);
   const events = (server.of('events')[0]?.body as { events: { type: string }[] }).events;
   assert.deepEqual(events.map((e) => e.type), ['row']);
 });

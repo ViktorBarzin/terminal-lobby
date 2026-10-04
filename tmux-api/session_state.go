@@ -17,9 +17,11 @@ package main
 // them or they would disagree about one fact. Writing the option itself also
 // gives the lifetime for free: since the lobby's mod took over the writing
 // (ADR-0036), session-events writes an option only when the state it derives
-// from Claude's events changes from what it last wrote, so a correction lasts
-// until the derived state next changes, which is what was asked for. Nothing
-// re-asserts an unchanged value, the mod's periodic snapshot included.
+// from Claude's events changes from what it last wrote, a whole turn that
+// came and went in one batch included. A correction lasts until then, which
+// is what was asked for, or until the session's mod connects again: after a
+// session-events restart or a reload of the mod, the first snapshot writes
+// every state option in full. The mod's periodic snapshot re-asserts nothing.
 //
 // Two marks travel with the write, because a state alone does not survive
 // contact with them:

@@ -526,3 +526,298 @@ func TestAFailedCommandShowsInTheTextView(t *testing.T) {
 		t.Fatal("a failed command wrote options")
 	}
 }
+
+func replyOf(o sessionio.Options) string {
+	v, _ := o.Option("wizard", "demo", "@claude_reply")
+	return v
+}
+
+// A turn that ended while session-events was restarting has its reply only in
+// the next level. It is written when its time is newer than the reply last
+// written on this connection, and a level repeating it writes nothing, or the
+// push sender would take the new stamp for a new reply.
+func TestALevelsReplyIsWrittenOnlyWhenItIsNewer(t *testing.T) {
+	rg, opts := writableRegistry(t, map[string]string{"@claude_reply": "1790899000 the turn before"})
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
+	c := rg.mods.conn("wizard", "demo")
+	level := func(replyT int64, text string) sessionio.ModEvent {
+		return sessionio.ModEvent{Type: sessionio.ModLevelEvent,
+			Reply:  &sessionio.ModNote{T: replyT, Text: text},
+			Notice: &sessionio.ModNote{T: 1790899980000, Text: "build is green"}}
+	}
+	c.apply([]sessionio.ModEvent{idleHistory(), level(1790899990000, "missed during the restart")})
+	if got := replyOf(opts); got != "1790899990 missed during the restart" {
+		t.Fatalf("@claude_reply = %q, want the level's reply", got)
+	}
+	if got, _ := opts.Option("wizard", "demo", "@claude_notice"); got != "1790899980 build is green" {
+		t.Fatalf("@claude_notice = %q, want the level's notice", got)
+	}
+	// Repeated, it writes nothing, even over a value someone else wrote.
+	_ = opts.FakeOptions.SetOption("wizard", "demo", "@claude_reply", "x")
+	sets := opts.setCount()
+	c.apply([]sessionio.ModEvent{level(1790899990000, "missed during the restart")})
+	if replyOf(opts) != "x" || opts.setCount() != sets {
+		t.Fatal("a level repeating the same reply wrote it again")
+	}
+	// The turn_end that carried a reply and the level after it name the same
+	// time: one write, stamped with the mod's time.
+	c.apply([]sessionio.ModEvent{promptRow(), {Type: sessionio.ModTurnEndEvent, T: 1790900100000, Answer: "next answer"}})
+	if got := replyOf(opts); got != "1790900100 next answer" {
+		t.Fatalf("@claude_reply = %q after turn_end", got)
+	}
+	sets = opts.setCount()
+	c.apply([]sessionio.ModEvent{level(1790900100000, "next answer")})
+	if opts.setCount() != sets {
+		t.Fatal("the level after a turn_end wrote its reply a second time")
+	}
+	// An older reply never replaces a newer one.
+	c.apply([]sessionio.ModEvent{level(1790899990000, "missed during the restart")})
+	if got := replyOf(opts); got != "1790900100 next answer" {
+		t.Fatalf("@claude_reply = %q, an older level's reply won", got)
+	}
+}
+
+// A reply that failed to write is written by the next apply.
+func TestAReplyThatFailedToWriteIsWrittenNext(t *testing.T) {
+	rg, opts := writableRegistry(t, nil)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{idleHistory(), promptRow()})
+	opts.failNext(10)
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent, T: 1790900100000, Answer: "lost?"}})
+	opts.failNext(0)
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModDeltaEvent, Kind: "text", Text: "x"}})
+	if got := replyOf(opts); got != "1790900100 lost?" {
+		t.Fatalf("@claude_reply = %q", got)
+	}
+}
+
+// An old mod sends no level: its turn_end and PushNotification rows write the
+// reply and the notice, once each, a resent batch included.
+func TestAnOldModsReplyAndNoticeAreWrittenOnce(t *testing.T) {
+	rg, opts := writableRegistry(t, nil)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Mod: "0.2.0"})
+	c := rg.mods.conn("wizard", "demo")
+	push := sessionio.ModEvent{Type: sessionio.ModRowEvent, T: 1790900050000, Door: "response", Message: &sessionio.ModMessage{
+		Type: "assistant", Role: "assistant",
+		Content: json.RawMessage(`[{"type":"tool_use","id":"toolu_n","name":"PushNotification","input":{"message":"build is green"}}]`),
+	}}
+	end := sessionio.ModEvent{Type: sessionio.ModTurnEndEvent, T: 1790900060000, Answer: "done"}
+	batch := []sessionio.ModEvent{idleHistory(), promptRow(), push, end}
+	c.apply(batch)
+	if got := replyOf(opts); got != "1790900060 done" {
+		t.Fatalf("@claude_reply = %q", got)
+	}
+	if got, _ := opts.Option("wizard", "demo", "@claude_notice"); got != "1790900050 build is green" {
+		t.Fatalf("@claude_notice = %q", got)
+	}
+	_ = opts.FakeOptions.SetOption("wizard", "demo", "@claude_notice", "seen")
+	c.apply(batch[1:]) // the mod resends a batch whose response was lost
+	if got, _ := opts.Option("wizard", "demo", "@claude_notice"); got != "seen" {
+		t.Fatalf("a resent PushNotification row rewrote the notice: %q", got)
+	}
+}
+
+// orderedOptions records the order options are written in.
+type orderedOptions struct {
+	*siotest.FakeOptions
+	mu    sync.Mutex
+	order []string
+}
+
+func (o *orderedOptions) SetOption(osUser, session, name, value string) error {
+	o.mu.Lock()
+	o.order = append(o.order, name)
+	o.mu.Unlock()
+	return o.FakeOptions.SetOption(osUser, session, name, value)
+}
+
+// The push sender's "finished" push reads @claude_reply when it sees done, so
+// the reply is on the session before the state that triggers the push.
+func TestTheStateIsWrittenAfterTheReplyBesideIt(t *testing.T) {
+	rg, fake := newTestRegistry(t, "wizard/demo")
+	opts := &orderedOptions{FakeOptions: fake}
+	rg.mods.stamp = opts
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	for i := 0; i < 20; i++ {
+		c.apply([]sessionio.ModEvent{promptRow()})
+		opts.mu.Lock()
+		opts.order = nil
+		opts.mu.Unlock()
+		c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent, T: int64(1790900000000 + i*1000), Answer: "done " + strconv.Itoa(i)}})
+		opts.mu.Lock()
+		order := append([]string(nil), opts.order...)
+		opts.mu.Unlock()
+		if len(order) == 0 || order[len(order)-1] != sessionio.OptionState {
+			t.Fatalf("write order %v, want @claude_state last", order)
+		}
+	}
+}
+
+// Refute #3: a whole turn in one batch (a prompt and its immediate Stop, or a
+// turn that ended while a POST was in flight) leaves the fold where it
+// started, but the system did have something new to say: a manual state from
+// before the turn does not outlive it.
+func TestATurnInsideOneBatchStillWritesTheState(t *testing.T) {
+	rg, opts := writableRegistry(t, nil)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{idleHistory(), {Type: sessionio.ModLevelEvent}})
+	_ = opts.FakeOptions.SetOption("wizard", "demo", sessionio.OptionState, "awaiting") // a person marks it
+	c.apply([]sessionio.ModEvent{promptRow(), {Type: sessionio.ModTurnStartEvent},
+		{Type: sessionio.ModTurnEndEvent, Answer: "hi"}, {Type: sessionio.ModLevelEvent}})
+	if st, _ := opts.Option("wizard", "demo", sessionio.OptionState); st != "done" {
+		t.Fatalf("state = %q after a whole turn in one batch, want done", st)
+	}
+}
+
+// Refute #4: a 0.3.0 snapshot split over two batches (the history's final
+// chunk filling one, the dialogs and the level in the next) writes nothing
+// until its level, so a session with a dialog open does not read done in
+// between. An old mod sends no level, and its final chunk still writes.
+func TestANewModsSnapshotWritesNothingBeforeItsLevel(t *testing.T) {
+	stale := map[string]string{sessionio.OptionState: "awaiting", sessionio.OptionAsk: "toolu_a"}
+	rg, opts := writableRegistry(t, stale)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
+	c := rg.mods.conn("wizard", "demo")
+	before := options(opts)
+	c.apply([]sessionio.ModEvent{idleHistory()})
+	if mid := options(opts); mid != before {
+		t.Fatalf("between the batches: %s, want it untouched (%s)", mid, before)
+	}
+	c.apply([]sessionio.ModEvent{askEvent("toolu_a", "Which?"), {Type: sessionio.ModLevelEvent, Asks: []string{"toolu_a"}}})
+	if got := options(opts); got != "@claude_state=awaiting @claude_ask=toolu_a @claude_tool= @claude_bg=" {
+		t.Fatalf("after the level: %s", got)
+	}
+}
+
+// Refute #2: a turn whose turn_end the snapshot dropped has its reply in the
+// level, and the activity stamp moves to when that turn ended.
+func TestALevelsReplyStampsTheLastActivity(t *testing.T) {
+	rg, opts := writableRegistry(t, map[string]string{"@last_activity": "1790899000"})
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
+	c := rg.mods.conn("wizard", "demo")
+	reply := &sessionio.ModNote{T: 1790899990000, Text: "missed during the restart"}
+	c.apply([]sessionio.ModEvent{idleHistory(), {Type: sessionio.ModLevelEvent, Reply: reply}})
+	if got, _ := opts.Option("wizard", "demo", "@last_activity"); got != "1790899990" {
+		t.Fatalf("@last_activity = %q, want the reply's time", got)
+	}
+	// Repeated, it writes nothing.
+	_ = opts.FakeOptions.SetOption("wizard", "demo", "@last_activity", "x")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModLevelEvent, Reply: reply}})
+	if got, _ := opts.Option("wizard", "demo", "@last_activity"); got != "x" {
+		t.Fatalf("a repeated reply stamped the activity again: %q", got)
+	}
+}
+
+// While a turn runs, the newest activity is its prompt, which the level does
+// not carry: the previous turn's reply must not move the stamp back.
+func TestALevelsReplyLeavesTheActivityOfARunningTurn(t *testing.T) {
+	rg, opts := writableRegistry(t, map[string]string{"@last_activity": "1790900500"})
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModLevelEvent, Running: true,
+		Reply: &sessionio.ModNote{T: 1790899990000, Text: "the turn before"}}})
+	if got, _ := opts.Option("wizard", "demo", "@last_activity"); got != "1790900500" {
+		t.Fatalf("@last_activity = %q, want the running turn's left alone", got)
+	}
+}
+
+// Refute #7: after a hello, the old module's poll may still be held. A
+// command's wake must reach the new poll, not die with the stale one.
+func TestACommandReachesTheNewPollPastAStaleOne(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	old, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	held := func() int {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.polls
+	}
+	poll := func(tok string, out chan<- *httptest.ResponseRecorder) {
+		rec := httptest.NewRecorder()
+		rg.mods.handlePoll()(rec, httptest.NewRequest("GET", "/mod/v1/poll?token="+tok, nil))
+		out <- rec
+	}
+	stale, fresh := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
+	go poll(old, stale)
+	for held() < 1 {
+		time.Sleep(time.Millisecond)
+	}
+	tok, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	go poll(tok, fresh)
+	for held() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _, _ = c.send(ctx, modCommand{Op: "abort"}) }()
+	select {
+	case rec := <-fresh:
+		if !strings.Contains(rec.Body.String(), "abort") {
+			t.Fatalf("the new poll answered %d %s", rec.Code, rec.Body.String())
+		}
+	case <-ctx.Done():
+		t.Fatal("the command never reached the new poll")
+	}
+	if rec := <-stale; rec.Code != http.StatusConflict {
+		t.Fatalf("the stale poll answered %d", rec.Code)
+	}
+}
+
+// Applies, hellos that flip the module instance, and dialog readers at once:
+// no race, no deadlock (ported from the refute probe).
+func TestApplyHelloAndReadersRunTogether(t *testing.T) {
+	rg, _ := writableRegistry(t, nil)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				c := rg.mods.conn("wizard", "demo")
+				if c == nil {
+					continue
+				}
+				switch g {
+				case 0:
+					c.apply([]sessionio.ModEvent{promptRow(), askEvent("toolu_a", "Q?"), {Type: sessionio.ModLevelEvent, Asks: []string{"toolu_a"}}})
+				case 1:
+					inst := "i1"
+					if i%2 == 0 {
+						inst = "i2"
+					}
+					rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: inst})
+				case 2:
+					_ = c.dialogNow()
+					_ = c.openDialogs()
+				case 3:
+					c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}, {Type: sessionio.ModSettledEvent, ToolID: "toolu_a"}})
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+}
+
+// Refute #9: systemd's socket is fd 3 and stays open across exec until listen
+// takes it, so main binds before it builds anything that runs a child.
+func TestMainTakesTheSocketBeforeAnythingCanStartAChild(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	body = body[strings.Index(body, "func main()"):]
+	at := strings.Index(body, "listen(*addr)")
+	if at < 0 {
+		t.Fatal("main does not call listen")
+	}
+	for _, spawner := range []string{"NewInjector(", "exec.Command", "go "} {
+		if i := strings.Index(body, spawner); i >= 0 && i < at {
+			t.Errorf("main reaches %q before listen", spawner)
+		}
+	}
+}

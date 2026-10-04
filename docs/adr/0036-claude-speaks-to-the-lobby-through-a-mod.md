@@ -208,6 +208,72 @@ agents are read-only by choice, though the engine would resume one. A refused
 `ack` names the agent's state first (`finished: …`, `not-addressable: …`),
 which session-events answers 409, and anything else 502.
 
+## Wire version 3 (2026-10-04, mod 0.3.0)
+
+A review of the mod after a working session showed as ready found that the
+status was folded from edges held in session-events' memory, which restarts on
+every deploy (9 times in 19 hours on 10-03/04). Version 3 adds a snapshot and
+changes how options are written. Mods 0.1.0 and 0.2.0 keep working on the
+version 1 rules above and are upgraded only by a restart.
+
+- **hello** adds `instance` (random per module load), `dropped` (events the
+  queue has shed since it loaded) and the ops `level` and `decide-feedback`. The
+  ops `model` and `history` are gone; session-events never sent them. A hello
+  from a new `instance` for a known sid is a new module: its fold starts over
+  and history is owed. For a 0.3.0 mod, `history` in the answer stays true on
+  every hello until a final history chunk has been applied.
+- Before saying hello, the mod checks that every listening socket on the
+  server's port is owned by root or by the `User=` of
+  `/etc/systemd/system/session-events.service`, and backs off otherwise. The
+  service user is trusted so that a rollback to a release without the socket
+  unit, where session-events binds the port itself, does not silence every
+  running 0.3.0 mod. systemd now holds
+  port 7685 through `session-events.socket`, so the port is never unbound
+  during a restart and any account that took it could not receive hellos or
+  send commands.
+- **level** `{running, compacting, tool, agents, asks, reply?, notice?}` is the
+  mod's whole view of the session. `reply` and `notice` are `{t, text}`: the
+  last main-thread answer and PushNotification, so a turn that ends while
+  session-events restarts still gets its reply written. session-events writes
+  them only when `t` is newer than the one it last wrote, and writes
+  `@claude_state` after them, so a "done" push carries this turn's reply. It goes out after every hello (behind history and the open
+  dialogs), after every turn edge, settled dialog, Agent call, compaction start
+  and end, and every 30 s. The queue keeps only the newest one and never sheds
+  it. session-events replaces its fold with it wholesale. The mod keeps the turn
+  and open dialogs in `$.state`, so a reload does not forget them, and re-learns
+  the turn from `turn.step`.
+- **Writing options.** The four state options are diffed against what was last
+  written successfully, and written in full on the first state-bearing event
+  after each hello, after a failed write, and on `bye`. For an old mod that
+  event is its last history chunk. A state set by hand in the lobby lasts until
+  the derived state next changes; an unchanged level writes nothing.
+- When a hello answers `history: true`, the mod drops every queued event except
+  `ack`, `summary` and `command_failed`, since the history, the open dialogs and
+  the level restore the rest. Before this, the backlog replayed after the
+  history and the Text view showed the conversation's tail twice.
+- **bye** carries `sid`; a bye for another conversation is ignored, which
+  covers `/clear` while the old id is still answered for about 500 ms.
+  `/clear` and `/resume` both keep the link and say hello again.
+- **command_failed** `{id, op, error}` reports a prompt dropped or rejected
+  after its ack, or a slash command that failed.
+- **decide** carries `feedback` for mods that list `decide-feedback`. The mod
+  returns it as the ExitPlanMode result's `context`, so the words reach the
+  model in the same turn as the approval. Older mods get the approval and then
+  the words as a prompt, as before.
+- Esc on the mod's own dialog hands over to Claude's native dialog without a
+  `settled`, so the session stays awaiting until the tool's result or the turn
+  end. The web still cannot answer the native dialog.
+- Workflow runs are tracked from the Workflow call's `taskId` to the task
+  notification that names it. Measured on a scratch session (2026-10-04):
+  `classic.Stop` and `classic.SubagentStop` never reach a mod, workflows never
+  appear in `$.agent.list()`, and `turn.start` fires for the main loop only.
+- A subagent or workflow counts as background work while `pending`, `running`
+  or `waiting` (a finished one may be listed `idle`), and a teammate while its
+  loop is active.
+- Golden JSON for every event is in `testdata/mod-wire/`. The Go side decodes
+  each file with unknown fields refused, and the mod's tests check its events
+  carry the same keys.
+
 ## Consequences
 - `claude-tmux-state` and `claude-se-hook` leave Claude's managed hooks, except
   SessionEnd, which keeps `claude-tmux-state clear`: it records a deliberate
@@ -237,7 +303,8 @@ which session-events answers 409, and anything else 502.
   were handed out but never acked go to the module that says hello next. The
   mod ignores a command id it has already run.
 - Pressing Esc on the mod's own dialog lets Claude draw its native prompt, which
-  the web cannot answer; the card goes away and the terminal answers it.
+  the web cannot answer; since wire version 3 the session stays awaiting until
+  the terminal answers it.
 - agent-api still reads and answers dialogs through the pane, so sessionio keeps
   the pane parsers and key drivers for it. On a session with the mod it meets
   the mod's Allow / Deny or plan dialog, which is drawn as a question, and can

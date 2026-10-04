@@ -17,7 +17,7 @@ import {
 import { type CommandDeps, OPS, runCommand } from './lib/commands.ts';
 import { endSession } from './lib/lifecycle.ts';
 import { portOf, trustedListener } from './lib/listener.ts';
-import { type EventBody, type LevelEvent, MOD_VERSION, toAgents } from './lib/wire.ts';
+import { type EventBody, type LevelEvent, type ModEvent, MOD_VERSION, toAgents } from './lib/wire.ts';
 import {
   isOwnDialog, planApprovalContext, shapeDelta, shapeModel, shapePrompt, shapeResult, shapeRow, shapeTurnEnd,
   shapeTurnStart, transcriptPath,
@@ -46,7 +46,14 @@ let transcriptFile = async (): Promise<string> => '';
 const stamp = new TranscriptStamp();
 // Writes what `level` saves into $.state, in order; set once the link starts.
 let persist: (saved: TerminalLobbyLevel) => void = () => {};
+// Resolves once every write asked of $.state so far has landed. The turn hooks
+// await it: the engine reloads a mod at a turn's end, and a reload that
+// cancelled a pending write would restore the turn as still running.
+let saving: Promise<void> = Promise.resolve();
 const level = new Level((saved) => persist(saved));
+// Bumped when a conversation ends, so work it started (its summary) is not
+// reported as the next one's.
+let conversation = 0;
 // Sends a level now; set once the link starts.
 let sendLevel: () => void = () => {};
 // Web answers for dialogs on screen, keyed by tool_use_id.
@@ -64,9 +71,12 @@ let commandDeps: CommandDeps | null = null;
 
 const now = () => Date.now();
 
-function send(ev: EventBody): void {
+// Stamps an event with the time now, unless it carries its own: a level's
+// reply and notice repeat the t of the turn_end and row that carried them, and
+// the server writes again only when that t moves (session-events modstate.go).
+function send(ev: EventBody | ModEvent): void {
   try {
-    link?.send({ ...ev, t: now() });
+    link?.send({ t: now(), ...ev });
   } catch {
     // Reporting never gets in Claude's way.
   }
@@ -85,10 +95,11 @@ async function levelEvent($: EngineInterface): Promise<LevelEvent> {
 // Asks for a one-line summary of the conversation's first prompt and sends it
 // for the session's title. Claude Code writes its own only for a typed prompt.
 async function sendSummary($: EngineInterface, text: string): Promise<void> {
+  const asked = conversation;
   try {
     const r = await $.model.complete(summaryRequest(text));
     const title = r.isAnswered ? summaryFrom(r.text) : '';
-    if (title) send({ type: 'summary', text: title });
+    if (title && asked === conversation) send({ type: 'summary', text: title });
   } catch {
     // An untitled session keeps its prompt line in the lobby, as before.
   }
@@ -135,7 +146,6 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
   tmuxSession = await tmuxSessionName($, pane);
   transcriptFile = async () => transcriptPath(configDir, startCwd, await $.session.id());
 
-  let saving = Promise.resolve();
   persist = (saved) => {
     saving = saving.then(() => $.state.set(LEVEL_STATE, saved)).then(() => {}, () => {});
   };
@@ -256,6 +266,8 @@ export const register: Register = (on) => {
       bye: (reason, sid) => send({ type: 'bye', reason, sid }),
       drain: () => l.drain(DRAIN_MS),
       forget: () => {
+        conversation++;
+        l.forgetConversation();
         level.reset();
         summary.reset();
         planFeedback.clear();
@@ -281,8 +293,9 @@ export const register: Register = (on) => {
     const r = await next(e);
     if (link && r.message) {
       try {
-        level.rowSeen(e.agentId, r.message.content);
-        send(shapeRow(e, r, now()));
+        const t = now();
+        level.rowSeen(e.agentId, r.message.content, t);
+        send(shapeRow(e, r, t));
       } catch { /* never block a row */ }
       // The first stored row is what creates the transcript: say hello again
       // so session-events can stamp it while this first turn still runs.
@@ -303,6 +316,7 @@ export const register: Register = (on) => {
         level.turnStarted(e.turnId);
         send(shapeTurnStart(e, now()));
         sendLevel();
+        await saving;
         const pane = await $.env.get('TMUX_PANE');
         const name = pane ? await tmuxSessionName($, pane) : '';
         if (name && name !== tmuxSession) {
@@ -318,10 +332,13 @@ export const register: Register = (on) => {
     const r = await next(e);
     if (link) {
       try {
+        const t = now();
+        level.answered(e.agentId, e.answer, t);
         level.turnEnded(e.turnId, e.agentId);
         if (e.agentId === undefined) planFeedback.clear();
-        send(shapeTurnEnd(e, now()));
+        send(shapeTurnEnd(e, t));
         sendLevel();
+        await saving;
       } catch { /* reporting only */ }
     }
     return r;
@@ -375,7 +392,7 @@ export const register: Register = (on) => {
       if (takenDown) return ownDialog({ questions }, takenDown, () => next(e));
       if (isOwnDialog(questions)) return next(e);
     }
-    level.toolStarted(e.tool_use_id, e.agentId);
+    if (level.toolStarted(e.tool_use_id, e.agentId)) sendLevel();
     try {
       if (e.tool === 'AskUserQuestion' && e.agentId === undefined && dialogDeps) {
         try {

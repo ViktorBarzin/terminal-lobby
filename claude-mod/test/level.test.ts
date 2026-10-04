@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Level, WORKFLOW_QUIET_MS } from '../hooks/lib/level.ts';
+import { Level, WORKFLOW_MAX_MS, WORKFLOW_QUIET_MS } from '../hooks/lib/level.ts';
 import type { TerminalLobbyLevel } from '../hooks/state.d.ts';
 import { ask, permission } from './events.ts';
 
@@ -225,7 +225,7 @@ test('every change to what survives a reload is saved', () => {
   lv.compacting(true);
   assert.equal(saves.length, 3, 'tools and compaction are not kept across a reload');
   assert.deepEqual(saves.at(-1), {
-    mainTurn: 'T1', dialogs: [ask('q1')], native: [], workflows: [{ id: 'w1', name: 'release', description: 'Cut it' }],
+    mainTurn: 'T1', dialogs: [ask('q1')], native: [], workflows: [{ id: 'w1', launchedAt: 0, name: 'release', description: 'Cut it' }],
   });
   lv.stepped('T1', undefined, 0);
   assert.equal(saves.length, 3, 'a step of the known turn changes nothing');
@@ -251,4 +251,119 @@ test('restore ignores a value that is not a saved level', () => {
   lv.restore({ mainTurn: 5, dialogs: 'x' }, 0);
   assert.deepEqual(lv.level(lv.agents([]), 0).asks, []);
   assert.equal(lv.mainTurn, null);
+});
+
+// Refute finding 2. A dialog Claude draws itself is off the screen once the
+// loop it blocked moves on: the main loop's next step or tool call, or the
+// subagent's next step or turn end. The main turn ending says nothing about a
+// subagent's dialog.
+test('a restored subagent dialog leaves when that agent moves on, main idle', () => {
+  const { lv } = tracked();
+  lv.restore({ mainTurn: null, dialogs: [{ ...permission('toolu_X'), agentId: 'a1' }], native: [], workflows: [] }, 0);
+  lv.stepped('t-other', 'a2', 1000);
+  assert.deepEqual(snap(lv).asks, ['toolu_X'], 'another agent moving on says nothing');
+  lv.stepped('t-sub', 'a1', 1000);
+  assert.deepEqual(snap(lv).asks, []);
+});
+
+test('a restored subagent dialog leaves at that agent\'s turn end', () => {
+  const { lv } = tracked();
+  lv.restore({ mainTurn: null, dialogs: [{ ...permission('toolu_X'), agentId: 'a1' }], native: [], workflows: [] }, 0);
+  lv.turnEnded('t-sub', 'a1');
+  assert.deepEqual(snap(lv).asks, []);
+});
+
+test('a restored main-thread dialog leaves at the next main step or tool call', () => {
+  for (const moveOn of [(l: Level) => l.stepped('T1', undefined, 1000), (l: Level) => l.toolStarted('toolu_next', undefined)]) {
+    const { lv } = tracked();
+    lv.restore({ mainTurn: 'T1', dialogs: [permission('toolu_M')], native: [], workflows: [] }, 0);
+    lv.stepped('S', 'a1', 1000);
+    assert.deepEqual(snap(lv).asks, ['toolu_M'], 'a subagent moving on says nothing');
+    moveOn(lv);
+    assert.deepEqual(snap(lv).asks, []);
+  }
+});
+
+test('a handed-over subagent dialog survives the main turn end while still on screen', () => {
+  const { lv } = tracked();
+  lv.turnStarted('T1');
+  lv.open({ ...permission('toolu_S'), agentId: 'a1' });
+  lv.handOver('toolu_S');
+  lv.turnEnded('T1', undefined);
+  assert.deepEqual(snap(lv).asks, ['toolu_S']);
+  lv.turnEnded('t-sub', 'a1');
+  assert.deepEqual(snap(lv).asks, []);
+});
+
+test('a held dialog is not cleared by the loop moving on; only a handed-over one is', () => {
+  const { lv } = tracked();
+  lv.turnStarted('T1');
+  lv.open(permission('held'));
+  lv.stepped('T1', undefined, 1);
+  lv.toolStarted('other', undefined);
+  assert.deepEqual(snap(lv).asks, ['held']);
+});
+
+// Refute NIT 7.
+test('a prompt.submit naming a turn that already ended does not re-open it', () => {
+  const { lv } = tracked();
+  lv.turnStarted('T1');
+  lv.turnEnded('T1', undefined);
+  lv.promptSubmitted('T1', 'typed at the edge of the turn');
+  assert.equal(snap(lv).running, false);
+  lv.promptSubmitted('T2', 'into the next turn');
+  assert.equal(snap(lv).running, true);
+});
+
+// Refute finding 1: the level carries the last main reply and the newest
+// PushNotification, which a snapshot would otherwise drop with their events.
+test('the level carries the last main reply and the newest notice', () => {
+  const { lv, saves } = tracked();
+  assert.equal('reply' in snap(lv), false);
+  assert.equal('notice' in snap(lv), false);
+  lv.turnStarted('T1');
+  lv.answered(undefined, 'Deployed v2', 10);
+  lv.answered('a1', 'subagent words', 11);
+  lv.answered(undefined, '   ', 12);
+  lv.rowSeen(undefined, [{ type: 'tool_use', id: 't', name: 'PushNotification', input: { message: 'Build is green' } }], 13);
+  lv.rowSeen('a1', [{ type: 'tool_use', id: 't2', name: 'PushNotification', input: { message: 'from a subagent' } }], 14);
+  lv.rowSeen(undefined, [{ type: 'tool_use', id: 't3', name: 'mcp__x__PushNotification', input: { message: '' } }], 15);
+  const s = snap(lv);
+  assert.deepEqual(s.reply, { t: 10, text: 'Deployed v2' });
+  assert.deepEqual(s.notice, { t: 13, text: 'Build is green' });
+  assert.deepEqual(saves.at(-1)?.reply, { t: 10, text: 'Deployed v2' }, 'kept across a reload');
+  lv.reset();
+  assert.equal('reply' in snap(lv), false);
+});
+
+test('a long reply or notice is cut to what the server keeps', () => {
+  const { lv } = tracked();
+  lv.answered(undefined, 'r'.repeat(5000), 1);
+  lv.rowSeen(undefined, [{ type: 'tool_use', id: 't', name: 'PushNotification', input: { message: 'n'.repeat(5000) } }], 2);
+  assert.equal(snap(lv).reply?.text.length, 1000);
+  assert.equal(snap(lv).notice?.text.length, 1000);
+});
+
+test('restore brings back the reply and notice', () => {
+  const { lv } = tracked();
+  lv.restore({
+    mainTurn: null, dialogs: [], native: [], workflows: [], reply: { t: 1, text: 'r' }, notice: { t: 2, text: 'n' },
+  }, 0);
+  assert.deepEqual(snap(lv).reply, { t: 1, text: 'r' });
+  assert.deepEqual(snap(lv).notice, { t: 2, text: 'n' });
+});
+
+// Refute NIT 9: activity from forks keeps runs alive, so a run whose
+// notification never came is dropped a day after its launch whatever else
+// happened.
+test('a workflow is dropped a day after its launch, through a reload too', () => {
+  const { lv, saves } = tracked();
+  lv.workflowLaunched(launched('w1'), 0);
+  lv.stepped('S', 'member', WORKFLOW_MAX_MS - 1);
+  assert.equal(lv.expire(WORKFLOW_MAX_MS - 1), false);
+  const saved = saves.at(-1);
+  const again = tracked().lv;
+  again.restore(saved, WORKFLOW_MAX_MS - 1);
+  again.stepped('S', 'member', WORKFLOW_MAX_MS + 1);
+  assert.equal(again.expire(WORKFLOW_MAX_MS + 1), true);
 });

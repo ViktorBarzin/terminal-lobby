@@ -5,7 +5,7 @@
 // misspelt field is a compile error rather than a value the server drops.
 
 import type {
-  TerminalLobbyAsk, TerminalLobbyDialog, TerminalLobbyPermission, TerminalLobbyPlan,
+  TerminalLobbyAsk, TerminalLobbyDialog, TerminalLobbyPermission, TerminalLobbyPlan, TerminalLobbyText,
 } from '../state.d.ts';
 
 // The mod's version, sent in every hello so the lobby can tell which sessions
@@ -81,6 +81,11 @@ export type LevelEvent = {
   tool: string;
   agents: ModAgent[];
   asks: string[];
+  // The last main-thread answer and the newest PushNotification, left out
+  // until there is one. They are in the level because a snapshot drops the
+  // turn_end and the row that first carried them (@claude_reply, @claude_notice).
+  reply?: TerminalLobbyText;
+  notice?: TerminalLobbyText;
 };
 
 export type ModEvent =

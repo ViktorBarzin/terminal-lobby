@@ -76,20 +76,51 @@ type stampState struct {
 	// process that never saw what the last one wrote, would otherwise leave
 	// tmux wrong with nothing to correct it.
 	written stampOpts
+	// reply and notice are the newest main-thread reply and PushNotification
+	// message, each with the mod's time for the event that carried it. The
+	// push sender takes a new stamp on @claude_reply or @claude_notice for a
+	// new message, so each is written once, when its time is newer than the
+	// one last written: a resent batch, or a level repeating it, writes
+	// nothing.
+	reply, notice stampNote
+	// activity is the epoch second @last_activity was last stamped with.
+	activity int64
 }
 
-// stampOpts are the four options the fold owns.
-type stampOpts struct{ state, ask, tool, bg string }
+// stampNote is a reply or notice text and its time in ms.
+type stampNote struct {
+	t    int64
+	text string
+}
 
-// opts is what the fold says the four options should hold now.
+// stampOpts are the options the fold owns: the four state options, and the
+// times of the reply and notice written.
+type stampOpts struct {
+	state, ask, tool, bg string
+	replyT, noticeT      int64
+}
+
+// opts is what the fold says the options should hold now.
 func (s *stampState) opts() stampOpts {
-	return stampOpts{state: s.state, ask: s.ask, tool: s.tool, bg: s.bg}
+	return stampOpts{state: s.state, ask: s.ask, tool: s.tool, bg: s.bg, replyT: s.reply.t, noticeT: s.notice.t}
 }
 
-// flush is the write that brings the four options from written to the fold.
-// full writes all four whatever written says: set when there is a value,
-// unset when there is none. It reports the state transition against what was
-// written, for the log.
+// note takes a reply or notice when it is newer than the one held. An event's
+// own t is the mod's clock; an event without one (a test) is stamped now.
+func note(held *stampNote, t int64, text string, now time.Time) {
+	if t <= 0 {
+		t = now.UnixMilli()
+	}
+	if t > held.t {
+		*held = stampNote{t: t, text: text}
+	}
+}
+
+// flush is the write that brings the options from written to the fold. full
+// writes all four state options whatever written says: set when there is a
+// value, unset when there is none. A reply or notice is written only when it
+// is newer than the one last written, full or not. It reports the state
+// transition against what was written, for the log.
 func (s *stampState) flush(full bool) stampWrite {
 	var w stampWrite
 	now := s.opts()
@@ -106,6 +137,12 @@ func (s *stampState) flush(full bool) stampWrite {
 	put(sessionio.OptionAsk, s.written.ask, now.ask)
 	put(sessionio.OptionTool, s.written.tool, now.tool)
 	put(sessionio.OptionBackground, s.written.bg, now.bg)
+	if s.reply.t > s.written.replyT {
+		w.put(optReply, stampText(time.UnixMilli(s.reply.t), s.reply.text))
+	}
+	if s.notice.t > s.written.noticeT {
+		w.put(optNotice, stampText(time.UnixMilli(s.notice.t), s.notice.text))
+	}
 	w.from, w.to = s.written.state, now.state
 	return w
 }
@@ -133,8 +170,8 @@ func (w stampWrite) empty() bool { return len(w.set) == 0 && len(w.unset) == 0 }
 const ownerCap = 1024
 
 // apply folds one mod event into the state, and returns the writes of the
-// options the event itself names: the reply, the notice, the activity stamp
-// and the summary. The four state options are written by flush.
+// options the event itself names: the activity stamp and the summary. The
+// state options, the reply and the notice are written by flush.
 func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	var w stampWrite
 	main := ev.AgentID == ""
@@ -162,7 +199,7 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 			s.dropAsks(s.mainEnded)
 			s.turnOpen, s.tool = true, ""
 			s.state = sessionio.StateRunning
-			w.put(optActivity, strconv.FormatInt(now.Unix(), 10))
+			s.stampActivity(&w, now.Unix())
 			break
 		}
 		for _, bl := range blocksOf(ev.Message.Content) {
@@ -179,7 +216,7 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 					Message string `json:"message"`
 				}
 				if json.Unmarshal(bl.Input, &in) == nil && strings.TrimSpace(in.Message) != "" {
-					w.put(optNotice, stampText(now, in.Message))
+					note(&s.notice, ev.T, in.Message, now)
 				}
 			}
 		}
@@ -246,9 +283,9 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 		s.turnOpen, s.tool = false, ""
 		s.dropAsks(s.mainEnded)
 		s.state = s.idleState()
-		w.put(optActivity, strconv.FormatInt(now.Unix(), 10))
+		s.stampActivity(&w, now.Unix())
 		if strings.TrimSpace(ev.Answer) != "" {
-			w.put(optReply, stampText(now, ev.Answer))
+			note(&s.reply, ev.T, ev.Answer, now)
 		}
 	case sessionio.ModSummaryEvent:
 		// tmux-api adopts it as the title while the session has none.
@@ -276,6 +313,19 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 		}
 		s.bg = bgTokens(s.agents, s.active)
 		s.state = s.idleState()
+		if r := ev.Reply; r != nil && strings.TrimSpace(r.Text) != "" && r.T > 0 {
+			newer := r.T > s.reply.t
+			note(&s.reply, r.T, r.Text, now)
+			// A turn whose turn_end the snapshot dropped ended when its
+			// reply did. While a turn runs, the newest activity is its
+			// prompt, which no level carries, so the stamp is left alone.
+			if newer && !s.turnOpen && r.T/1000 > s.activity {
+				s.stampActivity(&w, r.T/1000)
+			}
+		}
+		if n := ev.Notice; n != nil && strings.TrimSpace(n.Text) != "" && n.T > 0 {
+			note(&s.notice, n.T, n.Text, now)
+		}
 	case sessionio.ModByeEvent:
 		// The caller writes all four options empty on a bye.
 		*s = stampState{written: s.written}
@@ -297,6 +347,12 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 		s.state = s.idleState()
 	}
 	return w
+}
+
+// stampActivity puts @last_activity.
+func (s *stampState) stampActivity(w *stampWrite, epoch int64) {
+	s.activity = epoch
+	w.put(optActivity, strconv.FormatInt(epoch, 10))
 }
 
 // open is the dialogs waiting on a person that have a body to show, oldest
@@ -356,12 +412,14 @@ func (s *stampState) idleState() string {
 // workflows that have not finished by id, and the teammates whose loop is
 // active by name. Sorted so an unchanged set reads the same and writes nothing.
 //
-// A subagent counts unless it is completed, failed or killed: one that is
-// pending has not started yet, and one that is waiting waits on background
-// work of its own, and both are still work (AgentStatus, CLI 2.1.289). A
-// teammate counts by its own loop whatever its listed status, because the
-// list called an idle teammate running when measured on 2026-09-12 and the
-// engine's types now say it reads idle.
+// A subagent or workflow counts while it is pending, running or waiting: one
+// that is pending has not started yet, and one that is waiting waits on
+// background work of its own (AgentStatus, CLI 2.1.289). An idle one does not
+// count: idle is between turns until a message wakes it, and a finished
+// subagent that can be resumed may be listed so, which would keep the session
+// running for good. A teammate counts by its own loop whatever its listed
+// status, because the list called an idle teammate running when measured on
+// 2026-09-12 and the engine's types now say it reads idle.
 //
 // $.agent.list() gives a subagent's type as its agent definition
 // (general-purpose, Explore, a plugin's `<plugin>:<name>`), an open set, not
@@ -385,7 +443,7 @@ func bgTokens(agents []sessionio.ModAgent, active map[string]bool) string {
 				name = a.ID
 			}
 			tok = "t:" + name
-		case a.Status.Over():
+		case !a.Status.Working():
 			continue
 		case a.Type == "workflow":
 			tok = "w:" + a.ID

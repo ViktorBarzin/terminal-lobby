@@ -41,7 +41,10 @@ const full: { [K in ModEventType]: Required<Extract<ModEvent, { type: K }>> } = 
   command_failed: { type: 'command_failed', t: 1, id: 'c', op: 'prompt', error: 'e' },
   summary: { type: 'summary', t: 1, text: 'x' },
   bye: { type: 'bye', t: 1, reason: 'clear', sid: 's' },
-  level: { type: 'level', t: 1, running: true, compacting: false, tool: '', agents: [], asks: [] },
+  level: {
+    type: 'level', t: 1, running: true, compacting: false, tool: '', agents: [], asks: [], reply: { t: 1, text: 'r' },
+    notice: { t: 1, text: 'n' },
+  },
 };
 
 for (const [type, sample] of Object.entries(full)) {
@@ -99,4 +102,12 @@ test('an agent carries exactly the fields the golden agents name', () => {
 test('toAgents leaves out what the engine adds beyond the wire, and an unknown status reads as running', () => {
   const engine = [{ id: 'a', type: 't', status: 'sleeping', description: '', extra: 1 }];
   assert.deepEqual(toAgents(engine), [{ id: 'a', type: 't', status: 'running' }]);
+});
+
+test('the level\'s reply and notice have the golden fields', () => {
+  const want = golden('level');
+  if (!want) return;
+  for (const k of ['reply', 'notice'] as const) {
+    assert.deepEqual(keys(full.level[k]), keys(want[k] as object), k);
+  }
 });

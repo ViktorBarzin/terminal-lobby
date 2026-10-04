@@ -11,7 +11,7 @@ What it does, in short:
   streamed text deltas (coalesced to about 50 ms), prompts and model changes
   to `POST /mod/v1/events`, one request in flight at a time.
 - Sends a `level` snapshot (main turn running, compacting, the main thread's
-  tool, the agents, the dialogs open) after every hello, on every turn edge,
+  tool, the agents, the dialogs open, the last reply and notice) after every hello, on every turn edge,
   dialog settle, Agent call and compaction, and every 30 s, so session-events
   writes the tmux options from what the mod knows now rather than from edges
   it may have missed. The engine's agent list names subagents and teammates

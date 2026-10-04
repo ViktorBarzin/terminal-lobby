@@ -23,8 +23,12 @@ export type TerminalLobbyPermission = {
 
 export type TerminalLobbyDialog = TerminalLobbyAsk | TerminalLobbyPlan | TerminalLobbyPermission;
 
-// A workflow run the Workflow tool launched and no task notification has ended yet.
-export type TerminalLobbyWorkflow = { id: string; name?: string; description?: string };
+// A workflow run the Workflow tool launched and no task notification has ended
+// yet. `launchedAt` (ms) bounds how long it can be kept (lib/level.ts).
+export type TerminalLobbyWorkflow = { id: string; name?: string; description?: string; launchedAt?: number };
+
+// A text the mod saw and when (ms), as the level carries it.
+export type TerminalLobbyText = { t: number; text: string };
 
 export type TerminalLobbyLevel = {
   // The main loop's turn in flight, null between turns.
@@ -34,6 +38,9 @@ export type TerminalLobbyLevel = {
   // Those of them Claude drew itself after the mod's own dialog failed.
   native: string[];
   workflows: TerminalLobbyWorkflow[];
+  // The last main-thread answer, and the newest PushNotification's message.
+  reply?: TerminalLobbyText;
+  notice?: TerminalLobbyText;
 };
 
 declare module 'claude-code' {

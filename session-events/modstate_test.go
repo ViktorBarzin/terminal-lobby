@@ -323,8 +323,9 @@ func TestStampHistoryOfAnIdleSessionIsDone(t *testing.T) {
 	}
 }
 
-// Q-F5, L-F6: a subagent or workflow is background work until the engine
-// calls it over, and a teammate counts by its own loop whatever its status.
+// Q-F5, L-F6: a subagent or workflow is background work while it is pending,
+// running or waiting, and a teammate counts by its own loop whatever its
+// status.
 func TestBgTokensCountsEveryAgentThatHasNotFinished(t *testing.T) {
 	cases := []struct {
 		agent  sessionio.ModAgent
@@ -334,6 +335,10 @@ func TestBgTokensCountsEveryAgentThatHasNotFinished(t *testing.T) {
 		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: "pending"}, false, "a:a1"},
 		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: "running"}, false, "a:a1"},
 		{sessionio.ModAgent{ID: "a1", Type: "Explore", Status: "waiting"}, false, "a:a1"},
+		// Between turns until a message wakes it: a finished subagent can be
+		// listed so, and would keep the session running for good.
+		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: "idle"}, false, ""},
+		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: ""}, false, ""},
 		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: "completed"}, false, ""},
 		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: "failed"}, false, ""},
 		{sessionio.ModAgent{ID: "a1", Type: "general-purpose", Status: "killed"}, false, ""},
