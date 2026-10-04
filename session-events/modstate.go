@@ -144,6 +144,14 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 			s.turnOpen = true
 			s.state = sessionio.StateRunning
 		}
+	case sessionio.ModHistoryEvent:
+		// The turn lives in this process's memory, so a restart mid-turn
+		// starts over without it. The history after the next hello says
+		// whether a main-thread turn is running; only its last chunk speaks.
+		if !ev.More {
+			s.turnOpen = ev.Running
+			s.state = s.idleState()
+		}
 	case sessionio.ModResultEvent:
 		if main && s.tool == ev.ToolID {
 			s.tool = ""

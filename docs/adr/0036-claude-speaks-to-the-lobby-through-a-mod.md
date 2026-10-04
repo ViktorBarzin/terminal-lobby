@@ -187,7 +187,7 @@ Held for up to 25 s. Answer: `{"commands": [ … ]}`, possibly empty.
 
 | op | fields | the mod does |
 |---|---|---|
-| `prompt` | `id`, `text` | `$.prompt.submit({text, asUser: true})` |
+| `prompt` | `id`, `text` | `$.command.run({command, args})` when the whole text is `/name args` and the session lists a command by that name (submit hands any text to the model, so a bare `/skill` sent through it ran nothing); `$.prompt.submit({text, asUser: true})` otherwise |
 | `abort` | `id` | `$.turn.abort` on the running main-thread turn |
 | `answer` | `id`, `toolId`, `answers` or `chat`, `annotations?` | resolves AskUserQuestion with `{result}`, or with `{deny: chat}` for "Chat about this" |
 | `decide` | `id`, `toolId`, `decision` (`allow`/`deny`), `reason?` | resolves a held `tool.check` |
