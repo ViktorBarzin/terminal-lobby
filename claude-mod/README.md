@@ -10,6 +10,9 @@ What it does, in short:
 - Sends every stored conversation row, tool results, turn starts and ends,
   streamed text deltas (coalesced to about 50 ms), prompts, model changes and
   the agent list to `POST /mod/v1/events`, one request in flight at a time.
+  The engine's agent list names subagents and teammates only, so the workflow
+  runs in flight are added to it from the classic Stop and SubagentStop
+  inputs' `background_tasks` (`hooks/lib/background.ts`).
 - Long-polls `GET /mod/v1/poll` for commands: send a prompt, abort the turn,
   answer an AskUserQuestion, approve or reject a plan or a permission, switch
   the model, resend history.
@@ -34,6 +37,7 @@ What it does, in short:
 | `hooks/lib/decided.ts` | answers already given, for a tool call checked twice |
 | `hooks/lib/open.ts` | dialogs on screen, sent again after every hello |
 | `hooks/lib/summary.ts` | the title request for a lobby-started conversation, and reading the reply |
+| `hooks/lib/background.ts` | workflow runs in flight, from `background_tasks`, added to the agent list |
 | `test/*.test.ts` | unit tests for `hooks/lib` |
 
 ## Loading it for a dev session

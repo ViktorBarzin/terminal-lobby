@@ -12,6 +12,7 @@ import { Decided } from './lib/decided.ts';
 import { OpenDialogs } from './lib/open.ts';
 import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
 import { steer } from './lib/steer.ts';
+import { type ListedAgent, runningWorkflows, withWorkflows } from './lib/background.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
@@ -49,6 +50,26 @@ const seenCommands = new SeenCommands();
 const openDialogs = new OpenDialogs();
 // Whether this conversation still owes its summary (lib/summary.ts).
 const summary = new SummaryOnce();
+// Workflow runs in flight, as the last Stop or SubagentStop listed them
+// (lib/background.ts): the engine's agent list never names one.
+let workflows: ListedAgent[] = [];
+
+async function agentList($: EngineInterface): Promise<ListedAgent[]> {
+  return withWorkflows(await $.agent.list(), workflows);
+}
+
+// Takes the runs from a Stop or SubagentStop input's background_tasks. Either
+// can land before or after turn.complete, so each sends the list itself.
+async function readBackground($: EngineInterface, tasks: unknown): Promise<void> {
+  const w = runningWorkflows(tasks);
+  if (!link || w === undefined) return;
+  workflows = w;
+  try {
+    send({ type: 'agents', agents: await agentList($) });
+  } catch {
+    // Reporting never gets in Claude's way.
+  }
+}
 
 const now = () => Date.now();
 
@@ -439,7 +460,7 @@ export const register: Register = (on) => {
         send(ev);
         // A subagent starting is when the lobby can first message it, and the
         // engine's list is what says so; otherwise it is sent only as turns end.
-        if (agentId !== undefined) send({ type: 'agents', agents: await $.agent.list() });
+        if (agentId !== undefined) send({ type: 'agents', agents: await agentList($) });
         if (agentId === undefined) {
           const pane = await $.env.get('TMUX_PANE');
           const name = pane ? await tmuxSessionName($, pane) : '';
@@ -463,9 +484,21 @@ export const register: Register = (on) => {
         if (e.usage !== undefined) ev.usage = e.usage;
         ev.durationMs = e.durationMs;
         send(ev);
-        send({ type: 'agents', agents: await $.agent.list() });
+        send({ type: 'agents', agents: await agentList($) });
       } catch { /* reporting only */ }
     }
+    return r;
+  });
+
+  // Where the engine says which workflow runs are still going.
+  on('classic.Stop', async ($, e, next) => {
+    const r = await next(e);
+    await readBackground($, e.background_tasks);
+    return r;
+  });
+  on('classic.SubagentStop', async ($, e, next) => {
+    const r = await next(e);
+    await readBackground($, e.background_tasks);
     return r;
   });
 
