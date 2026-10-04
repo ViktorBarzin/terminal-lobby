@@ -90,21 +90,25 @@ func handleClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	osUser := id.OSUser
-	answer := func(claimed bool) {
+	// found is what the script found (claimed, stale or none), which the
+	// composer reports beside the first prompt's timing; empty when the script
+	// was not asked.
+	answer := func(claimed bool, found string) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]bool{"claimed": claimed})
+		_ = json.NewEncoder(w).Encode(map[string]any{"claimed": claimed, "found": found})
 	}
 	// An administrator acting as someone attaches to their sessions and never
 	// creates one (tmux-attach.sh's foreign branch); a claim would create one.
 	if osUser != id.RealOSUser {
-		answer(false)
+		answer(false, "")
 		return
 	}
-	// Only a minted id becomes a claimed session's birth name, and only the
-	// claude key with no model or effort is pooled: anything else would fail
-	// the script's own checks, so it is not worth a sudo to find out.
-	if !mintedNameRe.MatchString(body.Name) || body.Cmd != "claude" || body.Model != "" || body.Effort != "" {
-		answer(false)
+	// Only a minted id becomes a claimed session's birth name, only the claude
+	// key is pooled, and a model or effort has to be a token the script accepts:
+	// anything else would fail the script's own checks, so it is not worth a
+	// sudo to find out.
+	if !mintedNameRe.MatchString(body.Name) || body.Cmd != "claude" || !validSlotFlags(body.Model, body.Effort) {
+		answer(false, "")
 		return
 	}
 	dir := body.Dir
@@ -113,19 +117,20 @@ func handleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	if !prewarmAllowedDir(osUser, dir) {
 		log.Printf("claim: %s asked to claim in %q, which is not one of their project dirs", osUser, dir)
-		answer(false)
+		answer(false, "")
 		return
 	}
-	out, err := runClaim(osUser, []string{body.Name, dir, body.Cmd, "", "", "claim"})
+	out, err := runClaim(osUser, []string{body.Name, dir, body.Cmd, body.Model, body.Effort, "claim"})
 	if err != nil {
 		log.Printf("claim: %s for %s: %v", body.Name, osUser, err)
-		answer(false)
+		answer(false, "")
 		return
 	}
-	claimed := strings.TrimSpace(string(out)) == "claimed"
+	found := strings.TrimSpace(string(out))
+	claimed := found == "claimed"
 	// The status line takes a row of the browser's terminal.
 	if claimed && body.Cols >= 10 && body.Cols <= 1000 && body.Rows >= 3 && body.Rows <= 1000 {
 		_ = resizeClaimed(osUser, body.Name, body.Cols, body.Rows-1)
 	}
-	answer(claimed)
+	answer(claimed, found)
 }

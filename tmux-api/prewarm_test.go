@@ -106,37 +106,6 @@ func TestPrewarmSlotNameIsUnaddressable(t *testing.T) {
 	}
 }
 
-// systemd-escape --path is the naming contract for the tl-prewarm@ instance, so
-// a wrong answer here starts the wrong unit (or none).
-func TestSystemdEscapePath(t *testing.T) {
-	cases := map[string]string{
-		"/home/wizard/code":  "home-wizard-code",
-		"/home/wizard/code/": "home-wizard-code",
-		"/home/wizard":       "home-wizard",
-		"/":                  "-",
-	}
-	for in, want := range cases {
-		if got := systemdEscapePath(in); got != want {
-			t.Errorf("systemdEscapePath(%q) = %q, want %q", in, got, want)
-		}
-	}
-	// Cross-check against the real tool where it exists, so the in-process
-	// version cannot drift from what systemd actually does.
-	if _, err := exec.LookPath("systemd-escape"); err != nil {
-		return
-	}
-	for in := range cases {
-		out, err := exec.Command("systemd-escape", "--path", in).Output()
-		if err != nil {
-			continue
-		}
-		want := strings.TrimSpace(string(out))
-		if got := systemdEscapePath(in); got != want {
-			t.Errorf("systemdEscapePath(%q) = %q, but systemd-escape says %q", in, got, want)
-		}
-	}
-}
-
 // A directory has to be one the user's own lobby would create a session in.
 // This is what stops the endpoint being a way to start Claude anywhere on the
 // box, so relative paths and other people's directories are refused.

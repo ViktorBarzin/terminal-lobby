@@ -423,6 +423,7 @@ func main() {
 	// `tmux list-sessions` per mapped user per sweep, the same call the sessions
 	// poll already makes. Runs for the life of the process, like the sender.
 	go runPrewarmReaper(make(chan struct{}))
+	go runStaleSlotSweep(make(chan struct{}))
 
 	// Suspends sessions nobody has driven for days, reclaiming the ~800 MB
 	// each holds (suspend.go). Started unconditionally and for the life of the

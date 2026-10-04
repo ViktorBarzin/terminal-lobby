@@ -21,7 +21,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -175,24 +174,14 @@ func speculativeSlots(osUser string) map[string]int64 {
 	return slots
 }
 
-// startPrewarm asks the user's own systemd manager for a speculative slot.
+// handlePrewarm asks for, or releases, a speculative slot for a directory and
+// the model and effort the composer has picked.
 //
-// Delegated to systemd rather than started here so the tmux server lands in the
-// user's manager and not in this service's cgroup — the same reason
-// tmux-user-attach exists. --no-block because a ~2.4s Claude boot must not hold
-// the HTTP request open; the point is that it runs while the user types.
-func startPrewarm(osUser, dir string) error {
-	inst := fmt.Sprintf("tl-prewarm@%s.service", systemdEscapePath(dir))
-	return userSystemctl(osUser, "start", "--no-block", inst).Run()
-}
-
-// handlePrewarm serves POST/DELETE /sessions/prewarm {"dir": "..."}.
-//
-// POST is a HINT, not a promise: every refusal (unknown dir, cap reached, a
-// systemd hiccup) answers 204 alongside a success, because the caller has
-// nothing to do differently either way — the create it precedes still works,
-// just without the head start. Reporting an error would invite a client to
-// retry a thing that is meant to be cheap and optional.
+// A slot of that name that exists and runs the installed mod is left alone. One
+// on an older mod is replaced as the kind it was, standing or speculative:
+// answering "already there" is how a slot stale since a deploy reached Send
+// (docs/plans/2026-10-04-warm-slot-at-send-design.md). The warm runs after the
+// answer, so the composer never waits on it.
 func handlePrewarm(w http.ResponseWriter, r *http.Request) {
 	osUser := resolveOSUser(w, r)
 	if osUser == "" {
@@ -203,61 +192,69 @@ func handlePrewarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Dir string `json:"dir"`
+		Dir    string `json:"dir"`
+		Model  string `json:"model"`
+		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
 		http.Error(w, "bad body (need {\"dir\": \"...\"})", http.StatusBadRequest)
 		return
 	}
 	if !prewarmAllowedDir(osUser, body.Dir) {
-		// Not this user's directory to warm. Logged because a legitimate client
-		// never asks for one, so it is worth seeing.
 		log.Printf("prewarm: %s asked for a slot in %q, which is not one of their project dirs", osUser, body.Dir)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	slot := prewarmSlotName(body.Dir, "", "")
+	if !validSlotFlags(body.Model, body.Effort) {
+		log.Printf("prewarm: %s asked for a slot with model %q effort %q, which are not tokens", osUser, body.Model, body.Effort)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	slot := prewarmSlotName(body.Dir, body.Model, body.Effort)
 
 	if r.Method == http.MethodDelete {
-		// Release only ever kills a MARKED slot. Without that check a release
-		// arriving for a directory that also has a standing pool slot would
-		// collect the standing one, and the lobby would have quietly deleted a
-		// slot it is supposed to be feeding.
 		if _, ok := speculativeSlots(osUser)[slot]; ok {
-			if out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(slot)).CombinedOutput(); err != nil {
-				log.Printf("prewarm: releasing %s for %s: %v (%s)", slot, osUser, err, strings.TrimSpace(string(out)))
-			}
+			killSlot(osUser, slot)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// Already warm for this dir — whether speculative or the standing slot —
-	// leaves it strictly alone. tmux-user-attach is idempotent too, so this is
-	// belt and braces; doing it here also keeps a repeat off the cap.
-	if hasSession(osUser, slot) {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	slots := listSlots(osUser)
+	want := warmRequest{dir: body.Dir, model: body.Model, effort: body.Effort, speculative: true}
+	found := false
+	for _, s := range slots {
+		if s.name != slot {
+			continue
+		}
+		found = true
+		if !s.stale(installedModID()) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		want.speculative = s.speculative
 	}
-	if n := len(speculativeSlots(osUser)); n >= maxSpeculativeSlots {
-		log.Printf("prewarm: %s already holds %d speculative slots — refusing a new one for %q", osUser, n, body.Dir)
-		w.WriteHeader(http.StatusNoContent)
-		return
+	if !found {
+		n := 0
+		for _, s := range slots {
+			if s.speculative {
+				n++
+			}
+		}
+		if n >= maxSpeculativeSlots {
+			log.Printf("prewarm: %s already holds %d speculative slots — refusing a new one for %q", osUser, n, body.Dir)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
-	if err := startPrewarm(osUser, body.Dir); err != nil {
-		// The unit may simply not be deployed for this user yet. Nothing for
-		// the client to do; the create it precedes still works.
-		log.Printf("prewarm: starting a slot for %s in %q: %v", osUser, body.Dir, err)
-	}
+	prewarmInFlight.Add(1)
+	go func() {
+		defer prewarmInFlight.Done()
+		_ = runWarm(osUser, want)
+	}()
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// reapSpeculativeSlots collects expired guesses for every mapped user.
-//
-// Only marked slots are considered, so the standing pool slot is untouchable
-// here by construction. A CLAIMED slot has had its mark cleared by
-// tmux-user-attach before the attach proceeds, so live work is never a
-// candidate either — the mark is the whole safety property, in both directions.
 func reapSpeculativeSlots(now time.Time) {
 	for _, osUser := range mappedOSUsers() {
 		for name, stamp := range speculativeSlots(osUser) {
@@ -289,34 +286,6 @@ func runPrewarmReaper(stop <-chan struct{}) {
 			reapSpeculativeSlots(now)
 		}
 	}
-}
-
-// systemdEscapePath mirrors `systemd-escape --path`: strip the leading and
-// trailing slashes, then replace each remaining '/' with '-' and escape
-// anything outside the safe set as \xNN. Done in-process rather than by
-// shelling out because it is on the request path, and because the escaping
-// rules are fixed.
-func systemdEscapePath(p string) string {
-	s := strings.Trim(filepath.Clean(p), "/")
-	if s == "" {
-		return "-"
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c == '/':
-			b.WriteByte('-')
-		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_':
-			b.WriteByte(c)
-		case c == '.' && i > 0:
-			// A leading dot must be escaped; elsewhere it is literal.
-			b.WriteByte(c)
-		default:
-			fmt.Fprintf(&b, `\x%02x`, c)
-		}
-	}
-	return b.String()
 }
 
 // homeOfUser is the user's home directory, or "" when they cannot be resolved.

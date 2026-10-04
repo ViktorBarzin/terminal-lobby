@@ -451,7 +451,6 @@ var Package = Manifest{
 		{Src: "devvm/sudoers.d-tl-reconcile.template", Dest: "/usr/share/terminal-lobby/sudoers.d-tl-reconcile.template", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
-		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
 		// The ceiling over one user's browsers together. A vendor user unit,
 		// so it goes under /usr/lib rather than /etc, where an operator's
 		// override in /etc/systemd/user/tl-browser.slice.d/ still wins. Each
