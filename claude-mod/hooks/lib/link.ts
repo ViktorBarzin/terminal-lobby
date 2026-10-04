@@ -3,8 +3,8 @@
 // logic runs the same under `node --test` and inside Claude Code.
 
 import { EventQueue } from './queue.ts';
-import type { ModEvent } from './queue.ts';
 import { backoffMs, historyEvents } from './shape.ts';
+import type { DialogEvent, HelloBody, LevelEvent, ModEvent, ModEventType } from './wire.ts';
 
 export type Reply = { status: number; body: unknown };
 
@@ -15,15 +15,27 @@ export type LinkDeps = {
   after: (ms: number, fn: () => void) => void;
   sleep: (ms: number) => Promise<void>;
   random: () => number;
-  hello: () => Promise<Record<string, unknown>>;
+  // Whether the server answering on the port is the real one (lib/listener.ts),
+  // asked before every hello. False waits and asks again, like a failed hello.
+  trusted?: () => Promise<boolean>;
+  // The hello body; the link adds how many events its queue has dropped.
+  hello: () => Promise<Omit<HelloBody, 'dropped'>>;
   // The `history` event's fields: `messages`, and `running` (a main-thread turn in flight).
   history: () => Promise<{ messages: unknown; running: boolean }>;
   // The dialogs still on screen. Each went out once, when it opened; a
   // server that restarted since has forgotten it, so every hello sends them
   // again, behind the history.
-  open?: () => ModEvent[];
+  open?: () => DialogEvent[];
+  // The mod's whole view now, sent last after every hello so the server
+  // writes every option from it rather than from what it remembers.
+  level?: () => Promise<LevelEvent>;
   onCommand: (command: unknown) => void;
 };
+
+// What survives a hello that answers history: true. Everything else queued is
+// in the snapshot that follows (wire contract v3, item 5); replaying it behind
+// the snapshot showed the conversation's tail twice and replayed stale turns.
+const KEPT_BY_SNAPSHOT: ReadonlySet<ModEventType> = new Set(['ack', 'summary', 'command_failed']);
 
 export const FLUSH_GAP_MS = 50;
 
@@ -130,7 +142,9 @@ export class Link {
     const asked = this.#helloAsks;
     let reply: Reply | null = null;
     try {
-      reply = await this.#deps.post('/mod/v1/hello', await this.#deps.hello());
+      if (this.#deps.trusted && !(await this.#deps.trusted())) throw new Error('untrusted listener');
+      const body: HelloBody = { ...(await this.#deps.hello()), dropped: this.#queue.dropped };
+      reply = await this.#deps.post('/mod/v1/hello', body);
     } catch {
       reply = null;
     }
@@ -149,11 +163,14 @@ export class Link {
     if (this.#helloAsks !== asked) return;
     const resent: ModEvent[] = [];
     if (body.history === true) {
+      // Dropped before the snapshot is read, so an event queued while it is
+      // read follows it rather than being lost with the rest.
+      this.#queue.keepOnly(KEPT_BY_SNAPSHOT);
       try {
         const h = await this.#deps.history();
         resent.push(...historyEvents(this.#deps.now(), h.messages, h.running));
       } catch {
-        // No history to offer; the server keeps what it has.
+        // No history to offer; the server keeps owing one and asks again.
       }
     }
     // Read after the history, so a dialog answered meanwhile is not resent.
@@ -161,6 +178,11 @@ export class Link {
       resent.push(...(this.#deps.open?.() ?? []));
     } catch {
       // Nothing to resend; the dialogs stay with Claude's own menus.
+    }
+    try {
+      if (this.#deps.level) resent.push(await this.#deps.level());
+    } catch {
+      // The next level, at most 30 s away, says it instead.
     }
     if (resent.length > 0) this.#queue.prepend(...resent);
     this.#token = body.token;

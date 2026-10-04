@@ -2,6 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.ts"
+    "test": "node --test test/*.test.ts",
+    "typecheck": "node scripts/typecheck.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "~5.9.3"
   }
 }

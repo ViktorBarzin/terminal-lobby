@@ -2,12 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventQueue, MAX_EVENT_CHARS } from '../hooks/lib/queue.ts';
 import { historyEvents, HISTORY_CHUNK_CHARS } from '../hooks/lib/shape.ts';
+import type { RowEvent } from '../hooks/lib/wire.ts';
 
 // Claude Code refuses a mod's request body over 4,194,304 characters
 // (measured on 2.1.287, 2026-10-02). A refused batch is resent forever and
 // holds every event behind it, so no batch may get near that.
 
-const row = (n: number, chars: number) => ({ type: 'row', t: n, uuid: `u${n}`, text: 'x'.repeat(chars) });
+const row = (n: number, chars: number): RowEvent => ({
+  type: 'row', t: n, uuid: `u${n}`, door: 'response', origin: {}, message: { type: 'assistant', content: 'x'.repeat(chars) },
+});
 
 test('a batch stops before it passes the size budget', () => {
   const q = new EventQueue();
@@ -28,7 +31,7 @@ test('an event too big for any request is dropped, not resent forever', () => {
   q.push(row(1, MAX_EVENT_CHARS + 10));
   q.push(row(2, 10));
   const batch = q.take(200, 1_000_000);
-  assert.deepEqual(batch.map((e) => e.uuid), ['u2']);
+  assert.deepEqual(batch.map((e) => e.type === 'row' && e.uuid), ['u2']);
   assert.equal(q.dropped, 1);
 });
 
@@ -55,14 +58,15 @@ test('a huge message is trimmed rather than left to block the history', () => {
   for (const e of evs) assert.ok(JSON.stringify(e).length <= HISTORY_CHUNK_CHARS + 1000);
   const all = evs.flatMap((e) => e.messages as Array<{ text: string; toolUses: Array<{ text: string; result: unknown }> }>);
   assert.equal(all.length, 2);
-  assert.ok(all[0].text.length < 100_000);
-  assert.ok(all[1].toolUses[0].text.length < 100_000);
-  assert.ok(JSON.stringify(all[1].toolUses[0].result).length < 100_000, 'the structured result is bounded');
+  assert.ok((all[0]?.text.length ?? 0) < 100_000);
+  const use = all[1]?.toolUses[0];
+  assert.ok(use && use.text.length < 100_000);
+  assert.ok(JSON.stringify(use.result).length < 100_000, 'the structured result is bounded');
   assert.equal(evs.at(-1)?.running, true);
 });
 
 test('an empty history is one event', () => {
   const evs = historyEvents(5, [], false);
   assert.equal(evs.length, 1);
-  assert.equal(evs[0].more, undefined);
+  assert.equal(evs[0]?.more, undefined);
 });

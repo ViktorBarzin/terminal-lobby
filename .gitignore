@@ -37,3 +37,10 @@ scripts/qa-repro-*
 
 # Screenshot proof from live-verification agents; never part of a commit.
 .shots/
+
+# The Claude mod's local type-checking: its dev dependencies, the configs
+# `npm run typecheck` writes, and the engine's declarations Claude Code lays
+# beside a mod it loads with --plugin-dir (they are Claude Code's, not ours).
+claude-mod/node_modules/
+claude-mod/.typecheck/
+claude-mod/.claude-plugin/types/

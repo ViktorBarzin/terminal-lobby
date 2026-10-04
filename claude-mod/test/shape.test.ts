@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  backoffMs, capStrings, decisionFromLabel, decisionFromWeb, dialogFor, isOwnDialog, projectSlug, shapeResult, shapeRow,
-  stripMedia, transcriptPath, webAnswer, webAnswerResult, TEXT_CAP,
+  backoffMs, capStrings, decisionFromLabel, decisionFromWeb, dialogFor, isOwnDialog, planApprovalContext, projectSlug,
+  shapeDelta, shapeModel, shapePrompt, shapeResult, shapeRow, shapeTurnEnd, shapeTurnStart, stripMedia, transcriptPath,
+  webAnswer, webAnswerResult, TEXT_CAP,
 } from '../hooks/lib/shape.ts';
 
 test('backoff doubles from 1 s, caps at 30 s, and jitters within [half, full]', () => {
-  for (const [attempt, full] of [[0, 1000], [1, 2000], [2, 4000], [4, 16000], [5, 30000], [12, 30000]]) {
+  for (const [attempt, full] of [[0, 1000], [1, 2000], [2, 4000], [4, 16000], [5, 30000], [12, 30000]] as const) {
     assert.equal(backoffMs(attempt, () => 0), full / 2);
     assert.equal(backoffMs(attempt, () => 0.999999), Math.round(full / 2 + 0.999999 * full / 2));
   }
@@ -33,9 +34,9 @@ test('stripMedia empties base64 data and records its decoded size', () => {
   ];
   const out = stripMedia(content) as typeof content;
   assert.deepEqual(out[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: '' }, bytes: 5 });
-  assert.deepEqual((out[2].content as unknown[])[0],
+  assert.deepEqual((out[2]?.content as unknown[])[0],
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: '' }, bytes: 3 });
-  assert.equal(content[1].source?.data, 'aGVsbG8=', 'input untouched');
+  assert.equal(content[1]?.source?.data, 'aGVsbG8=', 'input untouched');
 });
 
 test('stripMedia empties a base64 field in a tool result object', () => {
@@ -75,7 +76,7 @@ test('shapeRow leaves out absent optional fields and caps a huge text block', ()
     1,
   );
   assert.equal('agentId' in ev, false);
-  const text = (ev.message as { content: { text: string }[] }).content[0].text;
+  const text = (ev.message as { content: { text: string }[] }).content[0]?.text ?? '';
   assert.ok(text.startsWith('y'.repeat(TEXT_CAP)));
   assert.ok(text.endsWith('[... 5 more characters]'));
 });
@@ -196,4 +197,40 @@ test('words on the plan dialog reach Claude as the user\'s feedback on the plan'
     assert.match(reason, /^The user reviewed the plan and wants changes before you start: Also print the hostname\.\n/);
     assert.match(reason, /revise the plan/i);
   }
+});
+
+// T-F10: a field over MAX_EVENT_CHARS is dropped by the queue whole, so the
+// model's and the person's own words are capped like rows and results.
+test('turn and prompt shapers cap the long strings they carry', () => {
+  const long = 'w'.repeat(TEXT_CAP + 10);
+  assert.ok(shapeTurnStart({ turnId: 'T', text: long }, 1).text.endsWith('[... 10 more characters]'));
+  assert.ok(shapePrompt(long, { kind: 'composer' }, 1).text.endsWith('[... 10 more characters]'));
+  const end = shapeTurnEnd({ turnId: 'T', isAborted: false, answer: long, durationMs: 5 }, 1);
+  assert.ok(end.answer.endsWith('[... 10 more characters]'));
+});
+
+test('shapeTurnEnd carries the subagent and usage only when given', () => {
+  assert.deepEqual(shapeTurnEnd({ turnId: 'T', isAborted: true, answer: '', durationMs: 5 }, 1), {
+    type: 'turn_end', t: 1, turnId: 'T', aborted: true, answer: '', durationMs: 5,
+  });
+  const sub = shapeTurnEnd({ turnId: 'S', agentId: 'a1', isAborted: false, answer: 'hi', usage: { output_tokens: 3 }, durationMs: 9 }, 2);
+  assert.equal(sub.agentId, 'a1');
+  assert.deepEqual(sub.usage, { output_tokens: 3 });
+});
+
+test('shapeDelta names the step and the block', () => {
+  assert.deepEqual(shapeDelta({ turnId: 'T', index: 2, agentId: 'a1' }, { index: 1, kind: 'text', text: 'Hi' }, 3), {
+    type: 'delta', t: 3, turnId: 'T', step: 2, index: 1, kind: 'text', text: 'Hi', agentId: 'a1',
+  });
+});
+
+test('shapeModel sends a numeric effort as a string, and none when absent', () => {
+  assert.deepEqual(shapeModel('m', 3, 1), { type: 'model', t: 1, model: 'm', effort: '3' });
+  assert.deepEqual(shapeModel('m', 'high', 1), { type: 'model', t: 1, model: 'm', effort: 'high' });
+  assert.deepEqual(shapeModel('m', undefined, 1), { type: 'model', t: 1, model: 'm' });
+});
+
+test('approval words reach Claude framed as the user\'s, with the words intact', () => {
+  const c = planApprovalContext('use sqlite instead');
+  assert.match(c, /^The user approved the plan with these words from the plan dialog: use sqlite instead\n/);
 });

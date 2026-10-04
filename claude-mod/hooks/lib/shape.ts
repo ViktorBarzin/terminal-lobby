@@ -1,7 +1,9 @@
 // Pure shaping: what the mod sends to session-events, and how answers from
 // the web become results Claude Code accepts.
 
-import type { ModEvent } from './queue.ts';
+import type {
+  DeltaEvent, HistoryEvent, ModelEvent, PromptEvent, ResultEvent, RowEvent, RowMessage, TurnEndEvent, TurnStartEvent,
+} from './wire.ts';
 
 // Any single string the mod forwards is cut to this many characters. The
 // server reads the full value from the transcript by row id when it needs it.
@@ -93,7 +95,7 @@ function trimHistoryMessage(m: unknown): unknown {
 // order, trimmed, split into chunks under HISTORY_CHUNK_CHARS. Every chunk but
 // the last carries `more: true`, and only the last says whether a main-thread
 // turn is running, which is what lets the server close the last turn.
-export function historyEvents(t: number, messages: unknown, running: boolean): ModEvent[] {
+export function historyEvents(t: number, messages: unknown, running: boolean): HistoryEvent[] {
   const list = Array.isArray(messages) ? messages.map(trimHistoryMessage) : [];
   const chunks: unknown[][] = [];
   let cur: unknown[] = [];
@@ -122,29 +124,27 @@ type StoredRow = {
 };
 
 // The `row` event for a row as session.append stored it.
-export function shapeRow(e: AppendIn, stored: StoredRow, t: number): ModEvent {
+export function shapeRow(e: AppendIn, stored: StoredRow, t: number): RowEvent {
   const m = stored.message;
-  const message: Record<string, unknown> = { type: m.type };
+  const message: RowMessage = { type: m.type, content: null };
   if (m.name !== undefined) message.name = m.name;
   if (m.role !== undefined) message.role = m.role;
   if (m.isMeta !== undefined) message.isMeta = m.isMeta;
   message.content = capStrings(stripMedia(m.content));
-  const ev: ModEvent = { type: 'row', t, uuid: stored.uuid || e.uuid, door: e.door, origin: e.origin };
+  const ev: RowEvent = { type: 'row', t, uuid: stored.uuid || e.uuid, door: e.door, origin: e.origin, message };
   if (e.agentId !== undefined) ev.agentId = e.agentId;
-  ev.message = message;
   return ev;
 }
 
 type ToolIn = { tool: string; tool_use_id: string; agentId?: string };
-type ToolOut = { result?: unknown; text?: string; isError?: boolean; deny?: string };
+type ToolOut = { result?: unknown; text?: string; isError?: boolean; deny?: string; ref?: number; isReadOnly?: boolean };
 
 // The `result` event for a finished tool call. A denial reads as an error
 // whose text is the reason.
-export function shapeResult(e: ToolIn, r: ToolOut, t: number): ModEvent {
-  const ev: ModEvent = { type: 'result', t, toolId: e.tool_use_id, tool: e.tool };
+export function shapeResult(e: ToolIn, r: ToolOut, t: number): ResultEvent {
+  const ev: ResultEvent = { type: 'result', t, toolId: e.tool_use_id, tool: e.tool, result: null };
   if (e.agentId !== undefined) ev.agentId = e.agentId;
   if (typeof r.deny === 'string') {
-    ev.result = null;
     ev.text = capStrings(r.deny) as string;
     ev.isError = true;
     return ev;
@@ -155,14 +155,54 @@ export function shapeResult(e: ToolIn, r: ToolOut, t: number): ModEvent {
   return ev;
 }
 
-type Question = { question: string; [k: string]: unknown };
+// The `turn_start` event for a main-thread turn.start (the only loop that
+// raises one, measured 2026-10-04).
+export function shapeTurnStart(e: { turnId: string; text: string }, t: number): TurnStartEvent {
+  return { type: 'turn_start', t, turnId: e.turnId, text: capStrings(e.text) as string };
+}
 
-type QuestionResult = { questions: readonly Question[]; answers: Record<string, string>; annotations: Record<string, unknown> };
+type TurnEndIn = { turnId: string; agentId?: string; isAborted: boolean; answer: string; usage?: unknown; durationMs: number };
+
+// The `turn_end` event for a turn.complete, main or subagent.
+export function shapeTurnEnd(e: TurnEndIn, t: number): TurnEndEvent {
+  const ev: TurnEndEvent = {
+    type: 'turn_end', t, turnId: e.turnId, aborted: e.isAborted, answer: capStrings(e.answer) as string, durationMs: e.durationMs,
+  };
+  if (e.agentId !== undefined) ev.agentId = e.agentId;
+  if (e.usage !== undefined) ev.usage = e.usage;
+  return ev;
+}
+
+// The `delta` event for one streamed text or thinking chunk of a turn.step.
+export function shapeDelta(
+  e: { turnId: string; index: number; agentId?: string },
+  chunk: { index: number; kind: 'text' | 'thinking'; text: string },
+  t: number,
+): DeltaEvent {
+  const ev: DeltaEvent = { type: 'delta', t, turnId: e.turnId, step: e.index, index: chunk.index, kind: chunk.kind, text: chunk.text };
+  if (e.agentId !== undefined) ev.agentId = e.agentId;
+  return ev;
+}
+
+// The `model` event. An effort the engine gives as a number goes as its digits:
+// the server reads a string.
+export function shapeModel(model: string, effort: string | number | undefined, t: number): ModelEvent {
+  return effort === undefined ? { type: 'model', t, model } : { type: 'model', t, model, effort: String(effort) };
+}
+
+// The `prompt` event for a prompt as it entered.
+export function shapePrompt(text: string, origin: unknown, t: number): PromptEvent {
+  return { type: 'prompt', t, text: capStrings(text) as string, origin };
+}
+
+type Question = { question: string };
+
+export type QuestionResult<Q extends Question = Question> = { questions: Q[]; answers: Record<string, string>; annotations: Record<string, unknown> };
 
 // The AskUserQuestion result for an answer given on the web. The server sends
 // answers keyed by the exact question text, a multi-select already joined as
 // "A, B"; they pass through as given (a list is joined the same way).
-export function webAnswerResult(questions: readonly Question[], answers: unknown, annotations: unknown): QuestionResult {
+export function webAnswerResult<Q extends Question>(questions: Q[], answers: unknown, annotations: unknown): QuestionResult<Q> {
   const given = (answers && typeof answers === 'object' ? answers : {}) as Record<string, unknown>;
   const out: Record<string, string> = {};
   for (const [question, a] of Object.entries(given)) {
@@ -176,10 +216,10 @@ export function webAnswerResult(questions: readonly Question[], answers: unknown
 // What tool.call returns for an `answer` command: the card's "Chat about
 // this" (`chat`, the server's full message text) denies the call with that
 // text verbatim; otherwise the answers become the result.
-export function webAnswer(
-  questions: readonly Question[],
+export function webAnswer<Q extends Question>(
+  questions: Q[],
   c: { [field: string]: unknown },
-): { deny: string } | { result: QuestionResult } {
+): { deny: string } | { result: QuestionResult<Q> } {
   if (typeof c.chat === 'string') return { deny: c.chat };
   return { result: webAnswerResult(questions, c.answers, c.annotations) };
 }
@@ -255,6 +295,15 @@ export type Decision ={ decision: 'allow' } | { decision: 'deny'; reason: string
 function planFeedback(words: string): string {
   return `The user reviewed the plan and wants changes before you start: ${words}\n`
     + 'These are their words from the plan dialog. Revise the plan to address them, then present it again with ExitPlanMode.';
+}
+
+// What the model reads with an approved plan's tool result when the person
+// approved it from the web with words of their own (wire contract v3, item 8).
+// It lands in the same turn, before Claude starts on the plan; a follow-up
+// prompt arrived only after the whole plan had been carried out (D-F2).
+export function planApprovalContext(words: string): string {
+  return `The user approved the plan with these words from the plan dialog: ${words}\n`
+    + 'Take them into account as you carry out the plan.';
 }
 
 // What the person picked in the terminal dialog, as a tool.check result. Text

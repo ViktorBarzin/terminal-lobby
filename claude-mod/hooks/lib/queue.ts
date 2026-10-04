@@ -1,7 +1,10 @@
 // The outgoing event queue: keeps order, merges adjacent text deltas of the
-// same block, and sheds the cheapest events first when the server is down.
+// same block, keeps one level snapshot, and sheds the cheapest events first
+// when the server is down.
 
-export type ModEvent = { type: string; t: number; [field: string]: unknown };
+import type { ModEvent, ModEventType } from './wire.ts';
+
+export type { ModEvent } from './wire.ts';
 
 // Claude Code refuses a mod's request body over 4,194,304 characters (measured
 // on 2.1.287, 2026-10-02). A refused batch goes back on the queue and every
@@ -19,8 +22,12 @@ function charsOf(ev: ModEvent): number {
 }
 
 // Events the server can rebuild from later ones: dropped before anything else
-// once the queue is over its cap. Rows, turn events and dialogs never go.
-const SHEDDABLE_AFTER_DELTAS = new Set(['agents', 'model']);
+// once the queue is over its cap. Past the cap, rows, turn events and dialogs
+// stay; an event too big for any request (MAX_EVENT_CHARS) is the one thing
+// dropped whatever its type, which is why the strings in dialogs, prompts and
+// answers are capped before they are queued (shape.ts capStrings). A level is
+// never dropped: it is small, and it is the snapshot the server trusts.
+const SHEDDABLE_AFTER_DELTAS = new Set<ModEventType>(['agents', 'model']);
 
 function sameBlock(a: ModEvent, b: ModEvent): boolean {
   return a.type === 'delta' && b.type === 'delta' &&
@@ -43,20 +50,31 @@ export class EventQueue {
 
   push(ev: ModEvent): void {
     const last = this.#items[this.#items.length - 1];
-    if (last && sameBlock(last, ev)) {
-      this.#items[this.#items.length - 1] = { ...last, text: String(last.text) + String(ev.text) };
+    if (last && last.type === 'delta' && ev.type === 'delta' && sameBlock(last, ev)) {
+      this.#items[this.#items.length - 1] = { ...last, text: last.text + ev.text };
       return;
     }
+    // A level says everything as of now, so an older one still queued says nothing more.
+    if (ev.type === 'level') this.#items = this.#items.filter((e) => e.type !== 'level');
     this.#items.push(ev);
     this.#shed();
   }
 
+  // Puts events ahead of everything queued. A level among them gives way to
+  // one already queued, which was taken later.
   prepend(...evs: ModEvent[]): void {
-    this.#items.unshift(...evs);
+    const queuedLevel = this.#items.some((e) => e.type === 'level');
+    this.#items.unshift(...(queuedLevel ? evs.filter((e) => e.type !== 'level') : evs));
   }
 
   requeue(batch: ModEvent[]): void {
     this.#items.unshift(...batch);
+  }
+
+  // Drops every queued event whose type is not in `types`: what a snapshot
+  // about to be sent already says. Not counted as dropped.
+  keepOnly(types: ReadonlySet<ModEventType>): void {
+    this.#items = this.#items.filter((e) => types.has(e.type));
   }
 
   // The next batch, oldest first: at most `limit` events and, past the first,
@@ -68,7 +86,7 @@ export class EventQueue {
       const head = this.#items[0];
       if (head === undefined) break;
       const n = charsOf(head);
-      if (n > MAX_EVENT_CHARS) {
+      if (n > MAX_EVENT_CHARS && head.type !== 'level') {
         this.#items.shift();
         this.dropped++;
         continue;

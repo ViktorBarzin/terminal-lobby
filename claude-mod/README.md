@@ -8,14 +8,25 @@ are in [ADR-0036](../docs/adr/0036-claude-speaks-to-the-lobby-through-a-mod.md).
 What it does, in short:
 
 - Sends every stored conversation row, tool results, turn starts and ends,
-  streamed text deltas (coalesced to about 50 ms), prompts, model changes and
-  the agent list to `POST /mod/v1/events`, one request in flight at a time.
-  The engine's agent list names subagents and teammates only, so the workflow
-  runs in flight are added to it from the classic Stop and SubagentStop
-  inputs' `background_tasks` (`hooks/lib/background.ts`).
+  streamed text deltas (coalesced to about 50 ms), prompts and model changes
+  to `POST /mod/v1/events`, one request in flight at a time.
+- Sends a `level` snapshot (main turn running, compacting, the main thread's
+  tool, the agents, the dialogs open) after every hello, on every turn edge,
+  dialog settle, Agent call and compaction, and every 30 s, so session-events
+  writes the tmux options from what the mod knows now rather than from edges
+  it may have missed. The engine's agent list names subagents and teammates
+  only; workflow runs are added from the Workflow tool's result until a task
+  notification names them (`hooks/lib/level.ts`). The classic Stop and
+  SubagentStop hooks never reach a mod on this box (measured 2026-10-04).
+- Keeps the main turn, the open dialogs and the workflow runs in `$.state`
+  (`hooks/state.d.ts`), which a hot reload keeps.
+- Says hello only while the listener on session-events' port is root's
+  (`hooks/lib/listener.ts`, the session-events.socket unit), unless
+  `TL_MOD_URL` names another server.
 - Long-polls `GET /mod/v1/poll` for commands: send a prompt, abort the turn,
-  answer an AskUserQuestion, approve or reject a plan or a permission, switch
-  the model, resend history.
+  answer an AskUserQuestion, approve (with words for Claude) or reject a plan
+  or a permission, message a subagent. A prompt that fails after its ack is
+  reported as `command_failed`.
 - Holds plan approvals and permission prompts in `tool.check` and draws its own
   Approve / Reject dialog, raced against the web answer. A web answer takes the
   terminal dialog off the screen.
@@ -29,17 +40,21 @@ What it does, in short:
 | path | what |
 |---|---|
 | `hooks/register.ts` | wires Claude Code events to the logic |
+| `hooks/state.d.ts` | the types contract: what the mod keeps in `$.state` |
+| `hooks/lib/wire.ts` | the wire's event types, mirroring Go's json tags; `MOD_VERSION` |
 | `hooks/lib/link.ts` | hello, the events sender and the command poll, with injected I/O |
-| `hooks/lib/queue.ts` | the outgoing queue: delta merging and the cap |
+| `hooks/lib/queue.ts` | the outgoing queue: delta merging, one level, and the cap |
+| `hooks/lib/level.ts` | the main turn, tool, compaction, open dialogs and workflow runs, as the `level` event sends them |
+| `hooks/lib/dialogs.ts` | the terminal-versus-web races for questions, plans and permissions; one hold per tool call |
+| `hooks/lib/commands.ts` | the poll's commands, their acks and `command_failed` |
+| `hooks/lib/lifecycle.ts` | what `session.end` means for the link (`/clear` and resume keep it) |
+| `hooks/lib/listener.ts` | whether root holds session-events' port |
 | `hooks/lib/shape.ts` | event shaping, media stripping, dialog text, answer shapes, backoff |
 | `hooks/lib/pending.ts` | dialogs waiting on a web answer |
 | `hooks/lib/stamp.ts` | whether session-events has been told where the transcript is |
-| `hooks/lib/decided.ts` | answers already given, for a tool call checked twice |
-| `hooks/lib/open.ts` | dialogs on screen, sent again after every hello |
 | `hooks/lib/summary.ts` | the title request for a lobby-started conversation, and reading the reply |
 | `hooks/lib/command.ts` | whether a lobby prompt is a slash command to run rather than text to submit |
-| `hooks/lib/background.ts` | workflow runs in flight, from `background_tasks`, added to the agent list |
-| `test/*.test.ts` | unit tests for `hooks/lib` |
+| `test/*.test.ts` | unit tests for `hooks/lib`; `test/wire.test.ts` checks the events against `testdata/mod-wire/` |
 
 ## Loading it for a dev session
 
@@ -58,11 +73,19 @@ this process: the rollout switch served off", start Claude with
 
 ```sh
 cd claude-mod
-node --test test/*.test.ts        # unit tests (Node 24 runs .ts directly)
-claude plugin validate .          # manifest and hooks module, as the engine reads them
+npm test                          # unit tests (Node 24 runs .ts directly, no install)
+claude plugin validate .          # manifest, types contract and hooks module, as the engine reads them
+npm install && npm run typecheck  # tsc over hooks/ and test/
 ```
 
-Type-checking needs the engine's declarations, which Claude Code writes to
-`.claude-plugin/types/` the first time it loads the mod (that folder is
-git-ignored). After one load, `tsc -p tsconfig.json` with TypeScript 5.4 or
-newer checks `hooks/`.
+Type-checking needs Claude Code's plugin API declarations, which are Claude
+Code's and are not kept in this repository. `npm run typecheck`
+(`scripts/typecheck.ts`) takes the newest copy on the machine: the one Claude
+Code lays in `.claude-plugin/types/` when it loads the mod from this folder,
+or the plugin-authoring skill's under `/var/tmp/claude-<uid>/bundled-skills/`,
+or the file `CLAUDE_CODE_TYPES` names. CI runs the unit tests only: Claude
+Code writes the declarations only for a signed-in session, which CI has not.
+
+Bump `MOD_VERSION` (`hooks/lib/wire.ts`) and the `version` in
+`.claude-plugin/plugin.json` together whenever `hooks/` changes;
+`test/version.test.ts` checks both against `origin/master`.

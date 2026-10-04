@@ -3,106 +3,83 @@
 // This file wires Claude Code events to the logic in ./lib; keep logic there.
 
 import type { EngineInterface, Register } from 'claude-code';
+import type { TerminalLobbyLevel } from './state.d.ts';
 import { Link } from './lib/link.ts';
-import type { ModEvent } from './lib/queue.ts';
 import { Pending } from './lib/pending.ts';
 import { SeenCommands } from './lib/seen.ts';
 import { TranscriptStamp } from './lib/stamp.ts';
-import { Decided } from './lib/decided.ts';
-import { OpenDialogs } from './lib/open.ts';
 import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
 import { steer } from './lib/steer.ts';
-import { slashCall } from './lib/command.ts';
-import { type ListedAgent, runningWorkflows, withWorkflows } from './lib/background.ts';
+import { Level } from './lib/level.ts';
 import {
-  decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
+  type CheckResult, type Command, type DialogDeps, Holds, OwnDialogs, holdDecision, ownDialog, raceQuestion,
+} from './lib/dialogs.ts';
+import { type CommandDeps, OPS, runCommand } from './lib/commands.ts';
+import { endSession } from './lib/lifecycle.ts';
+import { portOf, trustedListener } from './lib/listener.ts';
+import { type EventBody, type LevelEvent, MOD_VERSION, toAgents } from './lib/wire.ts';
+import {
+  isOwnDialog, planApprovalContext, shapeDelta, shapeModel, shapePrompt, shapeResult, shapeRow, shapeTurnEnd,
+  shapeTurnStart, transcriptPath,
 } from './lib/shape.ts';
 
-const MOD_VERSION = '0.2.0';
-// The command ops runCommand runs, named in every hello so session-events
-// sends a mod only what it can do (steer arrived in 0.2.0).
-const OPS = ['prompt', 'abort', 'answer', 'decide', 'model', 'history', 'steer'];
 const DEFAULT_URL = 'http://127.0.0.1:7685';
 const DRAIN_MS = 1500;
+// The level goes out on every edge, and this often besides while the link is
+// up, so a server that missed an edge is corrected within this long.
+const LEVEL_EVERY_MS = 30_000;
+// Random per module load: a server that sees it change resets what it folded
+// for this conversation and asks for a whole snapshot.
+const INSTANCE = crypto.randomUUID();
+// What survives a hot reload (hooks/state.d.ts).
+const LEVEL_STATE = { plugin: 'terminal-lobby', key: 'level' } as const;
 
-type Command = { id?: unknown; op?: unknown; [field: string]: unknown };
-type Question = { question: string; [k: string]: unknown };
-type ToolResult = { result?: unknown; text?: string; isError?: boolean; deny?: string };
-
-// One set per module instance: a hot reload starts over with a fresh session.start.
+// One set per module instance: a hot reload starts over with a fresh
+// session.start, and what must survive it is in `level`, saved to $.state.
 let link: Link | null = null;
-let mainTurn: string | null = null;
 let lastModel = '';
 let tmuxSession = '';
+// The conversation a /clear or a resume just ended: no hello may name it.
+let endedSid = '';
 // Where this session's transcript will be, and whether the last hello named it.
 let transcriptFile = async (): Promise<string> => '';
 const stamp = new TranscriptStamp();
-// Answers already given, for a tool call whose permission is checked again.
-const decided = new Decided();
+// Writes what `level` saves into $.state, in order; set once the link starts.
+let persist: (saved: TerminalLobbyLevel) => void = () => {};
+const level = new Level((saved) => persist(saved));
+// Sends a level now; set once the link starts.
+let sendLevel: () => void = () => {};
 // Web answers for dialogs on screen, keyed by tool_use_id.
 const webAnswers = new Pending<Command>();
-// The mod's own terminal dialogs ($.ui.ask), keyed by question text. Each
-// promise resolves with a label when the web answered first; the dialog is
-// then answered with that label, which takes it off the screen.
-const ownDialogs = new Map<string, Promise<string>>();
+const own = new OwnDialogs();
+const holds = new Holds<CheckResult>();
+// Words sent with a plan approval from the web, by the plan's tool_use_id.
+const planFeedback = new Map<string, string>();
 // Commands already run here, so one sent again after a re-hello is only re-acked.
 const seenCommands = new SeenCommands();
-// Dialogs on screen, sent again after every hello (lib/open.ts).
-const openDialogs = new OpenDialogs();
 // Whether this conversation still owes its summary (lib/summary.ts).
 const summary = new SummaryOnce();
-// Workflow runs in flight, as the last Stop or SubagentStop listed them
-// (lib/background.ts): the engine's agent list never names one.
-let workflows: ListedAgent[] = [];
-
-async function agentList($: EngineInterface): Promise<ListedAgent[]> {
-  return withWorkflows(await $.agent.list(), workflows);
-}
-
-// Takes the runs from a Stop or SubagentStop input's background_tasks. Either
-// can land before or after turn.complete, so each sends the list itself.
-async function readBackground($: EngineInterface, tasks: unknown): Promise<void> {
-  const w = runningWorkflows(tasks);
-  if (!link || w === undefined) return;
-  workflows = w;
-  try {
-    send({ type: 'agents', agents: await agentList($) });
-  } catch {
-    // Reporting never gets in Claude's way.
-  }
-}
+let dialogDeps: DialogDeps | null = null;
+let commandDeps: CommandDeps | null = null;
 
 const now = () => Date.now();
 
-function send(ev: Omit<ModEvent, 't'> & { t?: number }): void {
+function send(ev: EventBody): void {
   try {
-    link?.send({ t: now(), ...ev } as ModEvent);
+    link?.send({ ...ev, t: now() });
   } catch {
     // Reporting never gets in Claude's way.
   }
 }
 
-// A dialog opening: reported, and kept until it settles so a later hello
-// can report it again.
-function announce(ev: Omit<ModEvent, 't'>): void {
-  const full = { t: now(), ...ev } as ModEvent;
-  openDialogs.add(full);
-  try {
-    link?.send(full);
-  } catch {
-    // Reporting never gets in Claude's way.
-  }
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
-function settled(toolId: string, by: string): void {
-  openDialogs.settle(toolId);
-  send({ type: 'settled', toolId, by });
-}
-
-function ack(id: unknown, ok: boolean, error?: string): void {
-  const outcome = error === undefined ? { ok } : { ok, error };
-  seenCommands.record(id, outcome);
-  send({ type: 'ack', id, ...outcome });
+async function levelEvent($: EngineInterface): Promise<LevelEvent> {
+  const listed = toAgents(await $.agent.list());
+  level.listed(listed.map((a) => a.id));
+  return level.level(level.agents(listed), now());
 }
 
 // Asks for a one-line summary of the conversation's first prompt and sends it
@@ -115,10 +92,6 @@ async function sendSummary($: EngineInterface, text: string): Promise<void> {
   } catch {
     // An untitled session keeps its prompt line in the lobby, as before.
   }
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 async function tmuxSessionName($: EngineInterface, pane: string): Promise<string> {
@@ -155,11 +128,54 @@ async function findTranscript($: EngineInterface, configDir: string, startCwd: s
 }
 
 async function startLink($: EngineInterface, startCwd: string, pane: string): Promise<void> {
-  const base = ((await $.env.get('TL_MOD_URL')) || DEFAULT_URL).replace(/\/+$/, '');
+  const override = await $.env.get('TL_MOD_URL');
+  const base = (override || DEFAULT_URL).replace(/\/+$/, '');
   const home = (await $.env.get('HOME')) || '';
   const configDir = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`;
   tmuxSession = await tmuxSessionName($, pane);
   transcriptFile = async () => transcriptPath(configDir, startCwd, await $.session.id());
+
+  let saving = Promise.resolve();
+  persist = (saved) => {
+    saving = saving.then(() => $.state.set(LEVEL_STATE, saved)).then(() => {}, () => {});
+  };
+  level.restore((await $.state.get(LEVEL_STATE)).value, now());
+  sendLevel = () => {
+    levelEvent($).then((ev) => link?.send(ev), () => {});
+  };
+
+  dialogDeps = {
+    announce: (ev) => {
+      level.open(ev);
+      link?.send(ev);
+    },
+    settled: (toolId, by) => {
+      level.settle(toolId);
+      send({ type: 'settled', toolId, by });
+      sendLevel();
+    },
+    handOver: (toolId) => { level.handOver(toolId); },
+    web: webAnswers,
+    own,
+    ask: (question, options) => $.ui.ask(question, options),
+    now,
+    agentOf: (toolId) => level.agentOf(toolId),
+    feedback: (toolId, words) => { planFeedback.set(toolId, words); },
+  };
+  commandDeps = {
+    send,
+    seen: seenCommands,
+    commandNames: async () => (await $.command.list()).map((x) => x.name),
+    runSlash: (call) => $.command.run(call),
+    submit: (text) => $.prompt.submit({ text, asUser: true }),
+    turns: () => $.session.turns(),
+    summary,
+    summarize: (text) => { void sendSummary($, text); },
+    mainTurn: () => level.mainTurn,
+    abort: (turnId) => $.turn.abort({ turnId }),
+    answer: (toolId, c) => webAnswers.resolve(toolId, c),
+    steer: (agentId, text) => steer({ list: () => $.agent.list(), send: (args) => $.session.send(args) }, agentId, text),
+  };
 
   const call = async (method: string, path: string, body?: unknown) => {
     const init: { method: string; headers?: Record<string, string>; body?: string } = { method };
@@ -182,231 +198,41 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
     after: (ms, fn) => { $.clock.after(ms, fn); },
     sleep: (ms) => $.clock.sleep(ms),
     random: Math.random,
+    // A server address the person set by hand is theirs to choose; the
+    // default port is trusted only while root holds it (lib/listener.ts).
+    trusted: override ? undefined : () => trustedListener((path) => $.fs.read(path), portOf(base)),
     hello: async () => {
       const sid = await $.session.id();
+      if (sid === endedSid) throw new Error('the session still names the conversation that ended');
       tmuxSession = (await tmuxSessionName($, pane)) || tmuxSession;
-      const hello: Record<string, unknown> = {
+      const transcript = await findTranscript($, configDir, startCwd, sid);
+      stamp.hello(transcript !== '');
+      return {
         sid,
         pane,
         tmux: (await $.env.get('TMUX')) || '',
         session: tmuxSession,
         cwd: await $.session.cwd(),
+        ...(transcript ? { transcript } : {}),
+        model: await $.session.model(),
+        version: (await $.session.version()).version,
+        mod: MOD_VERSION,
+        instance: INSTANCE,
+        ops: OPS,
       };
-      const transcript = await findTranscript($, configDir, startCwd, sid);
-      const named = transcript !== '';
-      if (named) hello.transcript = transcript;
-      stamp.hello(named);
-      hello.model = await $.session.model();
-      hello.version = (await $.session.version()).version;
-      hello.mod = MOD_VERSION;
-      hello.ops = OPS;
-      return hello;
     },
-    history: () => historyFields($),
-    open: () => openDialogs.list(),
-    onCommand: (c) => { void runCommand($, c as Command); },
+    // The `history` event's fields: what the session holds, and whether a
+    // main-thread turn is running (the server closes the last turn when not).
+    history: async () => ({ messages: await $.session.messages(), running: level.mainTurn !== null }),
+    open: () => level.dialogs(),
+    level: () => levelEvent($),
+    onCommand: (c) => { if (commandDeps) void runCommand(commandDeps, c as Command); },
   });
   $.clock.after(1, () => link?.start());
-}
-
-// The `history` event's fields: what the session holds, and whether a
-// main-thread turn is running (the server closes the last turn when not).
-async function historyFields($: EngineInterface): Promise<{ messages: unknown; running: boolean }> {
-  return { messages: await $.session.messages(), running: mainTurn !== null };
-}
-
-async function runCommand($: EngineInterface, c: Command): Promise<void> {
-  const repeated = seenCommands.repeat(c);
-  if (repeated) {
-    send({ type: 'ack', id: c.id, ...repeated });
-    return;
-  }
-  let ok = true;
-  let error: string | undefined;
-  try {
-    switch (c.op) {
-      case 'prompt': {
-        const text = String(c.text ?? '');
-        // A slash command runs as one (lib/command.ts). Like submit, run waits
-        // out a busy Claude, so it is acked now and again if it fails.
-        const names = (await $.command.list().catch(() => [])).map((x) => x.name);
-        const call = slashCall(text, names);
-        if (call) {
-          const ran = $.command.run(call);
-          ack(c.id, true);
-          ran.catch((err: unknown) => ack(c.id, false, errorText(err)));
-          return;
-        }
-        // The first prompt of a fresh conversation is the one to title it by;
-        // a resumed one already has a title. Never in the prompt's way.
-        const owesSummary = summary.claim() && (await $.session.turns().catch(() => -1)) === 0;
-        // submit resolves only when the prompt's turn starts, minutes later if
-        // Claude is busy: ack now, and ack again with ok:false if it fails.
-        const submitted = $.prompt.submit({ text, asUser: true });
-        ack(c.id, true);
-        submitted.then(
-          (r) => {
-            if (r.drop !== undefined) {
-              ack(c.id, false, `dropped: ${r.drop}`);
-              return;
-            }
-            // The mod's own prompt.submit hook does not see a prompt it submitted.
-            send({ type: 'prompt', text: r.text, origin: r.origin ?? { kind: 'plugin', name: 'terminal-lobby', asUser: true } });
-            if (owesSummary) void sendSummary($, r.text);
-          },
-          (err: unknown) => ack(c.id, false, errorText(err)),
-        );
-        return;
-      }
-      case 'abort':
-        if (mainTurn === null) { ok = false; error = 'idle'; break; }
-        await $.turn.abort({ turnId: mainTurn });
-        break;
-      case 'answer':
-      case 'decide':
-        if (!webAnswers.resolve(String(c.toolId ?? ''), c)) { ok = false; error = 'gone'; }
-        break;
-      case 'model': {
-        // /model may stop on Claude's own "Switch model?" confirm (a cached
-        // conversation); declining it answers "Kept model as ...".
-        const wanted = String(c.model ?? '');
-        const before = await $.session.model();
-        const r = await $.command.run({ command: 'model', args: wanted });
-        const after = await $.session.model();
-        if (r.exitCode || (after === before && !after.includes(wanted))) {
-          ok = false;
-          error = r.text || `model stayed ${after}`;
-          break;
-        }
-        if (c.effort) {
-          const e = await $.command.run({ command: 'effort', args: String(c.effort) });
-          if (e.exitCode) { ok = false; error = e.text || `effort exited ${e.exitCode}`; }
-        }
-        break;
-      }
-      case 'steer': {
-        // A message the person typed to a subagent open in the Text view.
-        const r = await steer(
-          { list: () => $.agent.list(), send: (args) => $.session.send(args) },
-          String(c.agentId ?? ''),
-          String(c.text ?? ''),
-        );
-        if (!r.ok) { ok = false; error = r.error; }
-        break;
-      }
-      case 'history': {
-        const h = await historyFields($);
-        for (const ev of historyEvents(await $.clock.now(), h.messages, h.running)) send(ev);
-        break;
-      }
-      default:
-        ok = false;
-        error = `unknown op ${String(c.op)}`;
-    }
-  } catch (err) {
-    ok = false;
-    error = errorText(err);
-  }
-  ack(c.id, ok, error);
-}
-
-// AskUserQuestion from the model: Claude's own dialog races the web answer.
-async function raceQuestion(
-  e: { tool_use_id: string; questions: readonly Question[] },
-  next: () => Promise<ToolResult>,
-): Promise<ToolResult> {
-  const toolId = e.tool_use_id;
-  announce({ type: 'ask', toolId, questions: e.questions });
-  try {
-    const web = webAnswers.wait(toolId);
-    const local = next();
-    const winner = await Promise.race([
-      local.then((r) => ({ by: 'terminal' as const, r }), (err: unknown) => ({ by: 'gone' as const, err })),
-      web.promise.then((c) => ({ by: 'web' as const, c })),
-    ]);
-    web.cancel();
-    if (winner.by === 'web') {
-      local.catch(() => {});
-      settled(toolId, 'web');
-      return webAnswer(e.questions, winner.c);
-    }
-    settled(toolId, winner.by);
-    if (winner.by === 'gone') throw winner.err;
-    return winner.r;
-  } finally {
-    openDialogs.settle(toolId);
-  }
-}
-
-// The mod's own $.ui.ask dialog reaching tool.call: race it against a
-// takedown, so a web answer can take it off the screen.
-async function ownDialog(
-  e: { questions: readonly Question[] },
-  takedown: Promise<string>,
-  next: () => Promise<ToolResult>,
-): Promise<ToolResult> {
-  const local = next();
-  const winner = await Promise.race([
-    local.then((r) => ({ by: 'terminal' as const, r })),
-    takedown.then((label) => ({ by: 'web' as const, label })),
-  ]);
-  if (winner.by === 'terminal') return winner.r;
-  local.catch(() => {});
-  const question = e.questions[0]?.question ?? '';
-  return { result: { questions: e.questions, answers: { [question]: winner.label }, annotations: {} } };
-}
-
-type CheckResult = { decision: 'allow' | 'ask' | 'deny'; reason?: string; rule?: string };
-
-// tool.check resolved to `ask`: hold it, draw the mod's dialog, race the web.
-async function holdDecision($: EngineInterface, e: { tool: string; input: unknown; tool_use_id?: string }, r: CheckResult): Promise<CheckResult> {
-  const toolId = e.tool_use_id || `check-${now()}`;
-  const input = (e.input && typeof e.input === 'object' ? e.input : {}) as Record<string, unknown>;
-  if (e.tool === 'ExitPlanMode') {
-    const ev: Omit<ModEvent, 't'> = { type: 'plan', toolId, plan: String(input.plan ?? '') };
-    if (typeof input.planFilePath === 'string') ev.planFilePath = input.planFilePath;
-    announce(ev);
-  } else {
-    const ev: Omit<ModEvent, 't'> = { type: 'permission', toolId, tool: e.tool, input: e.input };
-    if (r.reason) ev.reason = r.reason;
-    announce(ev);
-  }
-
-  const dialog = dialogFor(e.tool, e.input);
-  let question = dialog.question;
-  for (let n = 2; ownDialogs.has(question); n++) question = `${dialog.question} (${n})`;
-  let takedown!: (label: string) => void;
-  const takenDown = new Promise<string>((resolve) => { takedown = resolve; });
-  ownDialogs.set(question, takenDown);
-  const web = webAnswers.wait(toolId);
-  try {
-    const local = $.ui.ask(question, { options: dialog.options, header: dialog.header });
-    const winner = await Promise.race([
-      local.then((label) => ({ by: 'terminal' as const, label }), (err: unknown) => ({ by: 'failed' as const, err })),
-      web.promise.then((c) => ({ by: 'web' as const, c })),
-    ]);
-    if (winner.by === 'web') {
-      local.catch(() => {});
-      const decision = decisionFromWeb(e.tool, winner.c.decision, winner.c.reason);
-      takedown(decision.decision === 'allow' ? dialog.options[0] : dialog.options[1]);
-      settled(toolId, 'web');
-      decided.remember(e.tool_use_id ?? '', decision);
-      return decision;
-    }
-    if (winner.by === 'terminal') {
-      settled(toolId, 'terminal');
-      const decision = decisionFromLabel(e.tool, winner.label);
-      decided.remember(e.tool_use_id ?? '', decision);
-      return decision;
-    }
-    // No dialog could be drawn (or it was dismissed): Claude draws its own.
-    settled(toolId, 'gone');
-    return r;
-  } finally {
-    web.cancel();
-    ownDialogs.delete(question);
-    openDialogs.settle(toolId);
-  }
+  $.clock.every(LEVEL_EVERY_MS, () => {
+    level.expire(now());
+    sendLevel();
+  });
 }
 
 export const register: Register = (on) => {
@@ -424,33 +250,40 @@ export const register: Register = (on) => {
   });
 
   on('session.end', async ($, e, next) => {
-    if (link) {
-      try {
-        send({ type: 'bye', reason: e.reason });
-        await link.drain(DRAIN_MS);
-        // A /clear ends this conversation but not the process: say hello
-        // again for the new one.
-        if (e.reason === 'clear') {
-          summary.reset();
-          link.rehello();
-        }
-        else link.stop();
-      } catch {
-        // Ignored: the session ends either way.
-      }
-    }
-    return next(e);
+    const l = link;
+    if (!l) return next(e);
+    return endSession({
+      bye: (reason, sid) => send({ type: 'bye', reason, sid }),
+      drain: () => l.drain(DRAIN_MS),
+      forget: () => {
+        level.reset();
+        summary.reset();
+        planFeedback.clear();
+        lastModel = '';
+      },
+      rehello: (sid) => {
+        endedSid = sid;
+        l.rehello();
+      },
+      stop: () => l.stop(),
+    }, e, () => next(e));
   });
 
   on('prompt.submit', ($, e, next) => {
-    if (link) send({ type: 'prompt', text: e.text, origin: e.origin });
+    if (link) {
+      send(shapePrompt(e.text, e.origin, now()));
+      if (level.promptSubmitted(e.turnId, e.text)) sendLevel();
+    }
     return next(e);
   });
 
   on('session.append', async ($, e, next) => {
     const r = await next(e);
     if (link && r.message) {
-      try { send(shapeRow(e, r, now())); } catch { /* never block a row */ }
+      try {
+        level.rowSeen(e.agentId, r.message.content);
+        send(shapeRow(e, r, now()));
+      } catch { /* never block a row */ }
       // The first stored row is what creates the transcript: say hello again
       // so session-events can stamp it while this first turn still runs.
       if (stamp.pending) {
@@ -462,24 +295,19 @@ export const register: Register = (on) => {
     return r;
   });
 
+  // Raised for the main loop only (measured 2026-10-04): a subagent's loop
+  // starts with a turn.step that carries its agentId.
   on('turn.start', async ($, e, next) => {
     if (link) {
       try {
-        const agentId = (e as { agentId?: string }).agentId;
-        if (agentId === undefined) mainTurn = e.turnId;
-        const ev: Omit<ModEvent, 't'> = { type: 'turn_start', turnId: e.turnId, text: e.text };
-        if (agentId !== undefined) ev.agentId = agentId;
-        send(ev);
-        // A subagent starting is when the lobby can first message it, and the
-        // engine's list is what says so; otherwise it is sent only as turns end.
-        if (agentId !== undefined) send({ type: 'agents', agents: await agentList($) });
-        if (agentId === undefined) {
-          const pane = await $.env.get('TMUX_PANE');
-          const name = pane ? await tmuxSessionName($, pane) : '';
-          if (name && name !== tmuxSession) {
-            tmuxSession = name;
-            link.rehello();
-          }
+        level.turnStarted(e.turnId);
+        send(shapeTurnStart(e, now()));
+        sendLevel();
+        const pane = await $.env.get('TMUX_PANE');
+        const name = pane ? await tmuxSessionName($, pane) : '';
+        if (name && name !== tmuxSession) {
+          tmuxSession = name;
+          link.rehello();
         }
       } catch { /* reporting only */ }
     }
@@ -490,37 +318,40 @@ export const register: Register = (on) => {
     const r = await next(e);
     if (link) {
       try {
-        if (e.agentId === undefined && mainTurn === e.turnId) mainTurn = null;
-        const ev: Omit<ModEvent, 't'> = { type: 'turn_end', turnId: e.turnId, aborted: e.isAborted, answer: e.answer };
-        if (e.agentId !== undefined) ev.agentId = e.agentId;
-        if (e.usage !== undefined) ev.usage = e.usage;
-        ev.durationMs = e.durationMs;
-        send(ev);
-        send({ type: 'agents', agents: await agentList($) });
+        level.turnEnded(e.turnId, e.agentId);
+        if (e.agentId === undefined) planFeedback.clear();
+        send(shapeTurnEnd(e, now()));
+        sendLevel();
       } catch { /* reporting only */ }
     }
     return r;
   });
 
-  // Where the engine says which workflow runs are still going.
-  on('classic.Stop', async ($, e, next) => {
-    const r = await next(e);
-    await readBackground($, e.background_tasks);
-    return r;
-  });
-  on('classic.SubagentStop', async ($, e, next) => {
-    const r = await next(e);
-    await readBackground($, e.background_tasks);
-    return r;
+  // /compact runs no turn of the main loop (measured 2026-10-04), so without
+  // this the session read done for the half minute Claude was busy (L-F10).
+  // A precompute installs nothing and can run while the session waits.
+  on('session.compact', async ($, e, next) => {
+    if (!link || e.agentId !== undefined || e.trigger === 'precompute') return next(e);
+    level.compacting(true);
+    sendLevel();
+    try {
+      return await next(e);
+    } finally {
+      level.compacting(false);
+      sendLevel();
+    }
   });
 
   on('turn.step', async function* ($, e, next) {
     const live = link !== null;
-    if (live && e.agentId === undefined) {
-      const key = `${e.model}|${e.effort ?? ''}`;
-      if (key !== lastModel) {
-        lastModel = key;
-        send(e.effort === undefined ? { type: 'model', model: e.model } : { type: 'model', model: e.model, effort: e.effort });
+    if (live) {
+      if (level.stepped(e.turnId, e.agentId, now())) sendLevel();
+      if (e.agentId === undefined) {
+        const key = `${e.model}|${e.effort ?? ''}`;
+        if (key !== lastModel) {
+          lastModel = key;
+          send(shapeModel(e.model, e.effort, now()));
+        }
       }
     }
     const stream = next(e);
@@ -528,9 +359,7 @@ export const register: Register = (on) => {
       const { value, done } = await stream.next();
       if (done) return value;
       if (live && (value.kind === 'text' || value.kind === 'thinking') && value.text) {
-        const ev: Omit<ModEvent, 't'> = { type: 'delta', turnId: e.turnId, step: e.index, index: value.index, kind: value.kind, text: value.text };
-        if (e.agentId !== undefined) ev.agentId = e.agentId;
-        send(ev);
+        send(shapeDelta(e, { index: value.index, kind: value.kind, text: value.text }, now()));
       }
       yield value;
     }
@@ -539,32 +368,53 @@ export const register: Register = (on) => {
   on('tool.call', async ($, e, next) => {
     if (!link) return next(e);
     if (e.tool === 'AskUserQuestion') {
-      const questions = (Array.isArray(e.questions) ? e.questions : []) as Question[];
+      const questions = e.questions;
       // A mod dialog ($.ui.ask) is never reported: no ask, settled or result.
       // The copy that drew it can take it down; any other copy lets it be.
-      const takenDown = ownDialogs.get(questions[0]?.question ?? '');
-      if (takenDown) return ownDialog({ questions }, takenDown, () => next(e) as Promise<ToolResult>) as never;
+      const takenDown = own.get(questions[0]?.question ?? '');
+      if (takenDown) return ownDialog({ questions }, takenDown, () => next(e));
       if (isOwnDialog(questions)) return next(e);
-      if (e.agentId === undefined) {
-        const r = await raceQuestion({ tool_use_id: e.tool_use_id, questions }, () => next(e) as Promise<ToolResult>);
-        send(shapeResult(e, r, now()));
-        return r as never;
-      }
     }
-    const r = await next(e);
-    send(shapeResult(e, r as ToolResult, now()));
-    return r;
+    level.toolStarted(e.tool_use_id, e.agentId);
+    try {
+      if (e.tool === 'AskUserQuestion' && e.agentId === undefined && dialogDeps) {
+        try {
+          const r = await raceQuestion(dialogDeps, { tool_use_id: e.tool_use_id, questions: e.questions }, () => next(e));
+          send(shapeResult(e, r, now()));
+          return r;
+        } catch (err) {
+          send(shapeResult(e, { isError: true, text: errorText(err) }, now()));
+          throw err;
+        }
+      }
+      const r = await next(e);
+      send(shapeResult(e, r, now()));
+      // A background agent is listed as soon as its Agent call returns.
+      if (e.tool === 'Agent') sendLevel();
+      if (e.tool === 'Workflow' && level.workflowLaunched(r.result, now())) sendLevel();
+      const words = planFeedback.get(e.tool_use_id);
+      if (e.tool === 'ExitPlanMode' && words !== undefined && r.deny === undefined) {
+        planFeedback.delete(e.tool_use_id);
+        return { ...r, context: [...(r.context ?? []), planApprovalContext(words)] };
+      }
+      return r;
+    } finally {
+      if (level.toolEnded(e.tool_use_id)) sendLevel();
+    }
   });
 
   on('tool.check', async ($, e, next) => {
     const r = await next(e);
     // AskUserQuestion's own menu is its permission prompt: let Claude draw it
     // (tool.call races it against the web). The mod's $.ui.ask comes here too.
-    if (!link || r.decision !== 'ask' || e.tool === 'AskUserQuestion') return r;
-    const prior = decided.recall(e.tool_use_id ?? '');
-    if (prior) return prior;
+    if (!link || !dialogDeps || r.decision !== 'ask' || e.tool === 'AskUserQuestion') return r;
+    // A check with no tool call behind it is another plugin's query: never
+    // held, never shown to anyone (D-F6).
+    const toolId = e.tool_use_id;
+    if (!toolId) return r;
+    const deps = dialogDeps;
     try {
-      return await holdDecision($, e, r);
+      return await holds.run(toolId, () => holdDecision(deps, { tool: e.tool, input: e.input, tool_use_id: toolId }, r));
     } catch {
       return r;
     }

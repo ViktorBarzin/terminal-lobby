@@ -162,7 +162,9 @@ jobs:
           npm test
 
       # The lobby's Claude mod (ADR-0036). Its logic is plain TypeScript that
-      # Node runs by stripping the types, so it needs no install step.
+      # Node runs by stripping the types, so it needs no install step. Its
+      # type check (`npm run typecheck`) stays local: it reads Claude Code's
+      # plugin API declarations, which only a signed-in Claude Code writes.
       - name: test (claude mod)
         run: |
           set -euo pipefail
