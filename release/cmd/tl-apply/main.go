@@ -93,15 +93,16 @@ func apply() int {
 	// execs, the sudo grant, a chunk -- and still break the box, so the probes
 	// run whether or not a unit was restarted.
 	if len(changed) == 0 {
-		fmt.Println("tl-apply: no watched file changed; no restarts")
+		fmt.Println("tl-apply: no watched file changed")
 	} else {
 		fmt.Printf("tl-apply: %d file(s) changed\n", len(changed))
-		targets := release.RestartTargets(release.Package.Units, changed, enabledInstances())
-		for _, t := range targets {
-			fmt.Println("tl-apply: restarting", t)
-			if out, err := exec.Command("systemctl", "restart", t).CombinedOutput(); err != nil {
-				fmt.Fprintf(os.Stderr, "tl-apply: restart %s: %v: %s\n", t, err, out)
-			}
+	}
+	// Run whether or not anything changed: a socket that is down is brought up
+	// on any release (release.RestartSteps).
+	for _, s := range release.RestartSteps(release.Package.Units, changed, enabledInstances(), socketActive) {
+		fmt.Printf("tl-apply: %s %s\n", s.Verb, s.Unit)
+		if out, err := exec.Command("systemctl", s.Verb, s.Unit).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "tl-apply: %s %s: %v: %s\n", s.Verb, s.Unit, err, out)
 		}
 	}
 
@@ -235,6 +236,11 @@ func writeMetrics(probes []release.Probe) {
 	if os.WriteFile(tmp, []byte(body), 0o644) == nil {
 		os.Rename(tmp, dir+"/terminal-lobby.prom")
 	}
+}
+
+// socketActive reports whether systemd is listening on a socket unit.
+func socketActive(unit string) bool {
+	return exec.Command("systemctl", "is-active", "--quiet", unit).Run() == nil
 }
 
 // enabledInstances lists the live instances of each templated unit. Enabling a

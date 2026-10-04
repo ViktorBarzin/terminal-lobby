@@ -78,6 +78,66 @@ letter, so `1.7.7+02cbf4b` is below `1.7.7+c76b116` and four published builds sa
 behind that one unreachable. `dpkg --compare-versions A gt B` answers the
 question for any pair.
 
+## The port systemd holds for session-events
+
+`session-events.socket` owns port 7685, and `session-events.service` takes the
+socket from it at start (`Requires=` and `After=` on the socket, `LISTEN_FDS` in
+the binary). Before this, the port was free for the moment between one process
+exiting and the next binding, on every deploy, and any account on the box can
+bind a port above 1024. Whatever took it in that window would receive every
+Claude mod's hello and send commands the mods run as their own users. With
+systemd holding the port, a restart leaves it bound: connections that arrive
+meanwhile wait in the backlog and the new process accepts them.
+
+pid 1 creates the socket, so `/proc/net/tcp6` shows it as uid 0 whichever
+account serves it. The mod refuses to say hello to a port 7685 listener that is
+not root's. `agentmd@.socket` on the devvm is the same arrangement and reads the
+same way: pid 1 and a `wizard` process share the listener, and its row says uid 0.
+
+The socket listens on every interface, dual-stack, which is what
+`-addr :7685` with `TL_BIND=0.0.0.0` bound before: the cluster's ingress reaches
+the box on 7685. A unit file cannot read `TL_BIND`, so session-events applies it
+at accept time instead: on a box whose `TL_BIND` is `127.0.0.1`, a connection
+that arrives on any other address is closed before anything reads it. A loopback
+`TL_BIND` admits `::1` as well as `127.0.0.1`.
+
+```mermaid
+sequenceDiagram
+  participant P as postinst
+  participant A as tl-apply
+  participant S as systemd
+  Note over P,S: first install of the socket
+  P->>S: enable --now session-events.socket
+  S-->>P: fails, the previous process still holds 7685
+  A->>S: stop session-events
+  A->>S: restart session-events.socket
+  A->>S: start session-events
+  Note over P,S: every later release
+  P->>S: enable --now (socket already up, nothing moves)
+  A->>S: restart session-events (the socket stays bound)
+```
+
+What `tl-apply` does for a unit with a socket (`release.RestartSteps`):
+
+| situation | steps |
+|---|---|
+| binary or service file changed, socket up | `restart session-events`; the socket is never touched |
+| first install of the socket (socket not up) | `stop session-events`, `restart session-events.socket`, `start session-events` |
+| the socket's own file changed | the same three steps, the one release that briefly unbinds the port |
+| socket down, nothing changed | the same three steps, so a box left that way recovers on the next release |
+
+The service runs with `StartLimitIntervalSec=0` and `RestartSec=1`. A service
+that hits systemd's start limit takes its socket down with it, which would free
+the port again.
+
+A revert, or any downgrade, runs this version's `postrm`, which disables and
+stops the socket (and with it the service) before the older `postinst` starts
+the older service. An older version may bind 7685 itself and could not start
+with pid 1 holding the port. When `postrm` runs, dpkg has not yet deleted the
+files the older version drops, so the script cannot tell an older version with
+the socket from one without it, and treats every downgrade the same way. A
+version that ships the socket starts it again from its own `postinst`.
+
 ## Turning it on
 
 The pipeline builds and publishes on every push to master. The trigger that

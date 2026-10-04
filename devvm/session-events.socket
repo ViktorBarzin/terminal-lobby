@@ -1,0 +1,24 @@
+[Unit]
+Description=session-events listening socket (terminal-lobby)
+
+[Socket]
+# systemd holds port 7685 and hands it to session-events at every start, so the
+# port stays bound across restarts and deploys: connections that arrive while
+# the service restarts wait in the backlog instead of being refused. Without
+# this the port was free for the moment between one process exiting and the
+# next binding, and any account on the box could take it in that window and
+# receive every Claude mod's hello. pid 1 creates the socket, so it is root's,
+# which is what a mod checks before it says hello.
+#
+# Every interface, dual-stack, as session-events bound it itself: the cluster's
+# ingress reaches the authed web surface on this port. TL_BIND, which a unit
+# file cannot read, still narrows it: session-events closes a connection that
+# arrived on an address TL_BIND does not admit.
+ListenStream=7685
+BindIPv6Only=both
+# Go sets TCP_NODELAY on every connection it accepts itself; this keeps that
+# true of the ones systemd queues.
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

@@ -1,6 +1,13 @@
 [Unit]
 Description=session-events (terminal-lobby v2 text-mode backend)
 After=network.target
+# The port is session-events.socket's, handed over at start. A restart of this
+# unit never unbinds it; only a restart of the socket does.
+Requires=session-events.socket
+After=session-events.socket
+# A crash loop must not give up: a service that hits the start limit takes its
+# socket down with it, and the port is free again.
+StartLimitIntervalSec=0
 
 [Service]
 # Every service reads the same configuration: the identity header name, the
@@ -13,14 +20,18 @@ After=network.target
 # upgrade never prompts about a conffile you edited.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
-# Binds :7685 on all interfaces so the K8s ingress can reach the AUTHED web
+# Serves :7685 on all interfaces so the K8s ingress can reach the AUTHED web
 # surface (/events, /prompt, /cancel). The /hooks/* endpoints are hard-gated to
-# loopback in code, and the ingress must not route them publicly.
+# loopback in code, and the ingress must not route them publicly. The socket
+# comes from session-events.socket; -addr is what a run without it binds, and
+# its port is the socket's.
 ExecStart=/usr/local/bin/session-events -addr :7685 -usermap /etc/ttyd-user-map -home-base /home
 User=wizard
 Restart=always
+RestartSec=1
 # Runs as wizard; reaches other users' tmux/transcripts via `sudo -u <user> tmux`
 # (the same NOPASSWD tmux grant tmux-api uses, in devvm/sudoers.d-ttyd-users).
 
 [Install]
 WantedBy=multi-user.target
+Also=session-events.socket

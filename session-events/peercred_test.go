@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -165,5 +166,74 @@ func TestPeerOwnsClaimOverARealConnection(t *testing.T) {
 	}
 	if code := post("nobody-else"); code != http.StatusForbidden {
 		t.Fatalf("hook from %s claiming nobody-else: got %d, want 403", me.Username, code)
+	}
+}
+
+// procRows lays down a /proc/net/tcp table of the given rows, each a client at
+// 127.0.0.1:50000 connected to 127.0.0.1:7685, in the given state and owned by
+// the given uid.
+func procRows(t *testing.T, rows ...[2]string) {
+	t.Helper()
+	body := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+	for i, r := range rows {
+		body += fmt.Sprintf("   %d: 0100007F:C350 0100007F:1E05 %s 00000000:00000000 00:00000000 00000000 %5s        0 %d 1 0000000000000000 20 0 0 10 -1\n",
+			i, r[0], r[1], 123456+i)
+	}
+	p := filepath.Join(t.TempDir(), "tcp")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := procNetTCP
+	procNetTCP = []string{p}
+	t.Cleanup(func() { procNetTCP = old })
+}
+
+// F7. A client that closes its socket before the server reads the request
+// leaves it orphaned, and the kernel then reports it as root's: FIN_WAIT1 and
+// TIME_WAIT entries show uid 0 (measured on this box, all 37 TIME_WAIT
+// entries). Only a socket that is still connected says who opened it, and no
+// lobby client runs as root, so root is never an answer.
+func TestPeerUIDTakesOnlyAConnectedSocketThatIsNotRoots(t *testing.T) {
+	me := strconv.Itoa(os.Getuid())
+	if me == "0" {
+		t.Skip("running as root; the fixture needs a uid that is not 0")
+	}
+	for _, tc := range []struct {
+		name    string
+		rows    [][2]string
+		wantUID int
+		wantErr bool
+	}{
+		{"established", [][2]string{{"01", me}}, os.Getuid(), false},
+		{"fin_wait1, orphaned", [][2]string{{"04", "0"}}, 0, true},
+		{"fin_wait1, still owned", [][2]string{{"04", me}}, 0, true},
+		{"time_wait", [][2]string{{"06", "0"}}, 0, true},
+		{"close_wait", [][2]string{{"08", me}}, 0, true},
+		{"established but root's", [][2]string{{"01", "0"}}, 0, true},
+		// A port the kernel reused while an old connection on the same four
+		// endpoints sits in TIME_WAIT. Counting that row made the match look
+		// ambiguous and refused the live caller.
+		{"established beside a time_wait twin", [][2]string{{"06", "0"}, {"01", me}}, os.Getuid(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			procRows(t, tc.rows...)
+			uid, err := peerUID(net.ParseIP("127.0.0.1"), 50000, net.ParseIP("127.0.0.1"), 7685)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("peerUID = %d, %v; want error %v", uid, err, tc.wantErr)
+			}
+			if !tc.wantErr && uid != tc.wantUID {
+				t.Fatalf("peerUID = %d, want %d", uid, tc.wantUID)
+			}
+		})
+	}
+}
+
+// Every route that identifies its caller this way refuses root, not only the
+// hook routes: the mod's hello and agent-api's internal routes go through
+// peerUser as well.
+func TestPeerUserRefusesRoot(t *testing.T) {
+	procRows(t, [2]string{"01", "0"})
+	if who, err := peerUser(hookReq("")); err == nil {
+		t.Fatalf("peerUser named %q for a root-owned socket, want an error", who)
 	}
 }

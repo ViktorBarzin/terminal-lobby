@@ -41,6 +41,16 @@ var procNetTCP = []string{"/proc/net/tcp", "/proc/net/tcp6"}
 
 var errNoPeerSocket = errors.New("no socket in /proc/net/tcp matches the peer")
 
+// errRootPeer is a match owned by root. No lobby client runs as root, and the
+// kernel reports a socket as root's once its process has let go of it (an
+// orphan in FIN_WAIT1, every TIME_WAIT entry), so root says nothing about who
+// sent the request.
+var errRootPeer = errors.New("the peer's socket is owned by root")
+
+// tcpEstablished is the st column of a connected socket. A socket in any other
+// state may have outlived the process that opened it.
+const tcpEstablished = "01"
+
 // peerOwnsClaim refuses a hook request whose body names a "user" the calling
 // account does not own. A peer that cannot be identified is refused too: the
 // alternative is trusting the body again, which is the thing this closes.
@@ -104,7 +114,8 @@ func peerUser(r *http.Request) (string, error) {
 
 // peerUID finds the socket the peer opened and answers with the uid that owns
 // it. An ambiguous match (two sockets share the peer's endpoint and we do not
-// know our own) is an error rather than a guess.
+// know our own) is an error rather than a guess. Only a connected socket counts,
+// and a root-owned one is refused (errRootPeer).
 func peerUID(peerIP net.IP, peerPort int, localIP net.IP, localPort int) (int, error) {
 	found := -1
 	for _, path := range procNetTCP {
@@ -118,7 +129,7 @@ func peerUID(peerIP net.IP, peerPort int, localIP net.IP, localPort int) (int, e
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
 			fields := strings.Fields(sc.Text())
-			if len(fields) < 8 {
+			if len(fields) < 8 || fields[3] != tcpEstablished {
 				continue
 			}
 			ip, port, ok := parseProcAddr(fields[1])
@@ -145,6 +156,9 @@ func peerUID(peerIP net.IP, peerPort int, localIP net.IP, localPort int) (int, e
 	}
 	if found < 0 {
 		return 0, errNoPeerSocket
+	}
+	if found == 0 {
+		return 0, errRootPeer
 	}
 	return found, nil
 }

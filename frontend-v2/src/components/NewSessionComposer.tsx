@@ -1122,7 +1122,7 @@ async function sendFirstPrompt(o: {
 
 /** How long a pick in the Model sheet waits for the next before its slot is
  *  warmed, so a model and then an effort boot one Claude rather than two. */
-export const WARM_PICK_MS = 1000;
+const WARM_PICK_MS = 1000;
 
 /** A hello wait at least this long means the slot's Claude was still booting
  *  at Send: a booted slot's mod follows the rename in well under a second, and
@@ -1136,7 +1136,7 @@ const BOOTING_WAIT_MS = 1500;
  * The terminal's own attach can win the claim, and then this claim finds
  * nothing; the hello wait still says whether the slot it took was booted.
  */
-export function slotOutcome(c: ClaimResult | undefined, helloWaitMs: number | null): string {
+function slotOutcome(c: ClaimResult | undefined, helloWaitMs: number | null): string {
   if (c?.found === "stale") return "stale";
   if (helloWaitMs === null) return "unknown";
   if (helloWaitMs < BOOTING_WAIT_MS) return "warm";

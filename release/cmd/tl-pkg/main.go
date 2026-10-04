@@ -69,6 +69,9 @@ func main() {
 	post = strings.Replace(post, "UNITS_TO_RETIRE", strings.Join(release.Package.Retire, " "), 1)
 	post = strings.Replace(post, "MIGRATE_CONFIG", release.MigrateConfigSnippet, 1)
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/postinst"), []byte(post), 0o755))
+	// Lets go of the ports systemd holds when dpkg moves to an older version,
+	// whose services may bind them themselves (release.PostrmScript).
+	check(os.WriteFile(filepath.Join(*out, "DEBIAN/postrm"), []byte(release.RenderPostrm(*version)), 0o755))
 
 	// Without this dpkg treats every shipped file as replaceable, and an
 	// operator's edit to /etc/terminal-lobby.conf is lost on the next upgrade.
