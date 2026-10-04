@@ -17,7 +17,14 @@ import { createSignal, Show } from "solid-js";
 import type { SlashCommand } from "../src/logic/compose.logic";
 import { NewSessionComposer } from "../src/components/NewSessionComposer";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
-import { ApiError, type ClaimRequest, type LobbyApi } from "../src/lib/lobby-api";
+import {
+  ApiError,
+  type ClaimRequest,
+  type ClaimResult,
+  type LobbyApi,
+  type SlotFlags,
+} from "../src/lib/lobby-api";
+import type { FirstPromptAccepted } from "../src/lib/first-prompt";
 import { rememberTermSize } from "../src/lib/term-size";
 import {
   emptyLayout,
@@ -45,11 +52,15 @@ class FakeApi implements LobbyApi {
   prewarmed: string[] = [];
   released: string[] = [];
   titles: [string, string][] = [];
-  async prewarm(dir: string) {
-    this.prewarmed.push(dir);
+  /** A slot with flags is recorded as dir|model|effort, one without as dir. */
+  static slot(dir: string, flags?: SlotFlags): string {
+    return flags && (flags.model || flags.effort) ? `${dir}|${flags.model}|${flags.effort}` : dir;
   }
-  async releasePrewarm(dir: string) {
-    this.released.push(dir);
+  async prewarm(dir: string, flags?: SlotFlags) {
+    this.prewarmed.push(FakeApi.slot(dir, flags));
+  }
+  async releasePrewarm(dir: string, flags?: SlotFlags) {
+    this.released.push(FakeApi.slot(dir, flags));
   }
   async whoami() {
     return this.whoamiVal;
@@ -103,6 +114,12 @@ interface Wire {
   }[];
   /** Every claim the composer fired at Send. */
   claims: ClaimRequest[];
+  /** What each claim answers. */
+  claimAnswer: ClaimResult;
+  /** What the delivery reports as accepted, when it succeeds. */
+  accepted?: FirstPromptAccepted;
+  /** Every Send-to-Accepted report the composer made. */
+  reports: Record<string, unknown>[];
   /** When each delivery was told Send was pressed, and whether the page hid. */
   timed: { sentAt: number | undefined; hidden: boolean | undefined }[];
   uploads: { files: readonly File[]; session: string }[];
@@ -149,8 +166,9 @@ function mount(
         }}
         claim={async (body) => {
           wire.claims.push(body);
-          return true;
+          return wire.claimAnswer;
         }}
+        report={(attrs) => void wire.reports.push(attrs)}
         upload={async (files, session, opts) => {
           wire.uploads.push({ files, session });
           const i = Math.min(wire.uploads.length - 1, wire.chips.length - 1);
@@ -178,6 +196,7 @@ function mount(
           const i = Math.min(wire.delivered.length - 1, wire.results.length - 1);
           const ok = wire.results[i] ?? true;
           if (!ok && wire.refused) o.onRefused?.(wire.refused);
+          if (ok && wire.accepted) o.onAccepted?.(wire.accepted);
           return ok;
         }}
       />
@@ -189,6 +208,8 @@ function mount(
 const emptyWire = (): Wire => ({
   delivered: [],
   claims: [],
+  claimAnswer: { claimed: true, found: "claimed" },
+  reports: [],
   timed: [],
   uploads: [],
   chips: [[]],
@@ -397,7 +418,9 @@ describe("<NewSessionComposer> — claiming the slot at Send", () => {
     m.store.dispose();
   });
 
-  it("does not claim for a model the slot was not started on", async () => {
+  // A slot can be warmed on the model and effort picked in the Model sheet,
+  // so the claim says which (docs/plans/2026-10-04-warm-slot-at-send-design.md).
+  it("claims with the model picked in the sheet", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -407,9 +430,55 @@ describe("<NewSessionComposer> — claiming the slot at Send", () => {
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
 
-    await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.claims).toEqual([]);
+    await waitFor(() => expect(w.claims.length).toBe(1));
+    expect(w.claims[0]).toMatchObject({ cmd: "claude", model: "claude-sonnet-5", effort: "" });
     m.store.dispose();
+  });
+});
+
+// Send to Accepted on the browser's clock, with what the claim and the hold
+// found, for the alert on a day's slow first prompts.
+describe("<NewSessionComposer> — timing the first prompt", () => {
+  const send = async (claimAnswer: ClaimResult, accepted: FirstPromptAccepted) => {
+    const api = new FakeApi();
+    const w = { ...emptyWire(), claimAnswer, accepted };
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(w.reports.length).toBe(1));
+    m.store.dispose();
+    return w.reports[0];
+  };
+
+  it("reports a booted slot as warm", async () => {
+    expect(await send({ claimed: true, found: "claimed" }, { ms: 640, helloWaitMs: 0 })).toEqual({
+      "tl.ms": 640,
+      "tl.slot": "warm",
+      "tl.hidden": false,
+    });
+  });
+
+  it("reports a slot still booting at Send", async () => {
+    const r = await send({ claimed: true, found: "claimed" }, { ms: 5200, helloWaitMs: 4600 });
+    expect(r).toMatchObject({ "tl.slot": "booting" });
+  });
+
+  it("reports a stale slot the claim had to drop", async () => {
+    const r = await send({ claimed: false, found: "stale" }, { ms: 9700, helloWaitMs: 9000 });
+    expect(r).toMatchObject({ "tl.slot": "stale" });
+  });
+
+  it("reports no slot when the claim found none and Claude had to boot", async () => {
+    const r = await send({ claimed: false, found: "none" }, { ms: 4000, helloWaitMs: 3500 });
+    expect(r).toMatchObject({ "tl.slot": "none" });
+  });
+
+  // The terminal's own attach can win the claim, and then this one finds
+  // nothing; a hello already there says the slot it took was booted.
+  it("reports warm when the attach won the claim to a booted slot", async () => {
+    const r = await send({ claimed: false, found: "none" }, { ms: 700, helloWaitMs: 40 });
+    expect(r).toMatchObject({ "tl.slot": "warm" });
   });
 });
 
@@ -700,6 +769,49 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
     // And it did not ask for a second slot on the way out either.
     expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]);
     store.dispose();
+  });
+
+  // A model or effort picked in the sheet is warmed on pick, and the guess
+  // for the default is handed back (docs/plans/2026-10-04-warm-slot-at-send-design.md).
+  it("warms a slot on the model picked in the sheet, and hands the default guess back", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
+
+    choose(m.container, "Model for new session", "claude-sonnet-5");
+
+    await waitFor(
+      () =>
+        expect(api.prewarmed).toEqual([
+          "/home/wizard/code/alpha",
+          "/home/wizard/code/alpha|claude-sonnet-5|",
+        ]),
+      { timeout: 3000 },
+    );
+    expect(api.released).toEqual(["/home/wizard/code/alpha"]);
+    m.store.dispose();
+  });
+
+  // A slot can go stale while the composer sits open (a deploy), and the
+  // server replaces a stale one when asked, so coming back to the tab asks.
+  it("asks for its slot again when the tab comes back", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(api.prewarmed.length).toBe(1));
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(api.prewarmed).toEqual(["/home/wizard/code/alpha", "/home/wizard/code/alpha"]),
+    );
+    expect(api.released).toEqual([]);
+    m.store.dispose();
   });
 });
 

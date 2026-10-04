@@ -396,17 +396,41 @@ export async function setSessionGrid(name: string, cols: number, rows: number): 
  * refused (unknown directory, too many outstanding guesses), and every failure
  * here is swallowed. The create this precedes works either way — just without
  * the head start — so nothing about it is worth interrupting the user for.
+ *
+ * `flags` is the model and effort picked in the Model sheet: a running Claude
+ * cannot be re-flagged, so the slot is warmed on them. Asking again for a slot
+ * that exists is cheap, and replaces it if it runs an older mod.
  */
-export async function prewarm(dir: string): Promise<void> {
+export async function prewarm(dir: string, flags?: SlotFlags): Promise<void> {
   try {
     await req("/sessions/prewarm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dir }),
+      body: JSON.stringify(slotBody(dir, flags)),
     });
   } catch {
     /* best-effort */
   }
+}
+
+/** The model and effort a slot is warmed on; "" is the default. */
+export interface SlotFlags {
+  model: string;
+  effort: string;
+}
+
+/** A prewarm body: the flags only when there is one to send. */
+function slotBody(dir: string, flags?: SlotFlags): { dir: string } & Partial<SlotFlags> {
+  return flags && (flags.model || flags.effort)
+    ? { dir, model: flags.model, effort: flags.effort }
+    : { dir };
+}
+
+/** What a claim did: whether it claimed, and what the script found there
+ *  (`claimed`, `stale`, `none`, or "" when it could not say). */
+export interface ClaimResult {
+  claimed: boolean;
+  found: string;
 }
 
 /** What `claimSlot` asks for: the session, and how its attach would start it. */
@@ -431,9 +455,10 @@ export interface ClaimRequest {
  * WebSocket, which on a phone's link is the slowest part of a create (iPhone
  * WebSocket handshake 1.2s at p90, 2026-10-03). A HINT like `prewarm`: the
  * attach still claims when this does not, so every failure is swallowed.
- * Resolves whether a slot was claimed.
+ * Resolves what the claim did, which the composer reports beside the first
+ * prompt's timing.
  */
-export async function claimSlot(body: ClaimRequest): Promise<boolean> {
+export async function claimSlot(body: ClaimRequest): Promise<ClaimResult> {
   try {
     const res = await req("/sessions/claim", {
       method: "POST",
@@ -441,9 +466,12 @@ export async function claimSlot(body: ClaimRequest): Promise<boolean> {
       body: JSON.stringify(body),
     });
     const got: unknown = await res.json();
-    return typeof got === "object" && got !== null && "claimed" in got && got.claimed === true;
+    if (typeof got !== "object" || got === null) return { claimed: false, found: "" };
+    const claimed = "claimed" in got && got.claimed === true;
+    const found = "found" in got && typeof got.found === "string" ? got.found : "";
+    return { claimed, found: found || (claimed ? "claimed" : "") };
   } catch {
-    return false;
+    return { claimed: false, found: "" };
   }
 }
 
@@ -499,12 +527,12 @@ export async function restartSession(name: string): Promise<void> {
 /** Release a guess that came to nothing, so its ~530MB is not held until the
  *  server's TTL collects it. Called when the create input closes without
  *  creating; the TTL remains the backstop for a closed tab. */
-export async function releasePrewarm(dir: string): Promise<void> {
+export async function releasePrewarm(dir: string, flags?: SlotFlags): Promise<void> {
   try {
     await req("/sessions/prewarm", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dir }),
+      body: JSON.stringify(slotBody(dir, flags)),
     });
   } catch {
     /* best-effort */
@@ -573,8 +601,8 @@ export interface LobbyApi {
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
-  prewarm(dir: string): Promise<void>;
-  releasePrewarm(dir: string): Promise<void>;
+  prewarm(dir: string, flags?: SlotFlags): Promise<void>;
+  releasePrewarm(dir: string, flags?: SlotFlags): Promise<void>;
   /** Bring a suspended session back. Optional for the same reason
    *  `killSessionKeepalive` is: a test double that never suspends anything
    *  satisfies this interface unchanged, and the store treats an absent one as

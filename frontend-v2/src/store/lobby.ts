@@ -30,7 +30,13 @@ import { registerKillUndoHandlers } from "./undo.kill";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
 import { registerLocalUndoHandlers } from "./undo.local";
 import { registerTitleUndoHandlers } from "./undo.titles";
-import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi } from "../lib/lobby-api";
+import {
+  ApiError,
+  lobbyApi,
+  ORIGIN_USER,
+  type LobbyApi,
+  type SlotFlags,
+} from "../lib/lobby-api";
 import {
   emptyLayout,
   NAME_RE,
@@ -183,9 +189,9 @@ export interface LobbyStore {
   createProject(name: string, dir?: string): Promise<boolean>;
   /** Ask for a Claude session started ahead of a create, in this directory.
    *  A hint: failures are swallowed and the create works either way. */
-  prewarm(dir: string): Promise<void>;
+  prewarm(dir: string, flags?: SlotFlags): Promise<void>;
   /** Hand back a slot whose create never happened. */
-  releasePrewarm(dir: string): Promise<void>;
+  releasePrewarm(dir: string, flags?: SlotFlags): Promise<void>;
   /**
    * Bring a suspended session back: `claude --resume` in its frozen pane.
    *
@@ -1085,12 +1091,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   // Routed through the store, like every other server call a component makes,
   // rather than reaching for the module singleton — which is also what lets a
   // test observe them.
-  async function prewarm(dir: string): Promise<void> {
-    await api.prewarm(dir);
+  async function prewarm(dir: string, flags?: SlotFlags): Promise<void> {
+    await api.prewarm(dir, flags);
   }
 
-  async function releasePrewarm(dir: string): Promise<void> {
-    await api.releasePrewarm(dir);
+  async function releasePrewarm(dir: string, flags?: SlotFlags): Promise<void> {
+    await api.releasePrewarm(dir, flags);
   }
 
   /**

@@ -33,7 +33,8 @@ import {
   modelRequest,
   type ModelHarness,
 } from "../lib/models";
-import { claimSlot } from "../lib/lobby-api";
+import { claimSlot, type ClaimResult, type SlotFlags } from "../lib/lobby-api";
+import { track, type TlAttrs } from "../telemetry/track";
 import { lastTermSize } from "../lib/term-size";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
@@ -54,6 +55,7 @@ import { isCoarsePointer } from "../mobile/pointer";
 import {
   deliverFirstPrompt,
   watchHidden,
+  type FirstPromptAccepted,
   type FirstPromptTool,
   firstPromptDelivery,
   TRUST_NOTICE,
@@ -168,6 +170,9 @@ export const NewSessionComposer: Component<{
    *  start in. Injected by tests; the default is the real endpoint. */
   catalogue?: (dir: string) => Promise<Catalogue>;
   setModel?: typeof setSessionModel;
+  /** Where Send-to-Accepted is reported; the default is the usage event
+   *  prompt.accepted, which tmux-api counts for the slow-first-prompt alert. */
+  report?: (attrs: TlAttrs) => void;
 }> = (props) => {
   const avail = (): CommandAvailability => props.available?.() ?? {};
   const cmd = (): NewCommand =>
@@ -175,13 +180,14 @@ export const NewSessionComposer: Component<{
   /** Which CLI is starting, or null for a shell, which has none. */
   const harness = (): ModelHarness | null => modelHarness(cmd() as SessionTool);
   const choice = (h: ModelHarness) => modelChoiceFor(props.prefs.prefs(), h);
-  /** Whether a session created now could take a warm slot: Claude, with no
-   *  model or effort flag on its launch (App.newLaunch reads the same). */
-  const claimLaunch = (): boolean => {
+  /** The slot a session created now would claim: Claude, on the model and
+   *  effort picked in the Model sheet (both "" for the default), or undefined
+   *  for anything the pool does not hold. */
+  const slotFlags = (): SlotFlags | undefined => {
     const h = harness();
-    if (cmd() !== "claude" || h !== "claude") return false;
+    if (cmd() !== "claude" || h !== "claude") return undefined;
     const req = modelRequest(h, choice(h));
-    return !req || (req.model === "" && req.effort === "");
+    return { model: req?.model ?? "", effort: req?.effort ?? "" };
   };
 
   // ---- pi's models ---------------------------------------------------------
@@ -262,34 +268,73 @@ export const NewSessionComposer: Component<{
   // codex or a shell is a Claude nobody will adopt, held until the server's
   // TTL collects it. Moving the command off Claude hands it back.
   //
+  // On the model and effort picked in the Model sheet too, because a running
+  // Claude cannot be re-flagged: a pick swaps the guess for one booted on it
+  // (docs/plans/2026-10-04-warm-slot-at-send-design.md). A pick waits
+  // WARM_PICK_MS for the next one, so choosing a model and then an effort
+  // boots one Claude rather than two.
+  //
   // Held separately from the project name because a project's dir can change
   // under us, and releasing a different directory would leave the warmed slot
   // behind and collect one nobody asked about.
-  let warmedDir: string | null = null;
+  type WarmTarget = { dir: string; flags: SlotFlags };
+  let warmed: WarmTarget | null = null;
   // Set once submit has handed the warm slot to the attach. From then on this
   // composer neither warms nor releases: creating WRITES THE LAYOUT, which sets
   // the layout signal synchronously (store.saveLayout → applyLocalLayout) while
-  // we are still mounted, so the effect below re-runs, finds warmedDir back at
+  // we are still mounted, so the effect below re-runs, finds warmed back at
   // null and re-arms it — and the unmount that follows `select()` would then
   // hand back, over DELETE /sessions/prewarm, the very slot ttyd is a few
   // hundred milliseconds away from claiming. Every create into a named project
   // would boot cold.
   let handedOff = false;
+  let pickTimer: ReturnType<typeof setTimeout> | undefined;
+  const sameTarget = (a: WarmTarget | null, b: WarmTarget | undefined): boolean =>
+    (a === null && b === undefined) ||
+    (a !== null &&
+      b !== undefined &&
+      a.dir === b.dir &&
+      a.flags.model === b.flags.model &&
+      a.flags.effort === b.flags.effort);
   const releaseWarm = (): void => {
-    if (warmedDir === null) return;
-    void props.store.releasePrewarm(warmedDir);
-    warmedDir = null;
+    clearTimeout(pickTimer);
+    if (warmed === null) return;
+    void props.store.releasePrewarm(warmed.dir, warmed.flags);
+    warmed = null;
+  };
+  const warm = (t: WarmTarget): void => {
+    warmed = t;
+    void props.store.prewarm(t.dir, t.flags);
   };
   createEffect(() => {
-    const dir = cmd() === "claude" ? dirFor(props.project()) : undefined;
-    if (handedOff) return;
-    if (dir === warmedDir || (dir === undefined && warmedDir === null)) return;
+    const flags = slotFlags();
+    const dir = flags ? dirFor(props.project()) : undefined;
+    const target = flags && dir ? { dir, flags } : undefined;
+    if (handedOff || sameTarget(warmed, target)) return;
+    // Only the flags moved: a pick in the sheet, which may have a second
+    // pick right behind it.
+    const pick = warmed !== null && target !== undefined && warmed.dir === target.dir;
     // Changing project hands the old guess back rather than leaving ~530MB for
     // the server's TTL to notice.
     releaseWarm();
-    if (!dir) return;
-    warmedDir = dir;
-    void props.store.prewarm(dir);
+    if (!target) return;
+    if (!pick) return warm(target);
+    pickTimer = setTimeout(() => {
+      if (!handedOff && warmed === null) warm(target);
+    }, WARM_PICK_MS);
+  });
+  // A slot can go stale while this sits open, when a deploy installs a new
+  // mod, and the server replaces a stale slot when asked. So coming back to
+  // the tab or the window asks again; a slot that is current costs nothing.
+  const askAgain = (): void => {
+    if (handedOff || warmed === null || document.visibilityState === "hidden") return;
+    void props.store.prewarm(warmed.dir, warmed.flags);
+  };
+  window.addEventListener("focus", askAgain);
+  document.addEventListener("visibilitychange", askAgain);
+  onCleanup(() => {
+    window.removeEventListener("focus", askAgain);
+    document.removeEventListener("visibilitychange", askAgain);
   });
   // Leaving the composer without creating means the guess was wrong.
   onCleanup(releaseWarm);
@@ -407,7 +452,8 @@ export const NewSessionComposer: Component<{
       return false;
     }
     handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
-    warmedDir = null; // claimed by the attach; not ours to hand back
+    clearTimeout(pickTimer);
+    warmed = null; // claimed by the attach; not ours to hand back
     const shell = naming();
     const store = props.store;
     // Whether the server should wait for the pane, and for which harness —
@@ -448,19 +494,19 @@ export const NewSessionComposer: Component<{
     }
     // Claim the warm slot now rather than when the terminal attaches, which on
     // a phone's link is seconds away (token, terminal code, WebSocket). Only
-    // what a slot can be: Claude, started with no model or effort flags. A
-    // hint: the attach claims anyway when this does not.
-    const launch = claimLaunch();
-    if (launch) {
-      void (props.claim ?? claimSlot)({
-        name: id,
-        dir: dirFor(project) ?? "",
-        cmd: "claude",
-        model: "",
-        effort: "",
-        ...lastTermSize(),
-      });
-    }
+    // what a slot can be: Claude, on the model and effort picked here. A hint:
+    // the attach claims anyway when this does not.
+    const flags = slotFlags();
+    const claimed: Promise<ClaimResult | undefined> = flags
+      ? (props.claim ?? claimSlot)({
+          name: id,
+          dir: dirFor(project) ?? "",
+          cmd: "claude",
+          ...flags,
+          ...lastTermSize(),
+        })
+      : Promise.resolve(undefined);
+    const report = props.report ?? ((attrs: TlAttrs) => track("prompt.accepted", attrs));
     void sendFirstPrompt({
       session: id,
       text,
@@ -471,6 +517,14 @@ export const NewSessionComposer: Component<{
       ...delivery,
       deliver,
       upload,
+      onAccepted: (a) =>
+        void claimed.then((c) =>
+          report({
+            "tl.ms": a.ms,
+            "tl.slot": slotOutcome(c, a.helloWaitMs),
+            "tl.hidden": shown.hidden(),
+          }),
+        ),
     }).finally(shown.stop);
     return true;
   };
@@ -1017,6 +1071,8 @@ async function sendFirstPrompt(o: {
   hidden: () => boolean;
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
+  /** Told when the prompt was accepted (lib/first-prompt.ts). */
+  onAccepted?: (a: FirstPromptAccepted) => void;
 }): Promise<void> {
   const attached = await o.upload(o.files, o.session, {
     notify: (message, kind) => void showToast(message, kind, 8000),
@@ -1041,6 +1097,7 @@ async function sendFirstPrompt(o: {
     onRefused: (reason) => (refused = reason),
     sentAt: o.sentAt,
     hidden: o.hidden,
+    ...(o.onAccepted ? { onAccepted: o.onAccepted } : {}),
   });
   if (ok || lines.length === 0) return;
   // The session exists and is what the person is now looking at, so the text
@@ -1061,4 +1118,27 @@ async function sendFirstPrompt(o: {
     return;
   }
   showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
+}
+
+/** How long a pick in the Model sheet waits for the next before its slot is
+ *  warmed, so a model and then an effort boot one Claude rather than two. */
+export const WARM_PICK_MS = 1000;
+
+/** A hello wait at least this long means the slot's Claude was still booting
+ *  at Send: a booted slot's mod follows the rename in well under a second, and
+ *  a boot takes 3s or more. */
+const BOOTING_WAIT_MS = 1500;
+
+/**
+ * What a first prompt found, for its timing report: a booted slot (warm), a
+ * slot still booting, a stale slot the claim dropped, no slot, or unknown.
+ *
+ * The terminal's own attach can win the claim, and then this claim finds
+ * nothing; the hello wait still says whether the slot it took was booted.
+ */
+export function slotOutcome(c: ClaimResult | undefined, helloWaitMs: number | null): string {
+  if (c?.found === "stale") return "stale";
+  if (helloWaitMs === null) return "unknown";
+  if (helloWaitMs < BOOTING_WAIT_MS) return "warm";
+  return c?.found === "claimed" ? "booting" : "none";
 }

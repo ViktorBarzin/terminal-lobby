@@ -35,6 +35,10 @@ export type TlEvent =
   // only part of it, which is what decides whether the standing pool slot is
   // still worth its ~530MB.
   | "session.create_opened"
+  // A New-session composer's first prompt, Send to Accepted on this clock:
+  // tl.ms, tl.slot (warm | booting | stale | none | unknown), tl.hidden.
+  // tmux-api counts it for the slow-first-prompt alert.
+  | "prompt.accepted"
   | "session.created"
   | "session.selected"
   | "session.reopened"

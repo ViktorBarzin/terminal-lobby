@@ -10,6 +10,8 @@ import {
   resumeSession,
   withDeadline,
   claimSlot,
+  prewarm,
+  releasePrewarm,
   REQUEST_TIMEOUT_MS,
   RESTORE_TIMEOUT_MS,
 } from "../src/lib/lobby-api";
@@ -307,7 +309,7 @@ describe("claimSlot", () => {
   it("posts the claim and reports what the server did", async () => {
     const f = vi.fn(
       async (_u: string, _i: RequestInit) =>
-        new Response(JSON.stringify({ claimed: true }), { status: 200 }),
+        new Response(JSON.stringify({ claimed: true, found: "claimed" }), { status: 200 }),
     );
     vi.stubGlobal("fetch", f);
     const body = {
@@ -319,7 +321,7 @@ describe("claimSlot", () => {
       cols: 45,
       rows: 30,
     };
-    expect(await claimSlot(body)).toBe(true);
+    expect(await claimSlot(body)).toEqual({ claimed: true, found: "claimed" });
     const [url, init] = f.mock.calls[0] as FetchArgs;
     expect(url).toBe(apiUrl("/sessions/claim"));
     expect(init.method).toBe("POST");
@@ -335,6 +337,32 @@ describe("claimSlot", () => {
       }),
     );
     const body = { name: "bw8k5gt9v314", dir: "", cmd: "claude", model: "", effort: "" };
-    expect(await claimSlot(body)).toBe(false);
+    expect(await claimSlot(body)).toEqual({ claimed: false, found: "" });
+  });
+
+  it("reads an older server's answer, which says only whether it claimed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ claimed: true }), { status: 200 })),
+    );
+    const body = { name: "bw8k5gt9v314", dir: "", cmd: "claude", model: "", effort: "" };
+    expect(await claimSlot(body)).toEqual({ claimed: true, found: "claimed" });
+  });
+});
+
+describe("prewarm", () => {
+  it("asks for a slot with the model and effort, and leaves them out when there are none", async () => {
+    const f = vi.fn(async (_u: string, _i: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", f);
+    await prewarm("/home/u/code", { model: "claude-sonnet-5", effort: "high" });
+    await prewarm("/home/u/code");
+    await releasePrewarm("/home/u/code", { model: "claude-sonnet-5", effort: "" });
+    const bodies = f.mock.calls.map((c) => JSON.parse(String((c as FetchArgs)[1].body)));
+    expect(bodies).toEqual([
+      { dir: "/home/u/code", model: "claude-sonnet-5", effort: "high" },
+      { dir: "/home/u/code" },
+      { dir: "/home/u/code", model: "claude-sonnet-5", effort: "" },
+    ]);
+    expect((f.mock.calls[2] as FetchArgs)[1].method).toBe("DELETE");
   });
 });

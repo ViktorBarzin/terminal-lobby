@@ -46,9 +46,10 @@ import type { ModelHarness } from "./models";
  *
  * The first try goes at once. Its rung was 700ms, from when nothing could hold
  * a request for a session that did not exist yet; session-events now holds
- * each attempt (PromptReadyWait, 4s) until the session can take it, so for a
- * warm slot that 700ms was most of the time to Accepted (median 0.9s, measured
- * 2026-10-03). The later rungs are the ones `store.stampTitleWhenAlive` and
+ * each attempt until the session can take it (a Claude's first prompt until
+ * its hello, up to 25s), so for a warm slot that 700ms was most of the time to
+ * Accepted (median 0.9s, measured 2026-10-03). A rung is skipped after an
+ * attempt the server was holding (HELD_ATTEMPT_MS). The later rungs are the ones `store.stampTitleWhenAlive` and
  * `quickRefreshBurst` use: how long a just-created session takes to show up.
  * 10.6s in total.
  */
@@ -134,7 +135,31 @@ export interface DeliverFirstPromptOptions {
   /** Whether the page was hidden at any point since Send, when a phone's
    *  backgrounded tab can stretch the browser's share of the time. */
   hidden?: () => boolean;
+  /**
+   * Told once, when the last line is accepted: how long after `sentAt` that
+   * was on the `now` clock, and how long session-events waited for the
+   * session's Claude to say hello (null when it did not say). Only called when
+   * `sentAt` is set.
+   */
+  onAccepted?: (a: FirstPromptAccepted) => void;
 }
+
+/** When a first prompt was accepted, for the composer's report. */
+export interface FirstPromptAccepted {
+  ms: number;
+  helloWaitMs: number | null;
+}
+
+/**
+ * How long an attempt has to have taken to count as one the server was
+ * holding. session-events holds a first prompt until its Claude says hello
+ * (FirstPromptHelloWait, 25s), longer than the browser's 8s deadline, and a
+ * retry with the same id joins the attempt already waiting. So after a held
+ * attempt the next one goes at once rather than at its rung: on 2026-10-04 a
+ * hello landing in a gap cost 2.5s of a 12.9s first prompt. A quick not-yet
+ * (a session tmux has not made yet) still waits its rung.
+ */
+export const HELD_ATTEMPT_MS = 3000;
 
 /** What a request says about Send, for the line that carries it. */
 interface SendTiming {
@@ -226,6 +251,20 @@ function requestId(): string {
 /** What one POST /prompt means for whether to try again. */
 type Attempt = "ok" | "later" | "no";
 
+/** An attempt, with how long the server said it waited for the hello. */
+interface Answer {
+  attempt: Attempt;
+  helloWaitMs: number | null;
+}
+
+/** session-events' X-Tl-Hello-Wait-Ms, or null when absent or not a number. */
+function helloWait(res: Response): number | null {
+  const v = res.headers.get("X-Tl-Hello-Wait-Ms");
+  if (v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 async function post(
   session: string,
   text: string,
@@ -235,7 +274,7 @@ async function post(
   onRefused?: (reason: string) => void,
   timing?: SendTiming,
   id?: string,
-): Promise<Attempt> {
+): Promise<Answer> {
   try {
     const res = await fetchImpl(promptUrl(session), {
       method: "POST",
@@ -249,7 +288,7 @@ async function post(
       }),
       credentials: "same-origin",
     });
-    if (res.ok) return "ok";
+    if (res.ok) return { attempt: "ok", helloWaitMs: helloWait(res) };
     if (res.status === 409 && onRefused) {
       const reason = await refusalReason(res);
       if (reason) onRefused(reason);
@@ -260,9 +299,9 @@ async function post(
     // covered for a proxy that answers ahead of the route. Everything else (400
     // for an empty body, an auth refusal) would produce the same answer again.
     const later = res.status === 503 || res.status === 502 || res.status === 404;
-    return later ? "later" : "no";
+    return { attempt: later ? "later" : "no", helloWaitMs: null };
   } catch {
-    return "later"; // a blip on the way out, not a refusal
+    return { attempt: "later", helloWaitMs: null }; // a blip on the way out, not a refusal
   }
 }
 
@@ -313,8 +352,10 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   // Deadlined like every other request the lobby makes: a phone whose radio
   // drops a socket without an RST leaves a bare fetch pending forever, and this
-  // one is awaited by a routine nobody is watching. The default comfortably
-  // clears the server's own hold (session-events PromptReadyWait, 4s).
+  // one is awaited by a routine nobody is watching. A Claude's first prompt is
+  // held longer than the deadline (session-events FirstPromptHelloWait), and the
+  // retry joins the attempt still waiting, so the deadline only decides how
+  // often this asks.
   const fetchImpl =
     o.fetchImpl ?? ((input, init) => fetchWithDeadline(String(input), init ?? undefined));
   const pi = o.tool === "pi";
@@ -335,11 +376,14 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
   // sending the line a second time.
   const ids = lines.map(() => requestId());
   let sent = 0;
+  let held = false;
   for (let rung = 0; rung < ladder.length; rung++) {
-    await sleep(ladder[rung]!);
+    await sleep(held ? 0 : ladder[rung]!);
+    held = false;
     const wait = (o.awaitReady ?? false) && (waitToTheEnd || rung < ladder.length - 1);
     while (sent < lines.length) {
-      const r = await post(
+      const began = now();
+      const a = await post(
         o.session,
         lines[sent]!,
         wait,
@@ -349,9 +393,16 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
         timing(sent),
         ids[sent],
       );
+      const r = a.attempt;
       if (r === "no") return false;
-      if (r === "later") break; // next rung, resuming at this line
+      if (r === "later") {
+        held = now() - began >= HELD_ATTEMPT_MS;
+        break; // next rung, resuming at this line
+      }
       sent += 1;
+      if (sent === lines.length && sentAt !== undefined) {
+        o.onAccepted?.({ ms: Math.max(0, Math.round(now() - sentAt)), helloWaitMs: a.helloWaitMs });
+      }
       if (sent < lines.length) await sleep(gapMs);
     }
     if (sent === lines.length) return true;

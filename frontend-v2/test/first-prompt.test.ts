@@ -62,6 +62,61 @@ describe("deliverFirstPrompt", () => {
     expect(c.waited).toEqual([0, 1600, 3000]);
   });
 
+  // session-events holds a first prompt until its Claude says hello, past the
+  // browser's own deadline, and a retry carrying the same id joins the attempt
+  // already waiting. So a request the browser gave up on after a long hold is
+  // asked again AT ONCE: a gap there is time the prompt could already have been
+  // in (docs/plans/2026-10-04-warm-slot-at-send-design.md).
+  it("asks again at once after a request the server was holding", async () => {
+    let t = 0;
+    const statuses = [503, 204];
+    let i = 0;
+    const fetchImpl = (async () => {
+      t += 8000; // the browser's deadline ran out on a held request
+      return new Response(null, { status: statuses[i++] ?? 204 });
+    }) as unknown as typeof fetch;
+    const c = fastClock();
+    expect(await deliver({ fetchImpl, ...c, awaitReady: true, now: () => t })).toBe(true);
+    expect(c.waited).toEqual([0, 0]);
+  });
+
+  it("still waits its rung after a quick not-yet", async () => {
+    const t = 0;
+    const f = scripted([503, 204]);
+    const c = fastClock();
+    expect(await deliver({ ...f, ...c, awaitReady: true, now: () => t })).toBe(true);
+    expect(c.waited).toEqual([0, 1600]);
+  });
+
+  // The composer reports Send to Accepted on this clock, with how long the
+  // server waited for the hello, which tells a booted slot from a booting one.
+  it("says when the last line was accepted, and how long the server waited for Claude", async () => {
+    let t = 100;
+    const fetchImpl = (async () => {
+      t += 640;
+      return new Response(null, { status: 204, headers: { "X-Tl-Hello-Wait-Ms": "3120" } });
+    }) as unknown as typeof fetch;
+    const c = fastClock();
+    const seen: { ms: number; helloWaitMs: number | null }[] = [];
+    await deliver({
+      fetchImpl,
+      ...c,
+      awaitReady: true,
+      now: () => t,
+      sentAt: 0,
+      onAccepted: (a) => seen.push(a),
+    });
+    expect(seen).toEqual([{ ms: 740, helloWaitMs: 3120 }]);
+  });
+
+  it("says the wait is unknown when the server did not say", async () => {
+    const f = scripted([204]);
+    const c = fastClock();
+    const seen: { ms: number; helloWaitMs: number | null }[] = [];
+    await deliver({ ...f, ...c, now: () => 50, sentAt: 0, onAccepted: (a) => seen.push(a) });
+    expect(seen).toEqual([{ ms: 50, helloWaitMs: null }]);
+  });
+
   it("does not ask a command that draws no prompt to wait for one", async () => {
     // The check watches for Claude's `❯`. Asking where nothing will draw one
     // would spend every rung waiting and then give up with the text unsent.
