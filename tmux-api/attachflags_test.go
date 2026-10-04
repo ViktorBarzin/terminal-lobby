@@ -60,6 +60,11 @@ func runAttachWithLog(t *testing.T, args ...string) (string, string) {
 	write("tmux", "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"+
 		"printf '%s\\n' \"$*\" >> "+shellQuote(tmuxLog)+"\nexit 0\n")
 	write("systemd-run", "#!/usr/bin/env bash\nwhile [[ \"$1\" == -* ]]; do shift; done\nexec \"$@\"\n")
+	// A stub systemctl, so a claim's refill (`systemctl --user start
+	// tl-pool-warm@...`) never reaches the real user manager. Without it every
+	// run of these tests booted a real Claude slot in /tmp for whoever ran them
+	// (found 2026-10-04).
+	write("systemctl", "#!/usr/bin/env bash\nexit 0\n")
 	write("logger", "#!/usr/bin/env bash\nexit 0\n")
 
 	// And a stub getent, which is what makes this hermetic. The script resolves
