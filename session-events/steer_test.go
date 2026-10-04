@@ -141,7 +141,7 @@ func TestSteerabilityFollowsTheEngineFirst(t *testing.T) {
 	running := sessionio.AgentInfo{ID: "a1", State: sessionio.AgentRunning}
 	done := sessionio.AgentInfo{ID: "a1", State: sessionio.AgentDone}
 	member := sessionio.AgentInfo{ID: "m1", State: sessionio.AgentRunning, WorkflowID: "wf_r1"}
-	listed := func(status, typ string) map[string]sessionio.ModAgent {
+	listed := func(status sessionio.AgentStatus, typ string) map[string]sessionio.ModAgent {
 		return map[string]sessionio.ModAgent{"a1": {ID: "a1", Status: status, Type: typ}}
 	}
 	cases := []struct {
@@ -159,6 +159,14 @@ func TestSteerabilityFollowsTheEngineFirst(t *testing.T) {
 		{"a subagent the engine has not caught up on", done, listed("running", "general-purpose"), true, false, sessionio.SteerFinished},
 		{"an idle teammate the engine still runs", done, listed("running", "teammate"), true, true, ""},
 		{"completed in the engine", running, listed("completed", "general-purpose"), true, false, sessionio.SteerFinished},
+		{"failed in the engine", running, listed("failed", "general-purpose"), true, false, sessionio.SteerFinished},
+		{"killed in the engine", running, listed("killed", "general-purpose"), true, false, sessionio.SteerFinished},
+		// A subagent waiting on background work of its own, or not started
+		// yet, is alive (AgentStatus, CLI 2.1.289).
+		{"waiting in the engine", running, listed("waiting", "general-purpose"), true, true, ""},
+		{"pending in the engine", running, listed("pending", "general-purpose"), true, true, ""},
+		// The engine's types say a teammate waiting for a message reads idle.
+		{"a teammate the engine calls idle", done, listed("idle", "teammate"), true, true, ""},
 		{"not listed yet, running on disk", running, nil, true, true, ""},
 		{"not listed, done on disk", done, nil, true, false, sessionio.SteerFinished},
 		{"a workflow member", member, nil, true, false, sessionio.SteerWorkflow},

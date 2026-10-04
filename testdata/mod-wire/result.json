@@ -1,0 +1,10 @@
+{
+  "type": "result",
+  "t": 1790900000000,
+  "toolId": "toolu_01",
+  "tool": "Bash",
+  "agentId": "a1b2c3d4e5f6",
+  "result": {"stdout": "a\nb", "stderr": "", "interrupted": false},
+  "text": "a\nb",
+  "isError": true
+}

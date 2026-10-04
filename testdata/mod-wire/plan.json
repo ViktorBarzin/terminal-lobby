@@ -1,0 +1,7 @@
+{
+  "type": "plan",
+  "t": 1790900000000,
+  "toolId": "toolu_03",
+  "plan": "1. Add the table.\n2. Backfill it.",
+  "planFilePath": "/home/wizard/.claude/plans/demo.md"
+}

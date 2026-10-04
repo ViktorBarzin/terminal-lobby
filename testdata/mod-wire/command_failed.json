@@ -1,0 +1,7 @@
+{
+  "type": "command_failed",
+  "t": 1790900000000,
+  "id": "c13.1a2b3c4d",
+  "op": "prompt",
+  "error": "dropped: a prompt.submit hook refused it"
+}

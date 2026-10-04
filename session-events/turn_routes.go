@@ -440,8 +440,15 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		// API takes them back, so the reply says nothing came back and the
 		// caller leaves its ghosts in place.
 		if c := rg.mods.conn(osUser, session); c != nil && (h == "" || h == sessionio.HarnessClaude) {
-			if _, err := c.send(r.Context(), modCommand{Op: "abort"}); err != nil {
+			ack, err := c.send(r.Context(), modCommand{Op: "abort"})
+			if err != nil {
 				http.Error(w, "cancel failed", http.StatusBadGateway)
+				return
+			}
+			if !ack.OK {
+				// "idle" when the mod knows of no turn, or the engine refused
+				// the abort: either way the turn was not stopped here.
+				http.Error(w, "the session's Claude did not stop the turn: "+ack.Error, http.StatusConflict)
 				return
 			}
 			events.Emit("claude.cancelled", osUser, telemetry.Attrs{"tl.session": session, "tl.client": "mod"})

@@ -1,0 +1,17 @@
+{
+  "type": "history",
+  "t": 1790900000000,
+  "messages": [
+    {"role": "user", "text": "list the files"},
+    {
+      "role": "assistant",
+      "text": "Listing them.",
+      "toolUses": [
+        {"tool_use_id": "toolu_01", "tool": "Bash", "input": {"command": "ls"}, "result": {"stdout": "a\nb"}, "text": "a\nb", "isError": false}
+      ]
+    },
+    {"role": "user", "text": "", "toolResults": [{"tool_use_id": "toolu_01"}]}
+  ],
+  "running": true,
+  "more": true
+}

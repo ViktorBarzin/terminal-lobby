@@ -158,8 +158,7 @@ func (rg *registry) handleInternalAnswer() http.HandlerFunc {
 		}
 		var known []sessionio.DialogQuestion
 		open := false
-		c.mu.Lock()
-		for _, d := range c.dialogs {
+		for _, d := range c.openDialogs() {
 			if d.toolID != req.ToolID {
 				continue
 			}
@@ -168,7 +167,6 @@ func (rg *registry) handleInternalAnswer() http.HandlerFunc {
 				known = append(known, sessionio.DialogQuestion{Question: q.Question, MultiSelect: q.MultiSelect})
 			}
 		}
-		c.mu.Unlock()
 		if !open {
 			http.Error(w, "that dialog is no longer open", http.StatusConflict)
 			return

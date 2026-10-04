@@ -1,0 +1,9 @@
+{
+  "type": "permission",
+  "t": 1790900000000,
+  "toolId": "toolu_04",
+  "tool": "Bash",
+  "input": {"command": "rm -rf build", "description": "Clean the build folder"},
+  "reason": "Bash commands need approval in this mode",
+  "agentId": "a1b2c3d4e5f6"
+}

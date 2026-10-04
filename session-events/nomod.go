@@ -28,6 +28,16 @@ func claudeSession(o sessionio.Options, osUser, session string) bool {
 // paneProc is one pane's foreground command and the command it started with.
 type paneProc struct{ Cmd, Start string }
 
+// claudeRunning reports whether Claude is the foreground command of a pane.
+func claudeRunning(panes []paneProc) bool {
+	for _, p := range panes {
+		if p.Cmd == "claude" {
+			return true
+		}
+	}
+	return false
+}
+
 // noStream is why a session has no mod stream, which decides what its Text
 // view is told.
 type noStream string
@@ -55,11 +65,8 @@ func classifyNoStream(stamped bool, panes []paneProc) noStream {
 		}
 		return noStreamShell
 	}
-	running, launched := false, false
+	running, launched := claudeRunning(panes), false
 	for _, p := range panes {
-		if p.Cmd == "claude" {
-			running = true
-		}
 		if strings.Contains(p.Start, "claude") {
 			launched = true
 		}

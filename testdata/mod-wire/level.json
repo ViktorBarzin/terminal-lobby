@@ -1,0 +1,11 @@
+{
+  "type": "level",
+  "t": 1790900000000,
+  "running": true,
+  "compacting": false,
+  "tool": "toolu_01",
+  "agents": [
+    {"id": "a1b2c3d4e5f6", "type": "general-purpose", "status": "running", "name": "builder", "description": "Run the build"}
+  ],
+  "asks": ["toolu_02", "toolu_04"]
+}

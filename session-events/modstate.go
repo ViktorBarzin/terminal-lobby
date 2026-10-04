@@ -40,8 +40,8 @@ const (
 // replyCap bounds the reply and notice texts, as the hook script did.
 const replyCap = 1000
 
-// stampState is one session's view of its options, so only changes are
-// written.
+// stampState is one session's view of its options: what the mod's events
+// say they should hold, and what they were last written as.
 type stampState struct {
 	state string
 	// ask is @claude_ask: the newest of asks.
@@ -50,6 +50,11 @@ type stampState struct {
 	// a background subagent's permission prompt and the main thread's, or two
 	// subagents'.
 	asks []string
+	// dialogs are the bodies of the asks, for the card and the answer routes:
+	// one list, so every rule that closes a dialog closes it for every
+	// reader. A level can list an ask whose body never arrived; it counts
+	// for @claude_ask but has nothing to show.
+	dialogs map[string]*modDialog
 	// owner places a tool call: the agent whose row called it, "" for the
 	// main thread, from the rows the mod forwards, until its result. tool.check
 	// carries no agent id, so this is how a permission event is told apart
@@ -65,6 +70,44 @@ type stampState struct {
 	// read off its own loop instead.
 	agents []sessionio.ModAgent
 	active map[string]bool
+	// written is what the four state options were last written as, by a
+	// write that succeeded. Changes are diffed against it, not against the
+	// fold's previous step: memory that moved past a failed write, or a new
+	// process that never saw what the last one wrote, would otherwise leave
+	// tmux wrong with nothing to correct it.
+	written stampOpts
+}
+
+// stampOpts are the four options the fold owns.
+type stampOpts struct{ state, ask, tool, bg string }
+
+// opts is what the fold says the four options should hold now.
+func (s *stampState) opts() stampOpts {
+	return stampOpts{state: s.state, ask: s.ask, tool: s.tool, bg: s.bg}
+}
+
+// flush is the write that brings the four options from written to the fold.
+// full writes all four whatever written says: set when there is a value,
+// unset when there is none. It reports the state transition against what was
+// written, for the log.
+func (s *stampState) flush(full bool) stampWrite {
+	var w stampWrite
+	now := s.opts()
+	put := func(name, was, v string) {
+		switch {
+		case !full && was == v:
+		case v == "":
+			w.unset = append(w.unset, name)
+		default:
+			w.put(name, v)
+		}
+	}
+	put(sessionio.OptionState, s.written.state, now.state)
+	put(sessionio.OptionAsk, s.written.ask, now.ask)
+	put(sessionio.OptionTool, s.written.tool, now.tool)
+	put(sessionio.OptionBackground, s.written.bg, now.bg)
+	w.from, w.to = s.written.state, now.state
+	return w
 }
 
 // stampWrite is one batch of option changes, and the state transition it
@@ -89,11 +132,12 @@ func (w stampWrite) empty() bool { return len(w.set) == 0 && len(w.unset) == 0 }
 // session whose results never came starts the map over rather than growing.
 const ownerCap = 1024
 
-// apply folds one mod event into the state and returns the writes it implies.
+// apply folds one mod event into the state, and returns the writes of the
+// options the event itself names: the reply, the notice, the activity stamp
+// and the summary. The four state options are written by flush.
 func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	var w stampWrite
 	main := ev.AgentID == ""
-	prev := *s
 	if !main {
 		if s.active == nil {
 			s.active = map[string]bool{}
@@ -164,10 +208,19 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	case sessionio.ModAskEvent, sessionio.ModPlanEvent, sessionio.ModPermissionEvent:
 		if ev.ToolID != "" {
 			if !main {
+				// From mod 0.3.0 a permission names its subagent when the mod
+				// could place it, which keeps it past the main turn's end even
+				// when no row placed it here (after a restart).
 				s.place(ev.ToolID, ev.AgentID)
 			}
 			s.dropAsks(func(id string) bool { return id == ev.ToolID })
 			s.asks = append(s.asks, ev.ToolID)
+			if d := dialogOf(ev); d != nil {
+				if s.dialogs == nil {
+					s.dialogs = map[string]*modDialog{}
+				}
+				s.dialogs[ev.ToolID] = d
+			}
 		}
 	case sessionio.ModSettledEvent:
 		if ev.ToolID == "" {
@@ -208,11 +261,30 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 		if !s.turnOpen {
 			s.state = s.idleState()
 		}
+	case sessionio.ModLevelEvent:
+		// The mod's whole view at one moment replaces what was folded from
+		// edges before it. A dialog it still lists keeps the body it came
+		// with; one it does not list is over.
+		s.turnOpen = ev.Running || ev.Compacting
+		s.tool = ev.Tool
+		s.agents = ev.Agents
+		s.asks = s.asks[:0:0]
+		for _, id := range ev.Asks {
+			if id != "" && !containsStr(s.asks, id) {
+				s.asks = append(s.asks, id)
+			}
+		}
+		s.bg = bgTokens(s.agents, s.active)
+		s.state = s.idleState()
 	case sessionio.ModByeEvent:
-		*s = stampState{}
-		w.unset = []string{sessionio.OptionState, sessionio.OptionBackground, sessionio.OptionAsk, sessionio.OptionTool}
-		w.from, w.to = prev.state, ""
+		// The caller writes all four options empty on a bye.
+		*s = stampState{written: s.written}
 		return w
+	}
+	for id := range s.dialogs {
+		if !containsStr(s.asks, id) {
+			delete(s.dialogs, id)
+		}
 	}
 	// An open dialog outranks everything above: whatever the event, a
 	// session with a dialog up is awaiting, and the newest dialog is the one
@@ -224,22 +296,19 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 	} else if s.state == sessionio.StateAwaiting {
 		s.state = s.idleState()
 	}
-	diff := func(name, was, now string) {
-		if was == now {
-			return
-		}
-		if now == "" {
-			w.unset = append(w.unset, name)
-			return
-		}
-		w.put(name, now)
-	}
-	diff(sessionio.OptionState, prev.state, s.state)
-	diff(sessionio.OptionAsk, prev.ask, s.ask)
-	diff(sessionio.OptionTool, prev.tool, s.tool)
-	diff(sessionio.OptionBackground, prev.bg, s.bg)
-	w.from, w.to = prev.state, s.state
 	return w
+}
+
+// open is the dialogs waiting on a person that have a body to show, oldest
+// first.
+func (s *stampState) open() []*modDialog {
+	var out []*modDialog
+	for _, id := range s.asks {
+		if d := s.dialogs[id]; d != nil {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // place records which agent called a tool.
@@ -283,9 +352,16 @@ func (s *stampState) idleState() string {
 	return sessionio.StateDone
 }
 
-// bgTokens is @claude_bg for an agent list: the running background subagents
-// and workflows by id, and the teammates whose loop is active by name. Sorted
-// so an unchanged set reads the same and writes nothing.
+// bgTokens is @claude_bg for an agent list: the background subagents and
+// workflows that have not finished by id, and the teammates whose loop is
+// active by name. Sorted so an unchanged set reads the same and writes nothing.
+//
+// A subagent counts unless it is completed, failed or killed: one that is
+// pending has not started yet, and one that is waiting waits on background
+// work of its own, and both are still work (AgentStatus, CLI 2.1.289). A
+// teammate counts by its own loop whatever its listed status, because the
+// list called an idle teammate running when measured on 2026-09-12 and the
+// engine's types now say it reads idle.
 //
 // $.agent.list() gives a subagent's type as its agent definition
 // (general-purpose, Explore, a plugin's `<plugin>:<name>`), an open set, not
@@ -296,16 +372,11 @@ func (s *stampState) idleState() string {
 func bgTokens(agents []sessionio.ModAgent, active map[string]bool) string {
 	var out []string
 	for _, a := range agents {
-		if a.Status != "running" {
-			continue
-		}
 		var tok string
-		switch a.Type {
-		case "":
+		switch {
+		case a.Type == "":
 			continue
-		case "workflow":
-			tok = "w:" + a.ID
-		case "teammate":
+		case a.Type == "teammate":
 			if !active[a.ID] {
 				continue
 			}
@@ -314,6 +385,10 @@ func bgTokens(agents []sessionio.ModAgent, active map[string]bool) string {
 				name = a.ID
 			}
 			tok = "t:" + name
+		case a.Status.Over():
+			continue
+		case a.Type == "workflow":
+			tok = "w:" + a.ID
 		default:
 			tok = "a:" + a.ID
 		}
@@ -340,8 +415,10 @@ func idOK(s string) bool {
 }
 
 // stampText is "<epoch> <text>" in the form sessionio.ParseNotice reads: the
-// text JSON-escaped without its quotes, cut to replyCap, and never ending in a
-// ';', which tmux would take as a command separator.
+// text JSON-escaped without its quotes, cut to replyCap. tmux reads an
+// argument ending in ';' as a command separator and drops it (measured on tmux
+// 3.4), so a final one is written as its JSON escape, which the decode brings
+// back, as the hook script did.
 func stampText(now time.Time, text string) string {
 	if len(text) > replyCap {
 		text = strings.ToValidUTF8(text[:replyCap], "")
@@ -349,7 +426,7 @@ func stampText(now time.Time, text string) string {
 	b, _ := json.Marshal(text)
 	raw := strings.TrimSuffix(strings.TrimPrefix(string(b), `"`), `"`)
 	if strings.HasSuffix(raw, ";") {
-		raw = strings.TrimSuffix(raw, ";") + `;`
+		raw = strings.TrimSuffix(raw, ";") + `\u003b`
 	}
 	return strconv.FormatInt(now.Unix(), 10) + " " + raw
 }

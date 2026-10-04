@@ -80,8 +80,12 @@ var knownEvents = map[string]bool{
 	// session-events restarted a Claude that predates the mod, on the same
 	// conversation, once it was safe to (ADR-0036).
 	"mod.rollout_restart": true,
-	"session.detached":    true,
-	"session.renamed":     true,
+	// A command the mod acked and then could not carry out: a prompt dropped or
+	// rejected after its first ack, or a slash command that failed. tl.kind is
+	// the op (ADR-0036 wire v3).
+	"mod.command_failed": true,
+	"session.detached":   true,
+	"session.renamed":    true,
 	// A title someone chose, replacing whatever the session had. Emitted
 	// server-side at POST /sessions/{n}/title, so tl.client says which surface
 	// asked. One arriving soon after a session.autonamed is how a rejected

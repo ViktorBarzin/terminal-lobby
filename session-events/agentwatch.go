@@ -213,12 +213,14 @@ func (aw *agentWatch) poke() {
 }
 
 // steerability is whether the person can message an agent from the Text view,
-// and the note why not. The engine's list decides for a teammate, which reads
-// done between its turns though the engine still runs it, and that is when it
-// takes a message. For a plain subagent both must agree it is running: the mod
-// sends the list as a turn completes, and measured live on 2026-10-03 that list
-// still called a finished subagent running, which left the composer open on
-// it. An agent the engine has not listed yet goes by its file. Workflow members are not addressed (the engine lists the run, not
+// and the note why not. Only a status the engine calls over (completed,
+// failed, killed) is finished: a pending, waiting or idle agent still takes a
+// message at its next boundary. The engine's list decides for a teammate,
+// which reads done between its turns though the engine still runs it, and that
+// is when it takes a message. A plain subagent must also not have ended on
+// disk: the mod sends the list as a turn completes, and measured live on
+// 2026-10-03 that list still called a finished subagent running, which left
+// the composer open on it. An agent the engine has not listed yet goes by its file. Workflow members are not addressed (the engine lists the run, not
 // them), and a mod from before steering cannot be asked at all.
 func steerability(info sessionio.AgentInfo, engine map[string]sessionio.ModAgent, canSteer bool) (bool, string) {
 	switch {
@@ -229,7 +231,7 @@ func steerability(info sessionio.AgentInfo, engine map[string]sessionio.ModAgent
 	}
 	if a, ok := engine[info.ID]; ok {
 		switch {
-		case a.Status != "running" || a.Type == "workflow":
+		case a.Status.Over() || a.Type == "workflow":
 			return false, sessionio.SteerFinished
 		case a.Type != "teammate" && info.State != sessionio.AgentRunning:
 			return false, sessionio.SteerFinished

@@ -1,0 +1,6 @@
+{
+  "type": "prompt",
+  "t": 1790900000000,
+  "text": "now count them",
+  "origin": {"kind": "plugin", "name": "terminal-lobby", "asUser": true}
+}

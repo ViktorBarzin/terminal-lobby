@@ -15,9 +15,11 @@ package main
 // picker's turn gate, agent-api's turn tracking, the push sender, the T3
 // bridge's pin — and an override would have to be threaded through all of
 // them or they would disagree about one fact. Writing the option itself also
-// gives the lifetime for free: the next hook event stamps over it, so a
-// correction lasts exactly until the system has something new to say, which
-// is what was asked for.
+// gives the lifetime for free: since the lobby's mod took over the writing
+// (ADR-0036), session-events writes an option only when the state it derives
+// from Claude's events changes from what it last wrote, so a correction lasts
+// until the derived state next changes, which is what was asked for. Nothing
+// re-asserts an unchanged value, the mod's periodic snapshot included.
 //
 // Two marks travel with the write, because a state alone does not survive
 // contact with them:

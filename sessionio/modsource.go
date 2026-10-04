@@ -49,6 +49,15 @@ const (
 	// ModSummaryEvent carries, as Text, the mod's one-line summary of the
 	// conversation, for OptionSummary.
 	ModSummaryEvent = "summary"
+	// ModLevelEvent is the mod's whole view of the session at one moment
+	// (mod 0.3.0): whether a main turn or a compaction runs, the main
+	// thread's tool in flight, the agent list and the dialogs open. It
+	// replaces what the server folded from earlier events, so a missed or
+	// repeated edge cannot leave the session's options wrong.
+	ModLevelEvent = "level"
+	// ModCommandFailedEvent says a command the mod acked did not take effect
+	// after all: a prompt a hook dropped, a slash command that failed.
+	ModCommandFailedEvent = "command_failed"
 )
 
 // ModEvent is one event the mod posts. One struct for every type, because the
@@ -74,7 +83,10 @@ type ModEvent struct {
 	Text string `json:"text,omitempty"`
 
 	// turn_start, delta, turn_end
-	TurnID     string          `json:"turnId,omitempty"`
+	TurnID string `json:"turnId,omitempty"`
+	// Step is a delta's model request within its turn. Index numbers a block
+	// within one step only, so the mod merges deltas by both.
+	Step       int             `json:"step,omitempty"`
 	Aborted    bool            `json:"aborted,omitempty"`
 	Answer     string          `json:"answer,omitempty"`
 	Usage      json.RawMessage `json:"usage,omitempty"`
@@ -87,8 +99,14 @@ type ModEvent struct {
 	Plan         string          `json:"plan,omitempty"`
 	PlanFilePath string          `json:"planFilePath,omitempty"`
 	Input        json.RawMessage `json:"input,omitempty"`
-	Reason       string          `json:"reason,omitempty"`
-	By           string          `json:"by,omitempty"`
+	// Reason is why a permission prompt asks, or why a bye came (the
+	// engine's SessionEndReason).
+	Reason string `json:"reason,omitempty"`
+	By     string `json:"by,omitempty"`
+
+	// bye: the conversation it ends, from mod 0.3.0. A bye still queued when
+	// /clear made a new conversation must not end the new one's connection.
+	Sid string `json:"sid,omitempty"`
 
 	// model
 	Model  string `json:"model,omitempty"`
@@ -97,16 +115,25 @@ type ModEvent struct {
 	// agents
 	Agents []ModAgent `json:"agents,omitempty"`
 
-	// history
+	// history, level. On a level, Tool above is the main thread's
+	// tool_use_id in flight ("" for none) and Agents the whole agent list.
 	Messages []ModHistoryMessage `json:"messages,omitempty"`
 	Running  bool                `json:"running,omitempty"`
+	// Compacting says a compaction runs, which keeps the session busy with
+	// no turn open.
+	Compacting bool `json:"compacting,omitempty"`
+	// Asks are the tool ids of the dialogs open now, oldest first. Their
+	// bodies came in earlier ask, plan and permission events.
+	Asks []string `json:"asks,omitempty"`
 	// More is set on every chunk of a long history but the last (ADR-0036).
 	More bool `json:"more,omitempty"`
 
-	// ack
+	// ack, command_failed
 	ID    string `json:"id,omitempty"`
 	OK    bool   `json:"ok,omitempty"`
 	Error string `json:"error,omitempty"`
+	// Op is the failed command's op.
+	Op string `json:"op,omitempty"`
 }
 
 // ModMessage is a stored row's message: how the transcript files it and its
@@ -121,11 +148,37 @@ type ModMessage struct {
 
 // ModAgent is one entry of $.agent.list().
 type ModAgent struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	Status      string `json:"status"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
+	ID          string      `json:"id"`
+	Type        string      `json:"type"`
+	Status      AgentStatus `json:"status"`
+	Name        string      `json:"name,omitempty"`
+	Description string      `json:"description,omitempty"`
+	// TeammateID, ParentID and SpawnedBy pass through from the engine's
+	// AgentInfo; nothing reads them yet.
+	TeammateID string `json:"teammateId,omitempty"`
+	ParentID   string `json:"parentId,omitempty"`
+	SpawnedBy  string `json:"spawnedBy,omitempty"`
+}
+
+// AgentStatus is where an agent's loop stands, as the engine's AgentStatus
+// names it.
+type AgentStatus string
+
+const (
+	AgentStatusPending   AgentStatus = "pending"
+	AgentStatusRunning   AgentStatus = "running"
+	AgentStatusWaiting   AgentStatus = "waiting"
+	AgentStatusIdle      AgentStatus = "idle"
+	AgentStatusCompleted AgentStatus = "completed"
+	AgentStatusFailed    AgentStatus = "failed"
+	AgentStatusKilled    AgentStatus = "killed"
+)
+
+// Over reports whether the agent has finished for good: completed, failed or
+// killed. Every other status is a loop that can still do work, a subagent
+// waiting on its own background work included.
+func (s AgentStatus) Over() bool {
+	return s == AgentStatusCompleted || s == AgentStatusFailed || s == AgentStatusKilled
 }
 
 // ModHistoryMessage is one message as $.session.messages() returns it.
@@ -245,7 +298,20 @@ func (f *FileSource) Feed(ev ModEvent) {
 		f.feedPrompt(ev)
 	case ModModelEvent:
 		f.feedModel(ev)
+	case ModCommandFailedEvent:
+		f.feedCommandFailed(ev)
 	}
+}
+
+// feedCommandFailed shows a command that did not take effect as an error row
+// in the session's own timeline: the web had already been told it was sent.
+func (f *FileSource) feedCommandFailed(ev ModEvent) {
+	what := "the lobby's " + ev.Op
+	if ev.Op == "prompt" {
+		what = "the prompt sent from the lobby"
+	}
+	body := strings.TrimSpace("Claude did not run " + what + ": " + ev.Error)
+	f.appendLive(Event{Kind: KindError, Body: body, TurnID: f.TurnID(), At: ev.T})
 }
 
 func (f *FileSource) feedRow(ev ModEvent) {

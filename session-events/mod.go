@@ -26,7 +26,8 @@ import (
 // what happens in the session as events, and long-polls here for commands.
 // This file holds those three routes and the per-session connection behind
 // them: the event log the Text view reads, the tmux options the sidebar reads,
-// the dialog waiting on a person, and the commands waiting for the mod.
+// and the commands waiting for the mod. The dialogs waiting on a person and
+// their answers are in moddialogs.go.
 
 // modPollHold is how long a poll is held open. Claude Code caps a mod's fetch
 // at 30 s, so the answer has to leave well inside that.
@@ -86,6 +87,13 @@ type modHello struct {
 	Model      string `json:"model"`
 	Version    string `json:"version"`
 	Mod        string `json:"mod"`
+	// Instance is random per module load (mod 0.3.0). A different one under
+	// the same conversation is a module that forgot what it knew: a reload
+	// or a worker respawn. Older mods send none.
+	Instance string `json:"instance"`
+	// Dropped is how many events the mod's queue has shed since it loaded
+	// (mod 0.3.0), so a loss in a long outage shows up somewhere.
+	Dropped int `json:"dropped"`
 	// Ops are the command ops this mod runs. A mod from before the field
 	// sends none, and is sent nothing it would answer "unknown op" to.
 	Ops []string `json:"ops"`
@@ -102,8 +110,11 @@ type modCommand struct {
 	Chat        *string           `json:"chat,omitempty"`
 	Decision    string            `json:"decision,omitempty"`
 	Reason      string            `json:"reason,omitempty"`
-	Model       string            `json:"model,omitempty"`
-	Effort      string            `json:"effort,omitempty"`
+	// Feedback rides a plan approval to a mod whose ops include
+	// decide-feedback, which hands it to Claude with the approval itself.
+	Feedback string `json:"feedback,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 	// AgentID is the subagent a steer is for (steer.go).
 	AgentID string `json:"agentId,omitempty"`
 }
@@ -114,43 +125,51 @@ type modAck struct {
 	Error string
 }
 
-// modDialog is a dialog a session is waiting on a person for, with what it
-// shows: enough for a program to read it without the pane.
-type modDialog struct {
-	kind      string // "ask", "plan" or "permission"
-	toolID    string
-	questions []heldQuestion
-	raw       json.RawMessage // the questions exactly as asked
-
-	plan, planFilePath string // a plan's text and file
-
-	tool, title, reason string   // a permission prompt's tool, heading and why it asks
-	detail              []string // what the tool will do
-}
-
 // modConn is one Claude session's link to its mod.
 type modConn struct {
 	hub  *modHub
 	user string
 	sid  string
 
+	// applyMu serializes apply: an event batch is folded and written as one
+	// step, so two overlapping batches (a reloaded module's last POST beside
+	// the new one's, or a POST resent after the fetch cap) cannot land their
+	// tmux writes in the reverse order of the fold.
+	applyMu sync.Mutex
+
 	mu         sync.Mutex
 	session    string
 	pane       string
 	transcript string
 	ops        []string // the hello's: what this mod can be sent
+	instance   string   // the hello's module instance, "" from mods before 0.3.0
 	token      string
 	ls         *liveSource
-	cmds       []modCommand
+	// historyOwed is set from the moment ls is made until a final history
+	// chunk has been applied, and every hello answers it. A history answer
+	// the mod dropped (a rehello while the hello was in flight) is asked for
+	// again by the next hello instead of being lost until the next restart.
+	historyOwed bool
+	// historyChunks counts the chunks of an owed history applied so far.
+	historyChunks int
+	// stamps is false for a second live Claude in a tmux session another
+	// connection holds: it keeps its token, but writes no options and has no
+	// stream, so the two do not take the session from each other.
+	stamps bool
+	// fullOnState makes the first state-bearing apply after a hello (a
+	// level, or an old mod's last history chunk) write all four state
+	// options, and fullNext the first apply after a failed write.
+	fullOnState, fullNext bool
+	cmds                  []modCommand
 	// inflight are commands a poll has handed over and the mod has not acked.
 	// A reload can take a module away with a command in hand, so they go out
 	// again to the module that says hello next.
 	inflight map[string]modCommand
 	wake     chan struct{}
 	acks     map[string]chan modAck
-	// dialogs open, oldest first. Claude asks several questions at once more
-	// often than not, and a subagent's prompt can open beside the main one.
-	dialogs  []*modDialog
+	// st is the fold of the mod's events: the options, and the dialogs open,
+	// oldest first. Claude asks several questions at once more often than
+	// not, and a subagent's prompt can open beside the main one.
 	st       stampState
 	lastSeen time.Time
 	nextID   int
@@ -231,13 +250,22 @@ func (h *modHub) hasGreeted(osUser string) bool {
 
 func hubKey(a, b string) string { return a + "\x00" + b }
 
+// newToken is a fresh random token. crypto/rand does not fail on Linux; if it
+// ever did, a guessable token would let any local process speak for a
+// session, so the process stops instead.
 func newToken() string {
 	var b [24]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return strconv.FormatInt(time.Now().UnixNano(), 36)
+		panic("crypto/rand: " + err.Error())
 	}
 	return hex.EncodeToString(b[:])
 }
+
+// modConnsPerUser bounds the connections one OS user holds. Each is a live
+// source and an agent watch, so a process posting hellos with fresh sids in a
+// loop, a bug as easily as intent, would otherwise slow the service for every
+// user. A person runs a few dozen Claudes at most.
+const modConnsPerUser = 64
 
 // conn is the connection serving a tmux session, nil when its Claude has no
 // mod talking to the lobby.
@@ -379,13 +407,14 @@ func (h *modHub) handleHello() http.HandlerFunc {
 }
 
 // hello registers a mod and returns its token, and whether it should send the
-// session's history because this process holds no log for it.
+// session's history because this connection's log does not have it yet.
 func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 	us := h.rg.user(osUser)
 	// tmux-persist, suspend and the agent API read @claude_transcript to know
 	// which conversation a tmux session holds, so the mod's hello keeps it
-	// stamped as the SessionStart hook did.
-	if b.Transcript != "" {
+	// stamped as the SessionStart hook did. A second Claude in a session
+	// another one holds stamps nothing.
+	if b.Transcript != "" && !h.yields(osUser, b) {
 		if err := us.sm.Put(sessionio.SessionInfo{TmuxSession: b.Session, CWD: b.CWD,
 			ClaudeID: b.SID, Transcript: b.Transcript}); err != nil {
 			log.Printf("mod hello %s/%s: transcript stamp: %v", osUser, b.Session, err)
@@ -396,13 +425,13 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 	h.mu.Lock()
 	h.greeted[osUser] = true
 	c := h.bySID[hubKey(osUser, b.SID)]
-	history := false
-	var retired *liveSource
-	if c == nil {
+	created := c == nil
+	var retired []*liveSource
+	if created {
+		h.capLocked(osUser)
 		c = &modConn{hub: h, user: osUser, sid: b.SID, wake: make(chan struct{}, 1),
 			acks: map[string]chan modAck{}, inflight: map[string]modCommand{}}
 		h.bySID[hubKey(osUser, b.SID)] = c
-		history = true
 	}
 	c.mu.Lock()
 	if c.token != "" {
@@ -427,57 +456,148 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 		default:
 		}
 	}
+	// A new module instance under the same conversation forgot what it knew,
+	// so the fold starts over and the session's snapshot is asked for again,
+	// into a fresh log. So is a history this connection was halfway through:
+	// the half already in the log would otherwise be drawn twice.
+	fresh := false
+	if !created && b.Instance != "" && b.Instance != c.instance {
+		c.st = stampState{written: c.st.written}
+		fresh = true
+	}
+	if b.Instance != "" && c.historyOwed && c.historyChunks > 0 {
+		fresh = true
+	}
+	c.instance = b.Instance
 	if c.session != b.Session {
 		if c.session != "" && h.bySession[hubKey(osUser, c.session)] == c {
 			delete(h.bySession, hubKey(osUser, c.session))
 			// Renamed: streams on the old name end, so readers reconnect.
-			retired = c.ls
-			c.ls = nil
+			fresh = true
 		}
 		c.session = b.Session
 	}
-	// Another Claude that held this tmux session before is over.
-	if prev := h.bySession[hubKey(osUser, b.Session)]; prev != nil && prev != c {
+	c.pane, c.transcript, c.ops = b.Pane, b.Transcript, b.Ops
+	c.stamps = !h.yieldsLocked(osUser, b, c)
+	if prev := h.bySession[hubKey(osUser, b.Session)]; c.stamps && prev != nil && prev != c {
+		// Another Claude that held this tmux session before is over.
 		h.dropLocked(prev)
 	}
-	h.bySession[hubKey(osUser, b.Session)] = c
-	// The first hello comes before Claude has written its transcript, and the
-	// mod says hello again naming it once the first row lands. The source
-	// built on the first one kept an empty path for the life of the session,
-	// so no picture could be read back, a subagent's included, and the agent
-	// panel had no directory to list: a phone re-rendering 34 such pictures
-	// drew 421 404s and the edge banned it (2026-10-03). The log is kept.
-	if c.ls != nil && b.Transcript != "" && c.ls.fs.Path() != b.Transcript {
-		c.ls.fs.SetPath(b.Transcript)
-		c.ls.agents.SetDir(sessionio.SessionDir(b.Transcript))
+	if (fresh || !c.stamps) && c.ls != nil {
+		retired = append(retired, c.ls)
+		c.ls = nil
 	}
-	c.pane, c.transcript, c.ops = b.Pane, b.Transcript, b.Ops
-	if c.ls == nil {
-		c.ls = h.rg.startMod(b.Session, b.Transcript, us.reader, us.agents)
-		if !history {
-			// A rename keeps the conversation but not this process's log of
-			// it under the old name, so the new source asks for history.
-			history = true
-		}
-	}
-	c.ls.agents.SetSteer(slices.Contains(b.Ops, "steer"))
 	c.lastSeen = h.now()
-	token := c.token
-	c.mu.Unlock()
-	for _, ch := range h.waiting[hubKey(osUser, b.Session)] {
-		close(ch)
+	c.fullOnState = c.stamps
+	built := false
+	if c.stamps {
+		h.bySession[hubKey(osUser, b.Session)] = c
+		// The first hello comes before Claude has written its transcript, and
+		// the mod says hello again naming it once the first row lands. The
+		// source built on the first one kept an empty path for the life of the
+		// session, so no picture could be read back, a subagent's included,
+		// and the agent panel had no directory to list: a phone re-rendering
+		// 34 such pictures drew 421 404s and the edge banned it (2026-10-03).
+		// The log is kept.
+		if c.ls != nil && b.Transcript != "" && c.ls.fs.Path() != b.Transcript {
+			c.ls.fs.SetPath(b.Transcript)
+			c.ls.agents.SetDir(sessionio.SessionDir(b.Transcript))
+		}
+		if c.ls == nil {
+			// A new log, for a new connection, a rename, or a new module: it
+			// is rebuilt from the history this hello asks for.
+			c.ls = h.rg.startMod(b.Session, b.Transcript, us.reader, us.agents)
+			c.historyOwed, c.historyChunks = true, 0
+			built = true
+		}
+		c.ls.agents.SetSteer(slices.Contains(b.Ops, "steer"))
+	} else {
+		c.historyOwed, c.historyChunks = false, 0
+		log.Printf("mod %s/%s: a second Claude (pane %s) said hello in a session another one holds; it writes nothing", osUser, b.Session, b.Pane)
 	}
-	delete(h.waiting, hubKey(osUser, b.Session))
+	// A mod from before 0.3.0 puts a history it is sent ahead of everything
+	// it has queued, a history it was sent before included, so asking it
+	// again would draw the conversation twice: it is asked only by the hello
+	// that built the log, as before. A 0.3.0 mod drops its queue at the
+	// snapshot, and is asked for as long as the history is owed.
+	history := c.historyOwed
+	if b.Instance == "" {
+		history = built
+	}
+	ls, token, stamps := c.ls, c.token, c.stamps
+	c.mu.Unlock()
+	if stamps {
+		for _, ch := range h.waiting[hubKey(osUser, b.Session)] {
+			close(ch)
+		}
+		delete(h.waiting, hubKey(osUser, b.Session))
+	}
 	h.mu.Unlock()
-	if retired != nil {
-		retired.stop()
-		retired.fs.Close()
-		retired.drills.close()
+	for _, r := range retired {
+		r.stop()
+		r.fs.Close()
+		r.drills.close()
+	}
+	// Mod rows carry no model, so a log built after a restart would show none
+	// until someone switched model. The hello names it.
+	if built && b.Model != "" {
+		ls.fs.Feed(sessionio.ModEvent{Type: sessionio.ModModelEvent, T: h.now().UnixMilli(), Model: b.Model})
+	}
+	if b.Dropped > 0 {
+		log.Printf("mod %s/%s: its queue has shed %d events since it loaded", osUser, b.Session, b.Dropped)
 	}
 	events.Emit("mod.hello", osUser, telemetry.Attrs{
 		"tl.session": b.Session, "tl.version": b.Version, "tl.mod": b.Mod, "tl.history": history,
+		"tl.count": b.Dropped,
 	})
 	return token, history
+}
+
+// yields reports whether a hello comes from a second Claude in a tmux session
+// another live Claude holds from another pane (yieldsLocked).
+func (h *modHub) yields(osUser string, b modHello) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.yieldsLocked(osUser, b, h.bySID[hubKey(osUser, b.SID)])
+}
+
+// yieldsLocked reports whether the connection c saying hello b must leave the
+// session to the connection that holds it: one on another pane whose mod is
+// still alive. A holder on the same pane is a Claude that pane ran before,
+// and one gone quiet is over; either is replaced. Caller holds h.mu.
+func (h *modHub) yieldsLocked(osUser string, b modHello, c *modConn) bool {
+	holder := h.bySession[hubKey(osUser, b.Session)]
+	if holder == nil || holder == c {
+		return false
+	}
+	holder.mu.Lock()
+	pane := holder.pane
+	holder.mu.Unlock()
+	return pane != b.Pane && holder.alive(h.now())
+}
+
+// capLocked makes room for one more of the user's connections, dropping the
+// longest-silent ones past modConnsPerUser. Caller holds h.mu.
+func (h *modHub) capLocked(osUser string) {
+	var mine []*modConn
+	for _, c := range h.bySID {
+		if c.user == osUser {
+			mine = append(mine, c)
+		}
+	}
+	if len(mine) < modConnsPerUser {
+		return
+	}
+	seen := func(c *modConn) time.Time {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.lastSeen
+	}
+	sort.Slice(mine, func(i, j int) bool { return seen(mine[i]).Before(seen(mine[j])) })
+	for _, c := range mine[:len(mine)-modConnsPerUser+1] {
+		log.Printf("mod %s/%s: over %d connections for the user, dropping the longest silent", c.user, c.session, modConnsPerUser)
+		h.dropLocked(c)
+	}
 }
 
 // dropLocked forgets a connection and ends its streams. Caller holds h.mu.
@@ -560,22 +680,25 @@ func (h *modHub) handleEvents() http.HandlerFunc {
 	}
 }
 
-// apply feeds a batch of events to the session: the log, the dialog and the
+// apply feeds a batch of events to the session: the log, the dialogs and the
 // tmux options. The option writes are merged across the batch so a burst of
 // events costs one tmux call.
 func (c *modConn) apply(evs []sessionio.ModEvent) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	h := c.hub
 	c.mu.Lock()
-	ls := c.ls
+	ls, sid, stamps := c.ls, c.sid, c.stamps
 	c.mu.Unlock()
 	if ls == nil {
+		if !stamps {
+			c.claimIfFree()
+		}
 		return
 	}
 	fs := ls.fs
 	var merged stampWrite
-	from := ""
-	first := true
-	bye := false
+	bye, state := false, false
 	for _, ev := range evs {
 		if modOwnDialog(ev) {
 			continue
@@ -584,46 +707,115 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		case sessionio.ModHistoryEvent:
 			// Only the last chunk of a long history may close the last turn.
 			fs.FeedHistory(ev.Messages, ev.Running || ev.More)
+			c.mu.Lock()
+			if ev.More {
+				c.historyChunks++
+			} else {
+				c.historyOwed, c.historyChunks = false, 0
+				state = true
+			}
+			c.mu.Unlock()
 		case sessionio.ModAckEvent:
 			c.deliver(ev.ID, modAck{OK: ev.OK, Error: ev.Error})
 			continue
-		case sessionio.ModAskEvent, sessionio.ModPlanEvent, sessionio.ModPermissionEvent:
-			if ev.AgentID == "" {
-				c.openDialog(fs, ev)
-			}
-		case sessionio.ModSettledEvent:
-			c.closeDialog(fs, ev.ToolID)
-		case sessionio.ModTurnEndEvent:
-			if ev.AgentID == "" {
-				c.closeDialog(fs, "")
-			}
 		case sessionio.ModByeEvent:
-			c.closeDialog(fs, "")
+			// A bye still queued from before a /clear names the conversation
+			// it ends, which is not this one (mod 0.3.0; older mods name none).
+			if ev.Sid != "" && ev.Sid != sid {
+				log.Printf("mod %s/%s: ignored a bye for conversation %s", c.user, c.sessionName(), ev.Sid)
+				continue
+			}
 			bye = true
 		case sessionio.ModRowEvent:
-			c.firstPromptShown(ev, time.Now())
+			c.firstPromptShown(ev, h.now())
 		case sessionio.ModAgentsEvent:
 			// The engine's own list decides who can be messaged (steer.go).
 			ls.agents.SetEngine(ev.Agents)
+		case sessionio.ModLevelEvent:
+			ls.agents.SetEngine(ev.Agents)
+			state = true
+		case sessionio.ModCommandFailedEvent:
+			c.commandFailed(ev)
 		}
 		fs.Feed(ev)
 		c.mu.Lock()
 		w := c.st.apply(ev, h.now())
 		c.mu.Unlock()
-		if first && w.from != w.to {
-			from, first = w.from, false
-		}
 		merged = mergeWrites(merged, w)
 	}
-	if !first {
-		merged.from = from
+	c.showDialogs(fs)
+	// The four state options are diffed against what was last written, and
+	// written in full on the first state-bearing apply after a hello, after a
+	// failed write, and on a bye. A manual state therefore lasts until the
+	// derived state next changes: nothing re-asserts an unchanged value.
+	c.mu.Lock()
+	full := bye || c.fullNext || (state && c.fullOnState)
+	if state {
+		c.fullOnState = false
 	}
-	c.write(merged)
+	opts := c.st.opts()
+	flush := c.st.flush(full)
+	c.mu.Unlock()
+	merged = mergeWrites(merged, flush)
+	merged.from, merged.to = flush.from, flush.to
+	ok := c.write(merged)
+	c.mu.Lock()
+	if ok {
+		c.st.written, c.fullNext = opts, false
+	} else {
+		c.fullNext = true
+	}
+	c.mu.Unlock()
 	if bye {
 		h.mu.Lock()
 		h.dropLocked(c)
 		h.mu.Unlock()
 	}
+}
+
+func (c *modConn) sessionName() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session
+}
+
+// claimIfFree asks a connection that yielded its session to a second live
+// Claude to say hello again once that Claude is gone: its token is revoked,
+// so its next request is refused and its hello takes the session.
+func (c *modConn) claimIfFree() {
+	h := c.hub
+	h.mu.Lock()
+	c.mu.Lock()
+	session := c.session
+	c.mu.Unlock()
+	holder := h.bySession[hubKey(c.user, session)]
+	free := holder == nil || (holder != c && !holder.alive(h.now()))
+	revoked := false
+	c.mu.Lock()
+	if free && c.token != "" {
+		delete(h.byToken, c.token)
+		c.token = ""
+		revoked = true
+	}
+	wake := c.wake
+	c.mu.Unlock()
+	h.mu.Unlock()
+	if revoked {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// commandFailed records a command the mod acked and then could not carry out:
+// a prompt a hook dropped, a slash command that failed. The route had already
+// answered that it was sent, so the log line, the event and the notice in the
+// session's Text view (sessionio.FileSource) are what say otherwise.
+func (c *modConn) commandFailed(ev sessionio.ModEvent) {
+	session := c.sessionName()
+	log.Printf("mod %s/%s: command %s (%s) failed after its ack: %s", c.user, session, ev.ID, ev.Op, ev.Error)
+	events.Emit("mod.command_failed", c.user, telemetry.Attrs{"tl.session": session, "tl.kind": ev.Op})
 }
 
 // pluginToolPrefix starts the id of a tool call a plugin made rather than the
@@ -675,15 +867,17 @@ func containsStr(list []string, s string) bool {
 }
 
 // write applies option changes to the tmux session and records a state
-// transition the way the hook script did.
+// transition the way the hook script did. It reports whether every change
+// landed.
 //
 // A write that fails because the session was renamed under the mod is made
 // again under the name the mod's pane has now, and the mod is asked to say
 // hello again so everything else moves too (followRename).
-func (c *modConn) write(w stampWrite) {
+func (c *modConn) write(w stampWrite) bool {
 	if w.empty() {
-		return
+		return true
 	}
+	ok := true
 	h := c.hub
 	c.mu.Lock()
 	user, session, pane := c.user, c.session, c.pane
@@ -706,6 +900,7 @@ func (c *modConn) write(w stampWrite) {
 			name, err = c.setAll(user, session, w.set)
 		}
 		if err != nil {
+			ok = false
 			log.Printf("mod %s/%s: set %s: %v", user, session, name, err)
 		}
 	}
@@ -715,6 +910,7 @@ func (c *modConn) write(w stampWrite) {
 			err = h.unset(user, session, w.unset)
 		}
 		if err != nil {
+			ok = false
 			log.Printf("mod %s/%s: unset %v: %v", user, session, w.unset, err)
 		}
 	}
@@ -723,6 +919,7 @@ func (c *modConn) write(w stampWrite) {
 			"tl.session": session, "tl.from": orNone(w.from), "tl.to": st, "tl.client": "mod",
 		})
 	}
+	return ok
 }
 
 // setAll stamps every option, stopping at the first failure: a session that
@@ -779,155 +976,6 @@ func orNone(s string) string {
 	return s
 }
 
-// openDialog records a dialog waiting on a person and puts it on the wire in
-// the shape the Text view's cards already read: a held call for a question
-// (ADR-0034's `held`), a reading for a plan or a permission prompt (`asking`).
-func (c *modConn) openDialog(fs *sessionio.FileSource, ev sessionio.ModEvent) {
-	d := &modDialog{toolID: ev.ToolID}
-	switch ev.Type {
-	case sessionio.ModAskEvent:
-		d.kind, d.raw = "ask", ev.Questions
-		_ = json.Unmarshal(ev.Questions, &d.questions)
-	case sessionio.ModPlanEvent:
-		d.kind, d.plan, d.planFilePath = "plan", ev.Plan, ev.PlanFilePath
-	case sessionio.ModPermissionEvent:
-		d.kind, d.tool, d.reason = "permission", ev.Tool, ev.Reason
-		d.title, d.detail = permissionTitle(ev.Tool), permissionDetail(ev.Input)
-	default:
-		return
-	}
-	c.mu.Lock()
-	c.dialogs = append(withoutDialog(c.dialogs, d.toolID), d)
-	c.mu.Unlock()
-	c.showDialogs(fs)
-}
-
-// closeDialog takes a dialog off the wire, and the next one of its kind takes
-// its place. An empty toolID closes every open dialog.
-func (c *modConn) closeDialog(fs *sessionio.FileSource, toolID string) {
-	c.mu.Lock()
-	if toolID == "" {
-		c.dialogs = nil
-	} else {
-		c.dialogs = withoutDialog(c.dialogs, toolID)
-	}
-	c.mu.Unlock()
-	c.showDialogs(fs)
-}
-
-func withoutDialog(ds []*modDialog, toolID string) []*modDialog {
-	kept := ds[:0:0]
-	for _, d := range ds {
-		if d.toolID != toolID {
-			kept = append(kept, d)
-		}
-	}
-	return kept
-}
-
-// showDialogs puts the open dialogs on the wire in the shapes the Text view's
-// cards already read: the held calls for questions (ADR-0034's `held`, oldest
-// first, the card answers the first), and a reading for the oldest plan or
-// permission prompt (`asking`). The source skips a body it already sent.
-func (c *modConn) showDialogs(fs *sessionio.FileSource) {
-	c.mu.Lock()
-	var calls []map[string]json.RawMessage
-	var first json.RawMessage
-	var asking *modDialog
-	for _, d := range c.dialogs {
-		switch {
-		case d.kind == "ask":
-			if first == nil {
-				first = d.raw
-			}
-			calls = append(calls, map[string]json.RawMessage{"questions": d.raw})
-		case asking == nil:
-			asking = d
-		}
-	}
-	c.mu.Unlock()
-	held := ""
-	if first != nil {
-		body, _ := json.Marshal(map[string]any{"questions": first, "calls": calls})
-		held = string(body)
-	}
-	fs.SetHeld(held)
-	reading := ""
-	switch {
-	case asking == nil:
-	case asking.kind == "plan":
-		body, _ := json.Marshal(sessionio.Dialog{
-			Kind:        sessionio.DialogKindPlan,
-			Options:     []sessionio.PlanOption{{Number: 1, Label: "Yes, approve the plan"}},
-			FeedbackRow: 2, PlanPath: asking.planFilePath,
-		})
-		reading = string(body)
-	default:
-		body, _ := json.Marshal(sessionio.Dialog{
-			Kind: sessionio.DialogKindPermission, Title: asking.title,
-			Detail: asking.detail, Prompt: "Do you want to proceed?",
-			Options: []sessionio.PlanOption{{Number: 1, Label: "Yes"}, {Number: 2, Label: "No"}},
-		})
-		reading = string(body)
-	}
-	fs.SetAsking(reading)
-}
-
-// permissionTitle is the card's heading for a tool, in the words Claude's own
-// prompt uses for the common ones.
-func permissionTitle(tool string) string {
-	switch tool {
-	case "Bash":
-		return "Bash command"
-	case "Edit", "MultiEdit":
-		return "Edit file"
-	case "Write":
-		return "Create file"
-	case "Read":
-		return "Read file"
-	case "WebFetch":
-		return "Fetch"
-	}
-	return tool
-}
-
-// permissionDetail is what the tool will do, as a few lines: the command, the
-// file, or failing those the input's fields.
-func permissionDetail(input json.RawMessage) []string {
-	var in map[string]any
-	if json.Unmarshal(input, &in) != nil {
-		return nil
-	}
-	for _, k := range []string{"command", "file_path", "url", "path", "pattern"} {
-		if s, ok := in[k].(string); ok && s != "" {
-			lines := strings.Split(s, "\n")
-			if d, ok := in["description"].(string); ok && d != "" {
-				lines = append(lines, d)
-			}
-			return capLines(lines)
-		}
-	}
-	var lines []string
-	for k, v := range in {
-		b, _ := json.Marshal(v)
-		lines = append(lines, k+": "+string(b))
-	}
-	return capLines(lines)
-}
-
-func capLines(lines []string) []string {
-	const most, width = 12, 400
-	if len(lines) > most {
-		lines = append(lines[:most], "…")
-	}
-	for i, l := range lines {
-		if len(l) > width {
-			lines[i] = strings.ToValidUTF8(l[:width], "") + "…"
-		}
-	}
-	return lines
-}
-
 // handlePoll serves GET /mod/v1/poll: the commands waiting for the mod, held
 // open until there is one or modPollHold passes.
 func (h *modHub) handlePoll() http.HandlerFunc {
@@ -953,6 +1001,7 @@ func (h *modHub) handlePoll() http.HandlerFunc {
 		}()
 		t := time.NewTimer(modPollHold)
 		defer t.Stop()
+		expired := false
 		for {
 			c.mu.Lock()
 			// A newer hello replaced this token: the module that holds it was
@@ -962,22 +1011,27 @@ func (h *modHub) handlePoll() http.HandlerFunc {
 				http.Error(w, "superseded by a newer hello", http.StatusConflict)
 				return
 			}
-			cmds := c.cmds
-			c.cmds = nil
-			for _, cmd := range cmds {
-				c.inflight[cmd.ID] = cmd
+			// Only commands a route still waits on: one it gave up on would
+			// act on whatever the session is doing by the time it ran.
+			cmds := []modCommand{}
+			for _, cmd := range c.cmds {
+				if _, waiting := c.acks[cmd.ID]; waiting {
+					cmds = append(cmds, cmd)
+					c.inflight[cmd.ID] = cmd
+				}
 			}
+			c.cmds = nil
 			wake := c.wake
 			c.mu.Unlock()
-			if len(cmds) > 0 {
+			if len(cmds) > 0 || expired {
 				writeJSON(w, map[string]any{"commands": cmds})
 				return
 			}
 			select {
 			case <-wake:
 			case <-t.C:
-				writeJSON(w, map[string]any{"commands": []modCommand{}})
-				return
+				// Look once more: a command queued as the timer fired goes now.
+				expired = true
 			case <-r.Context().Done():
 				return
 			}
@@ -1009,18 +1063,22 @@ func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
 		}
 		return a, nil
 	case <-t.C:
-		c.mu.Lock()
-		delete(c.acks, cmd.ID)
-		delete(c.inflight, cmd.ID)
-		c.mu.Unlock()
+		c.forget(cmd.ID)
 		return modAck{}, context.DeadlineExceeded
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.acks, cmd.ID)
-		delete(c.inflight, cmd.ID)
-		c.mu.Unlock()
+		c.forget(cmd.ID)
 		return modAck{}, ctx.Err()
 	}
+}
+
+// forget drops a command its route stopped waiting on, wherever it is: not
+// yet polled, or handed over and not acked.
+func (c *modConn) forget(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.acks, id)
+	delete(c.inflight, id)
+	c.cmds = slices.DeleteFunc(c.cmds, func(cmd modCommand) bool { return cmd.ID == id })
 }
 
 // cmdSeq is a command id's sequence number ("c12" is 12), which orders
@@ -1049,109 +1107,6 @@ func (c *modConn) deliver(id string, a modAck) {
 	}
 }
 
-// dialogNow is the dialog the session is waiting on, nil when none.
-func (c *modConn) dialogNow() *modDialog {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.dialogs) == 0 {
-		return nil
-	}
-	return c.dialogs[0]
-}
-
-// dialogFor finds the dialog an answer is for: the one it names, or else the
-// oldest open dialog of its kind. A named dialog of another kind is nil.
-func (c *modConn) dialogFor(kind, toolID string) *modDialog {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, d := range c.dialogs {
-		if toolID != "" && d.toolID == toolID {
-			if d.kind != kind {
-				return nil
-			}
-			return d
-		}
-		if toolID == "" && d.kind == kind {
-			return d
-		}
-	}
-	return nil
-}
-
-// answer turns a card's answer into the command that settles the dialog.
-func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessionio.AnswerResponse {
-	var cmds []modCommand
-	switch {
-	case req.Answers != nil || req.Chat != nil:
-		d := c.dialogFor("ask", req.ToolID)
-		if d == nil {
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}
-		}
-		cmd := modCommand{Op: "answer", ToolID: d.toolID}
-		if req.Chat != nil {
-			msg := chatMessage(*req.Chat)
-			cmd.Chat = &msg
-		} else {
-			answers, ok := answersFor(d.questions, req.Answers)
-			if !ok {
-				return sessionio.AnswerResponse{Reason: sessionio.AnswerIncomplete}
-			}
-			cmd.Answers = answers
-		}
-		cmds = append(cmds, cmd)
-	case req.Plan != nil:
-		d := c.dialogFor("plan", req.ToolID)
-		if d == nil {
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}
-		}
-		p := req.Plan
-		switch {
-		case p.Option == 1:
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "allow"})
-		case p.Option == 2 && strings.TrimSpace(p.Feedback) == "":
-			// Keep planning, with no words: the mod sends its own message.
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "deny"})
-		case strings.TrimSpace(p.Feedback) != "" && p.Approve:
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "allow"},
-				modCommand{Op: "prompt", Text: p.Feedback})
-		case strings.TrimSpace(p.Feedback) != "":
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "deny", Reason: p.Feedback})
-		default:
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption}
-		}
-	case req.Permission != nil:
-		d := c.dialogFor("permission", req.ToolID)
-		if d == nil {
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}
-		}
-		p := req.Permission
-		switch {
-		case p.Option == 1:
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "allow"})
-		case p.Option == 2:
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "deny",
-				Reason: "The user declined this tool call."})
-		case strings.TrimSpace(p.Decline) != "":
-			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "deny", Reason: p.Decline})
-		default:
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption}
-		}
-	default:
-		return sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}
-	}
-	for _, cmd := range cmds {
-		a, err := c.send(ctx, cmd)
-		if err != nil {
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified}
-		}
-		if !a.OK {
-			// The dialog was settled elsewhere a moment ago.
-			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}
-		}
-	}
-	return sessionio.AnswerResponse{Applied: true, Done: true}
-}
-
 // sweep drops connections whose mod has gone quiet.
 func (h *modHub) sweep() {
 	cut := h.now().Add(-modExpiry)
@@ -1171,47 +1126,23 @@ func (h *modHub) sweep() {
 	}
 	h.mu.Unlock()
 	for _, c := range stale {
-		c.write(stampWrite{unset: []string{sessionio.OptionAsk, sessionio.OptionTool}})
-	}
-}
-
-// heldQuestion is the part of an AskUserQuestion question an answer is checked
-// against.
-type heldQuestion struct {
-	Question    string `json:"question"`
-	MultiSelect bool   `json:"multiSelect,omitempty"`
-}
-
-// answersFor builds Claude's answer map from the card's, keyed by the question
-// text, or reports that a question is left without an answer. Claude reads a
-// missing answer as a skipped question, so a partial map is refused rather than
-// sent. A multi-select's picks go as one "A, B" string: an array reaches the
-// model as "A,B" and the terminal draws no answer row for it (ADR-0034).
-func answersFor(qs []heldQuestion, got map[string][]string) (map[string]string, bool) {
-	out := make(map[string]string, len(qs))
-	for _, q := range qs {
-		var picks []string
-		for _, p := range got[q.Question] {
-			if p = strings.TrimSpace(p); p != "" {
-				picks = append(picks, p)
+		c.mu.Lock()
+		user, session, stamps := c.user, c.session, c.stamps
+		c.mu.Unlock()
+		if !stamps {
+			continue
+		}
+		// A Claude that left the pane without a bye (killed, or out of
+		// memory) left every option behind: skills-api would refuse to
+		// restart a session still reading running. One still running may
+		// only have lost its link, and its state and work are left as they
+		// were.
+		names := []string{sessionio.OptionAsk, sessionio.OptionTool}
+		if h.paneProcs != nil {
+			if procs := h.paneProcs(user, session); procs != nil && !claudeRunning(procs) {
+				names = []string{sessionio.OptionState, sessionio.OptionAsk, sessionio.OptionTool, sessionio.OptionBackground}
 			}
 		}
-		if len(picks) == 0 {
-			return nil, false
-		}
-		out[q.Question] = strings.Join(picks, ", ")
+		c.write(stampWrite{unset: names})
 	}
-	return out, true
-}
-
-// chatMessage is what Claude reads when the reader declines the question to
-// talk instead. Claude shows a refusal as an error, so the words say plainly
-// that this is the reader's choice and what to do next.
-func chatMessage(words string) string {
-	words = strings.TrimSpace(words)
-	if words == "" {
-		return "The user chose not to answer these questions and wants to talk about them instead. " +
-			"Do not ask them again; wait for the user's next message."
-	}
-	return "The user chose not to pick an answer and replied instead: " + words
 }
