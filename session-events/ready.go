@@ -21,3 +21,17 @@ const (
 	PromptReadyWait = 4 * time.Second
 	PromptReadyPoll = 200 * time.Millisecond
 )
+
+// FirstPromptHelloWait is how long a New-session composer's first prompt to a
+// Claude is held for its mod's hello. Longer than the browser's 8s request
+// deadline on purpose: the prompt carries a request id, so the browser's
+// retries join the attempt already waiting (promptonce.go) and the prompt goes
+// in the moment the hello lands. Before 2026-10-04 the hold was
+// PromptReadyWait and the browser waited 1.6s and 3s between attempts, and a
+// hello landing in a gap waited for the next attempt: 2.5s of one 12.9s first
+// prompt. Sized past the slowest boot measured, 21.4s over 7 days.
+const FirstPromptHelloWait = 25 * time.Second
+
+// helloWaitHeader carries how long a first prompt waited for its mod's hello,
+// in ms: 0 when the slot's Claude had already booted.
+const helloWaitHeader = "X-Tl-Hello-Wait-Ms"

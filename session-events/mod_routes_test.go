@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,41 @@ func TestAFirstPromptWaitsForTheModToSayHello(t *testing.T) {
 	rec := postTurn(t, mux, "/prompt/demo", `{"text":"first","awaitReady":true}`)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d (%s), want 204 once the mod connected", rec.Code, rec.Body.String())
+	}
+}
+
+// A first prompt to a slot whose Claude is still booting is held until the
+// hello, however long past PromptReadyWait the boot runs: the browser's
+// retries join the same attempt (promptonce.go), so the prompt goes in the
+// moment Claude can take it rather than at the next rung of the ladder
+// (docs/plans/2026-10-04-warm-slot-at-send-design.md). It says how long it
+// waited, which tells the composer a booted slot from a booting one.
+func TestAFirstPromptIsHeldUntilAHelloPastTheUsualWait(t *testing.T) {
+	f := &fakeTurns{}
+	rg, mux := modTurnMux(t, f)
+	go func() {
+		time.Sleep(PromptReadyWait + 300*time.Millisecond)
+		rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+		fakeMod(t, rg.mods.conn("wizard", "demo"))
+	}()
+	rec := postTurn(t, mux, "/prompt/demo", `{"text":"first","awaitReady":true,"id":"req1"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d (%s), want 204 once the mod connected", rec.Code, rec.Body.String())
+	}
+	waited, err := strconv.Atoi(rec.Header().Get(helloWaitHeader))
+	if err != nil || waited < int(PromptReadyWait/time.Millisecond) {
+		t.Fatalf("%s = %q, want the wait in ms", helloWaitHeader, rec.Header().Get(helloWaitHeader))
+	}
+}
+
+func TestAFirstPromptToAConnectedModSaysItDidNotWait(t *testing.T) {
+	f := &fakeTurns{}
+	rg, mux := modTurnMux(t, f)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	fakeMod(t, rg.mods.conn("wizard", "demo"))
+	rec := postTurn(t, mux, "/prompt/demo", `{"text":"first","awaitReady":true,"id":"req2"}`)
+	if rec.Code != http.StatusNoContent || rec.Header().Get(helloWaitHeader) != "0" {
+		t.Fatalf("status %d, %s = %q", rec.Code, helloWaitHeader, rec.Header().Get(helloWaitHeader))
 	}
 }
 

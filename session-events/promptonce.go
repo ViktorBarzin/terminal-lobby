@@ -30,7 +30,7 @@ const (
 	promptOnceTTL = 2 * time.Minute
 	// promptOnceRun bounds an attempt nobody is waiting for any more: the
 	// server's own hold and ack waits, with room to spare.
-	promptOnceRun = 30 * time.Second
+	promptOnceRun = FirstPromptHelloWait + modAckWait + 5*time.Second
 )
 
 var promptIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)

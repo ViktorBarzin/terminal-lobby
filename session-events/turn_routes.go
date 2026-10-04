@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -265,6 +266,10 @@ func servePrompt(w http.ResponseWriter, r *http.Request, rg *registry, drv promp
 // said by name.
 func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv promptDriver, osUser, session string, p promptBody) {
 	start := time.Now()
+	wait := PromptReadyWait
+	if p.AwaitReady && p.ID != "" {
+		wait = FirstPromptHelloWait
+	}
 	c := rg.mods.conn(osUser, session)
 	if c == nil {
 		var hello <-chan struct{}
@@ -277,7 +282,7 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 		}
 		if c == nil && p.AwaitReady {
 			if c = rg.mods.conn(osUser, session); c == nil {
-				t := time.NewTimer(max(0, PromptReadyWait-time.Since(start)))
+				t := time.NewTimer(max(0, wait-time.Since(start)))
 				select {
 				case <-hello:
 				case <-t.C:
@@ -300,6 +305,9 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 	if at, _ := drv.Option(osUser, session, sessionio.OptionSuspended); at != "" {
 		http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
 		return
+	}
+	if p.ID != "" {
+		w.Header().Set(helloWaitHeader, strconv.FormatInt(time.Since(start).Milliseconds(), 10))
 	}
 	ack, err := c.send(r.Context(), modCommand{Op: "prompt", Text: p.Text})
 	if err != nil {
