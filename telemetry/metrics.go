@@ -66,6 +66,7 @@ type Metrics struct {
 	counters map[counterKey]uint64
 	histos   map[string]*histo
 	gauges   map[gaugeKey]float64
+	named    map[gaugeKey]uint64
 }
 
 func NewMetrics() *Metrics {
@@ -73,6 +74,7 @@ func NewMetrics() *Metrics {
 		counters: map[counterKey]uint64{},
 		histos:   map[string]*histo{},
 		gauges:   map[gaugeKey]float64{},
+		named:    map[gaugeKey]uint64{},
 	}
 }
 
@@ -111,6 +113,16 @@ func (m *Metrics) SetGauge(name string, labels map[string]string, v float64) {
 
 // Handler serves the exposition format. A nil *Metrics serves an empty body
 // rather than 500ing, so a half-wired service still scrapes.
+// AddCounter adds one to a named counter. Labels may be nil.
+func (m *Metrics) AddCounter(name string, labels map[string]string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.named[gaugeKey{name: name, labels: renderLabels(labels)}]++
+}
+
 func (m *Metrics) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -169,6 +181,26 @@ func (m *Metrics) Render(w io.Writer) {
 			fmt.Fprintf(w, "tl_http_request_duration_ms_bucket{endpoint=%q,le=\"+Inf\"} %d\n", escape(e), h.n)
 			fmt.Fprintf(w, "tl_http_request_duration_ms_sum{endpoint=%q} %s\n", escape(e), strconv.FormatFloat(h.sum, 'f', -1, 64))
 			fmt.Fprintf(w, "tl_http_request_duration_ms_count{endpoint=%q} %d\n", escape(e), h.n)
+		}
+	}
+
+	if len(m.named) > 0 {
+		byName := map[string][]gaugeKey{}
+		for k := range m.named {
+			byName[k.name] = append(byName[k.name], k)
+		}
+		names := make([]string, 0, len(byName))
+		for n := range byName {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			fmt.Fprintf(w, "# TYPE %s counter\n", n)
+			ks := byName[n]
+			sort.Slice(ks, func(i, j int) bool { return ks[i].labels < ks[j].labels })
+			for _, k := range ks {
+				fmt.Fprintf(w, "%s%s %d\n", k.name, k.labels, m.named[k])
+			}
 		}
 	}
 

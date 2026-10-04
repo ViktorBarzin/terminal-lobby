@@ -274,7 +274,13 @@ var knownEvents = map[string]bool{
 	// tl.first = true, tl.n = its LENGTH, tl.hidden when the page was hidden
 	// since Send. The journey design's (2026-09-12) name and attributes; this
 	// arm emits from session-events because the browser rarely sees Shown.
-	"prompt.landed":        true,
+	"prompt.landed": true,
+	// The same first prompt timed from Send to Accepted on the BROWSER's clock,
+	// which is where the person waits (docs/plans/2026-10-04-warm-slot-at-send-design.md):
+	// tl.ms, tl.slot = what the claim and the hold found (warm | booting |
+	// stale | none | unknown), tl.hidden. tmux-api counts these into
+	// tl_first_prompt_total and tl_first_prompt_slow_total for the alert.
+	"prompt.accepted":      true,
 	"claude.cancelled":     true,
 	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
 	"claude.state_changed": true, // running/awaiting/done transition (tl.to)

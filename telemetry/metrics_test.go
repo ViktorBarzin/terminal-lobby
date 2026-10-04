@@ -95,6 +95,23 @@ func TestMetricsGaugesAreSettable(t *testing.T) {
 	}
 }
 
+func TestMetricsCountersAddUpByLabel(t *testing.T) {
+	m := NewMetrics()
+	m.AddCounter("tl_first_prompt_total", map[string]string{"user": "emo", "slot": "warm"})
+	m.AddCounter("tl_first_prompt_total", map[string]string{"user": "emo", "slot": "warm"})
+	m.AddCounter("tl_first_prompt_total", map[string]string{"user": "emo", "slot": "stale"})
+	got := render(t, m)
+	for _, w := range []string{
+		"# TYPE tl_first_prompt_total counter",
+		`tl_first_prompt_total{slot="warm",user="emo"} 2`,
+		`tl_first_prompt_total{slot="stale",user="emo"} 1`,
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in:\n%s", w, got)
+		}
+	}
+}
+
 func TestMetricsIsConcurrencySafe(t *testing.T) {
 	m := NewMetrics()
 	var wg sync.WaitGroup

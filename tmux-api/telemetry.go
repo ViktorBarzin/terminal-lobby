@@ -356,6 +356,9 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		if ev.Name == "perf.rollup" {
 			recordPerfRollup(metrics, osUser, attrs)
 		}
+		if ev.Name == "prompt.accepted" {
+			recordFirstPrompt(metrics, osUser, attrs)
+		}
 		accepted++
 	}
 	if dropped > 0 {
