@@ -47,8 +47,15 @@ export function headerSubtitle(input: {
 }): HeaderSubtitle {
   // Waiting on the reader is said even before a state is stamped: a fresh
   // Claude on its folder-trust dialog has stamped none.
+  // The conversation reads done whenever no turn is open, which is also while
+  // background work it launched is still going, so its done never overrides
+  // the session list saying that work is owed.
+  const owesWork = input.state === "running" && backgroundLabel(input.background) !== "";
   const state =
-    input.live && input.state !== "suspended" && (input.state || input.live === "awaiting")
+    input.live &&
+    input.state !== "suspended" &&
+    (input.state || input.live === "awaiting") &&
+    !(input.live === "done" && owesWork)
       ? input.live
       : input.state;
   const [dot, word]: [HeaderDot, string] = input.watching

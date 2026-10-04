@@ -63,6 +63,11 @@ export type TlEvent =
   | "sidebar.toggled"
   // The text view's agent margin folded or opened (tl.to: collapsed | expanded).
   | "agents.rail_toggled"
+  // The agent set holds running work the panel keeps hidden (agents.logic
+  // panelPresent), once per set of running ids: tl.runs, tl.agents, tl.turn,
+  // tl.owed, tl.quiet_ms (since the newest write). A seven-hour workflow run
+  // went unseen on 2026-10-04 with nothing in the journal to say so.
+  | "agents.panel_held"
   // sharing
   | "share.granted"
   | "share.revoked"

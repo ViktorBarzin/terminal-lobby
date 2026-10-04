@@ -20,6 +20,12 @@ import { TextView } from "../src/components/TextView";
 import type { AgentSnapshot } from "../src/components/agents.logic";
 import type { AgentInfo, Event, WorkflowInfo } from "../src/types/events";
 import type { BackgroundWork, SessionTool } from "../src/types/lobby";
+import { track } from "../src/telemetry/track";
+
+vi.mock("../src/telemetry/track", async (original) => ({
+  ...(await original<typeof import("../src/telemetry/track")>()),
+  track: vi.fn(),
+}));
 
 const T0 = 1_790_000_000_000;
 
@@ -76,6 +82,7 @@ function mount(opts: {
   working?: boolean;
   bg?: BackgroundWork;
   tool?: SessionTool;
+  onLive?: (s: "running" | "awaiting" | "done" | undefined) => void;
 }) {
   const [agents, setAgents] = createSignal<AgentSnapshot | null>(opts.agents ?? null);
   const [bg, setBg] = createSignal<BackgroundWork | undefined>(opts.bg);
@@ -86,6 +93,8 @@ function mount(opts: {
       background={bg}
       agents={agents}
       tool={tool}
+      session="demo"
+      onLiveState={opts.onLive}
       pending={[]}
       onSend={async () => true}
       onStop={() => {}}
@@ -162,6 +171,60 @@ describe("the agent panel in the text view", () => {
     expect(v.panel()).not.toBeNull();
     v.setTool("shell");
     expect(v.panel()).toBeNull();
+  });
+
+  // Claude Code's agent list never names a workflow, so the session list owes
+  // nothing while a run works with the turn closed. Found live 2026-10-04: a
+  // seven-hour run under a session that read idle, its panel hidden.
+  describe("a workflow run the session list does not count", () => {
+    /** A snapshot whose server clock reads T0 now, whatever this machine's says. */
+    const atT0 = (agents: AgentInfo[], workflows: WorkflowInfo[]): AgentSnapshot => ({
+      set: { at: T0, agents, workflows },
+      skew: T0 - Date.now(),
+    });
+    const member = (ago: number) =>
+      agent("m1", { workflowId: "wf_1", startedAt: T0 - 3_600_000, lastActivityAt: T0 - ago });
+    const run = workflow("wf_1", { startedAt: T0 - 3_600_000 });
+
+    beforeEach(() => vi.mocked(track).mockClear());
+
+    it("shows while a member writes, and the header hears the session is working", () => {
+      const lives: (string | undefined)[] = [];
+      const v = mount({
+        agents: atT0([member(20_000)], [run]),
+        working: false,
+        tool: "claude",
+        onLive: (s) => lives.push(s),
+      });
+      expect(v.panel()).not.toBeNull();
+      expect(lives.at(-1)).toBe("running");
+      expect(vi.mocked(track).mock.calls.some(([n]) => n === "agents.panel_held")).toBe(false);
+    });
+
+    it("stays hidden once nothing under it has written for the window, and says so once", () => {
+      const v = mount({
+        agents: atT0([member(20 * 60_000)], [run]),
+        working: false,
+        tool: "claude",
+      });
+      expect(v.panel()).toBeNull();
+      const held = vi.mocked(track).mock.calls.filter(([n]) => n === "agents.panel_held");
+      expect(held).toHaveLength(1);
+      expect(held[0]![1]).toMatchObject({
+        "tl.session": "demo",
+        "tl.runs": 1,
+        "tl.agents": 1,
+        "tl.turn": false,
+        "tl.owed": "",
+        "tl.tool": "claude",
+      });
+      expect(Number(held[0]![1]?.["tl.quiet_ms"])).toBeGreaterThanOrEqual(20 * 60_000);
+      // The same running ids again is the same hold, not a second report.
+      v.setAgents(atT0([member(21 * 60_000)], [run]));
+      expect(vi.mocked(track).mock.calls.filter(([n]) => n === "agents.panel_held")).toHaveLength(
+        1,
+      );
+    });
   });
 
   it("is absent when nothing says the session still owes work", () => {

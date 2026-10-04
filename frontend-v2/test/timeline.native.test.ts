@@ -565,6 +565,92 @@ describe("subagents", () => {
     expect(rows.some((r) => r.kind === "working")).toBe(false);
     expect(heldBy(flat(rows), "call-a")).toEqual([events[5]!.id]);
   });
+
+  // A workflow's members are spawned by the run, not by an Agent call, so
+  // nothing in the transcript claims them: their prompts drew as the person's
+  // bubbles and their commands as a "Working…" turn of the main thread, hours
+  // after its last reply (2026-10-04). The agent set says which run each
+  // member is in, and the Workflow call's result names its run.
+  describe("a workflow run's members", () => {
+    const runCall = (toolId: string) =>
+      ev({ kind: "tool_use", tool: "Workflow", toolId, body: '{"scriptPath":"/tmp/run.js"}' });
+    const runLaunched = (toolId: string, run: string) =>
+      ev({
+        kind: "tool_result",
+        toolId,
+        body: `Workflow launched in background. Task ID: wv5z361dd\nRun ID: ${run}\nTo resume…`,
+      });
+    const member = (agentId: string, turnId: string) => [
+      inner(agentId, { kind: "user", body: "[Workflow harness — computed task] go", turnId }),
+      inner(agentId, {
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: `${agentId}-ls`,
+        body: "{}",
+        turnId,
+      }),
+    ];
+    const runOf = new Map([
+      ["m1", "wf_1"],
+      ["m2", "wf_1"],
+    ]);
+
+    it("go under the Workflow call that launched their run, in whatever turn they arrive", () => {
+      const events = [
+        prompt("run it"),
+        runCall("call-w"),
+        runLaunched("call-w", "wf_1"),
+        ev({ kind: "text", body: "Started the run." }),
+        ev({ kind: "turn_end" }),
+        ...member("m1", "t1"),
+        ev({ kind: "user", body: "status?", turnId: "t2" }),
+        ev({ kind: "text", body: "Still going.", turnId: "t2" }),
+        ev({ kind: "turn_end", turnId: "t2" }),
+        ...member("m2", "t2"),
+      ];
+      const rows = deriveRows(events, { runOf });
+      const shown = flat(rows);
+      expect(heldBy(shown, "call-w")).toEqual([
+        events[5]!.id,
+        events[6]!.id,
+        events[10]!.id,
+        events[11]!.id,
+      ]);
+      expect(shown.filter((r) => r.kind === "user").map((r) => r.id)).toEqual([
+        events[0]!.id,
+        events[7]!.id,
+      ]);
+      expect(rows.some((r) => r.kind === "working")).toBe(false);
+    });
+
+    it("stay out of the main timeline while the call that launched them is not loaded", () => {
+      // The panel and the drill-in carry them; history further back is
+      // fetched on scroll, and they find their call when it arrives.
+      const events = [
+        ev({ kind: "user", body: "status?", turnId: "t2" }),
+        ev({ kind: "text", body: "Still going.", turnId: "t2" }),
+        ev({ kind: "turn_end", turnId: "t2" }),
+        ...member("m2", "t2"),
+      ];
+      const rows = deriveRows(events, { runOf });
+      expect(flat(rows).map((r) => ("id" in r ? r.id : r.kind))).toEqual([
+        events[0]!.id,
+        events[1]!.id,
+      ]);
+      expect(rows.some((r) => r.kind === "working")).toBe(false);
+    });
+
+    it("never claim an Agent call meant for an ad-hoc agent", () => {
+      const events = [
+        prompt("look"),
+        spawn("call-a", "Read the server half"),
+        ev({ kind: "turn_end" }),
+        ...member("m1", "t1"),
+      ];
+      const shown = flat(deriveRows(events, { runOf }));
+      expect(heldBy(shown, "call-a")).toEqual([]);
+    });
+  });
 });
 
 describe("the working row", () => {

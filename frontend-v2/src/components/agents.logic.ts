@@ -123,6 +123,14 @@ function standing(a: AgentInfo, runs: Map<string, WorkflowInfo>): Standing {
  * working once its turn ends, so the session list drops an agent that has
  * paused to wait on its own background Bash while that Bash still runs.
  *
+ * A workflow run is also held up by its own members writing. Claude Code's
+ * agent list names subagents and teammates, never a run or its members, so the
+ * session list can owe nothing while a run works with the turn closed (a TV
+ * redesign run went seven hours unseen, 2026-10-04). A run counts while
+ * something under it was written inside the server's window (`RUN_FRESH_MS`,
+ * session-events agentRetention), judged on the server's clock (`now`): a run
+ * whose session died never writes again, so it drops out when the window does.
+ *
  * A session's agents and workflow runs live inside its claude process, so
  * once the session list says that process has gone (`tool`), nothing in the
  * set can still be running, whatever its transcripts last said.
@@ -132,13 +140,51 @@ export function panelPresent(
   working: boolean,
   bg: BackgroundWork | undefined,
   tool?: SessionTool,
+  now?: number,
 ): boolean {
   if (!set) return false;
   if (tool !== undefined && tool !== "claude") return false;
   const runs = new Map(set.workflows.map((w) => [w.id, w]));
   const live = set.agents.filter((a) => standing(a, runs) === "live");
   if (live.length === 0 && !set.workflows.some((w) => w.state === "running")) return false;
-  return working || owes(bg) || live.some((a) => a.waiting === true);
+  return (
+    working ||
+    owes(bg) ||
+    live.some((a) => a.waiting === true) ||
+    (now !== undefined && set.workflows.some((w) => runWritten(w, set.agents, now)))
+  );
+}
+
+/** Each workflow member's run, agent id to run id: the timeline files a member's
+ *  work under the call that launched its run (timeline.logic RunMembers). */
+export function runMembers(set: AgentSet | null | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const a of set?.agents ?? []) if (a.workflowId) out.set(a.id, a.workflowId);
+  return out;
+}
+
+/** The same pairs in both. A set arrives every second while agents work, and the
+ *  timeline is derived again only when membership moved. */
+export function sameRunMembers(
+  a: ReadonlyMap<string, string>,
+  b: ReadonlyMap<string, string>,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  return true;
+}
+
+/** How recently a running workflow must have written to count on its own. */
+export const RUN_FRESH_MS = 15 * 60_000;
+
+/** A running run with its start or a member's last record inside RUN_FRESH_MS of `now`. */
+function runWritten(run: WorkflowInfo, agents: AgentInfo[], now: number): boolean {
+  if (run.state !== "running") return false;
+  let last = run.startedAt;
+  for (const a of agents) {
+    if (a.workflowId === run.id) last = Math.max(last, a.lastActivityAt, a.startedAt);
+  }
+  return now - last <= RUN_FRESH_MS;
 }
 
 interface RowBase {

@@ -26,6 +26,7 @@ import { createViewMode } from "../store/viewmode";
 import { atListTarget } from "../lib/at-path";
 import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, deriveRows } from "./timeline.logic";
+import { runMembers, sameRunMembers } from "./agents.logic";
 import type { PermissionDecision } from "../types/events";
 import { TextView } from "./TextView";
 import { FilePreview } from "./FilePreview";
@@ -942,7 +943,10 @@ export const SessionView: Component<{
     if (mode() === "text" && !preloading()) store.start();
   });
 
-  const rows = createMemo(() => deriveRows(store.events));
+  const runOf = createMemo(() => runMembers(store.agents()?.set), undefined, {
+    equals: sameRunMembers,
+  });
+  const rows = createMemo(() => deriveRows(store.events, { runOf: runOf() }));
 
   // A person looking at a Text view with nothing in it (telemetry/blank.ts).
   // What is drawn is counted on screen rather than from `rows`, because rows

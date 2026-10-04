@@ -78,7 +78,7 @@ import { AgentPanel } from "./AgentPanel";
 import { AgentTranscript } from "./AgentTranscript";
 import { steerNote, type PendingSteer } from "./steer.logic";
 import { steerAgent } from "../lib/steer-api";
-import { panelPresent, type AgentSnapshot } from "./agents.logic";
+import { panelPresent, runMembers, sameRunMembers, type AgentSnapshot } from "./agents.logic";
 import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
 import { isCoarsePointer } from "../mobile/pointer";
@@ -151,6 +151,10 @@ const CODEX_MODEL_POLL_MS = 2_000;
  * it is on screen and the page is visible.
  */
 const MODE_POLL_MS = 4_000;
+
+/** How often the agent panel's presence re-reads the clock. A run that stops
+ *  writing leaves it this much past agents.logic RUN_FRESH_MS at most. */
+const AGENT_CLOCK_MS = 30_000;
 const CODEX_MODEL_POLLS = 300;
 
 /**
@@ -515,8 +519,12 @@ export const TextView: Component<{
   // Claude has already queued is left out: the timeline draws it as a ghost
   // bubble at its end, and one message should show once (withoutQueued).
   const unrecorded = createMemo(() => withoutQueued(props.pendingPrompts?.() ?? [], queued()));
+  /** Which run each workflow member is in, for the timeline to file its work. */
+  const runOf = createMemo(() => runMembers(props.agents?.()?.set), undefined, {
+    equals: sameRunMembers,
+  });
   /** The transcript folded, once. */
-  const baseRows = createMemo(() => props.rows?.() ?? deriveRows(props.events));
+  const baseRows = createMemo(() => props.rows?.() ?? deriveRows(props.events, { runOf: runOf() }));
   /**
    * The prose sent from here while the transcript's own turn is still open.
    * It waits behind that turn, so it is drawn as a ghost with the ones the
@@ -555,7 +563,9 @@ export const TextView: Component<{
   /** What the timeline draws. `withPendingPrompts` returns `events` itself when
    *  nothing is in flight, so the common case reuses the fold above rather than
    *  repeating it; an unsent prompt is rare and short-lived. */
-  const shownRows = createMemo(() => (sent().length === 0 ? baseRows() : deriveRows(shown())));
+  const shownRows = createMemo(() =>
+    sent().length === 0 ? baseRows() : deriveRows(shown(), { runOf: runOf() }),
+  );
   /**
    * Which blocks are streaming, whatever they hold so far. The derivation
    * below follows this rather than the words, so it re-runs when a block
@@ -570,7 +580,7 @@ export const TextView: Component<{
   const drawnRows = createMemo(() =>
     streamShape().blocks.length === 0
       ? shownRows()
-      : deriveRows(withStreaming(shown(), streamShape())),
+      : deriveRows(withStreaming(shown(), streamShape()), { runOf: runOf() }),
   );
   /**
    * The open turn's live row, off the rows the timeline draws: with a prompt
@@ -948,9 +958,50 @@ export const TextView: Component<{
    * every fixed-position menu inside it (the composer's among them).
    */
   const agentSet = createMemo(() => props.agents?.() ?? null);
-  const showAgents = createMemo(() =>
-    panelPresent(agentSet()?.set, live() !== undefined, props.background?.(), props.tool?.()),
-  );
+  // The server's clock, re-read while a set is held, so a workflow run that
+  // stops writing drops out of panelPresent's window without another frame.
+  const [clock, setClock] = createSignal(Date.now());
+  createEffect(() => {
+    if (!agentSet()) return;
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), AGENT_CLOCK_MS);
+    onCleanup(() => clearInterval(timer));
+  });
+  const showAgents = createMemo(() => {
+    const snap = agentSet();
+    return panelPresent(
+      snap?.set,
+      live() !== undefined,
+      props.background?.(),
+      props.tool?.(),
+      snap ? clock() + snap.skew : undefined,
+    );
+  });
+  let heldIds = "";
+  createEffect(() => {
+    const snap = agentSet();
+    if (!snap || showAgents() || !onScreen()) return;
+    const runs = snap.set.workflows.filter((w) => w.state === "running");
+    const going = snap.set.agents.filter((a) => a.state === "running" || a.state === "queued");
+    const ids = [...runs, ...going].map((x) => x.id).join(" ");
+    if (ids === "" || ids === heldIds) return;
+    heldIds = ids;
+    const newest = Math.max(
+      ...runs.map((w) => w.startedAt),
+      ...going.map((a) => Math.max(a.lastActivityAt, a.startedAt)),
+    );
+    untrack(() =>
+      track("agents.panel_held", {
+        "tl.session": props.session ?? "",
+        "tl.runs": runs.length,
+        "tl.agents": going.length,
+        "tl.turn": live() !== undefined,
+        "tl.owed": backgroundLabel(props.background?.()),
+        "tl.tool": props.tool?.() ?? "",
+        "tl.quiet_ms": clock() + snap.skew - newest,
+      }),
+    );
+  });
   const [narrow, setNarrow] = createSignal(false);
   /** The margin folded to its control alone, by choice (Viktor, 2026-10-03). */
   const [railFolded, setRailFolded] = createSignal(lsGet(RAIL_FOLDED_KEY) === "collapsed");
@@ -1985,8 +2036,10 @@ export const TextView: Component<{
       tell(undefined);
       return;
     }
+    // A closed turn with the agent panel up is a session still working: a
+    // workflow run the session list does not count keeps it from reading idle.
     const l = lineLive();
-    tell(cardUp() || l?.waiting ? "awaiting" : l ? "running" : "done");
+    tell(cardUp() || l?.waiting ? "awaiting" : l || showAgents() ? "running" : "done");
   });
   onCleanup(() => props.onLiveState?.(undefined));
 

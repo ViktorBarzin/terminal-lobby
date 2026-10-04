@@ -18,6 +18,8 @@ import {
   panelPresent,
   panelRows,
   panelTally,
+  runMembers,
+  sameRunMembers,
   snapshotOf,
   stripLabel,
   type PanelRow,
@@ -230,6 +232,67 @@ describe("panelPresent: only while something is running for the session", () => 
 
   it("still disappears when nothing is running, claude or not", () => {
     expect(panelPresent(set([done("a")]), true, { agents: 1 }, "claude")).toBe(false);
+  });
+
+  // Claude Code's agent list names subagents and teammates, never a workflow
+  // or its members, so the session list owes nothing while a run goes on with
+  // the turn closed. Found live on 2026-10-04: a TV redesign run worked for
+  // seven hours under a session that read idle, and the Text view hid it.
+  describe("a running workflow stands on its members' own writes", () => {
+    const member = (ago: number) =>
+      agent("m", { workflowId: "wf_1", lastActivityAt: T0 - ago, startedAt: T0 - 7 * 3600 * S });
+    const run = (ago: number, over: Partial<WorkflowInfo> = {}) =>
+      set([member(ago)], [workflow("wf_1", { startedAt: T0 - 7 * 3600 * S, ...over })]);
+
+    it("shows a run whose member wrote inside the server's window", () => {
+      expect(panelPresent(run(30 * S), false, undefined, "claude", T0)).toBe(true);
+      expect(panelPresent(run(14 * 60 * S), false, undefined, undefined, T0)).toBe(true);
+    });
+
+    it("hides one nothing under has written for longer than the window", () => {
+      // A run whose session died mid-run never gets a run file and reads as
+      // running for good.
+      expect(panelPresent(run(16 * 60 * S), false, undefined, "claude", T0)).toBe(false);
+    });
+
+    it("counts a run that has only just started, before any member wrote", () => {
+      const fresh = set([], [workflow("wf_1", { startedAt: T0 - 5 * S })]);
+      expect(panelPresent(fresh, false, undefined, "claude", T0)).toBe(true);
+    });
+
+    it("still hides it once claude has gone, or the run is over", () => {
+      expect(panelPresent(run(30 * S), false, undefined, "shell", T0)).toBe(false);
+      expect(panelPresent(run(30 * S, { state: "done" }), false, undefined, "claude", T0)).toBe(
+        false,
+      );
+    });
+
+    it("needs the server's clock to judge, and falls back to the old rule without it", () => {
+      expect(panelPresent(run(30 * S), false, undefined, "claude")).toBe(false);
+    });
+
+    it("does not extend to an ad-hoc agent, which the session list does count", () => {
+      const adhoc = set([agent("a", { lastActivityAt: T0 - 30 * S })]);
+      expect(panelPresent(adhoc, false, undefined, "claude", T0)).toBe(false);
+    });
+  });
+});
+
+describe("runMembers: which run each workflow member belongs to", () => {
+  it("maps members to their run and leaves ad-hoc agents out", () => {
+    const m = runMembers(
+      set([agent("a"), agent("m1", { workflowId: "wf_1" })], [workflow("wf_1")]),
+    );
+    expect([...m]).toEqual([["m1", "wf_1"]]);
+    expect(runMembers(null).size).toBe(0);
+  });
+
+  it("calls two maps with the same pairs the same, so rows are not derived again per frame", () => {
+    const a = runMembers(set([agent("m1", { workflowId: "wf_1" })]));
+    const b = runMembers(set([agent("m1", { workflowId: "wf_1", toolCalls: 9 })]));
+    expect(sameRunMembers(a, b)).toBe(true);
+    expect(sameRunMembers(a, runMembers(set([agent("m2", { workflowId: "wf_1" })])))).toBe(false);
+    expect(sameRunMembers(a, new Map())).toBe(false);
   });
 });
 

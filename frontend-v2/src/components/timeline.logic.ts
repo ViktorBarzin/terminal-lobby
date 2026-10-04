@@ -413,7 +413,16 @@ interface Turn {
   usage?: TokenUsage;
 }
 
-function groupTurns(events: Event[]): Turn[] {
+/** Workflow members by run: agent id to run id, from the agent set (agents.logic runMembers). */
+export type RunMembers = ReadonlyMap<string, string>;
+
+/** Where a Workflow call's result names its run: "Run ID: wf_36f0ae91-8a9". */
+const RUN_ID = /\bRun ID: (wf_[A-Za-z0-9_-]+)/;
+
+/** subagentCalls' answer for a member whose run's call is outside the loaded history. */
+const NOT_LOADED = "";
+
+function groupTurns(events: Event[], runOf?: RunMembers): Turn[] {
   const turns: Turn[] = [];
   const byKey = new Map<string, Turn>();
   let synthetic = 0;
@@ -424,11 +433,13 @@ function groupTurns(events: Event[]): Turn[] {
   // under a later turn it had no call to nest under, and drew its commands and
   // pictures loose in the main view, and a "Working…" row for a main thread
   // that was idle (Viktor, 2026-10-03).
-  const callOf = subagentCalls(events);
+  const callOf = subagentCalls(events, runOf);
   const turnOfCall = new Map<string, string>();
 
   for (const e of events) {
     const home = e.sidechain && e.agentId ? callOf.get(e.agentId) : undefined;
+    // A workflow member whose run's call is not loaded: the agent panel has it.
+    if (home === NOT_LOADED) continue;
     const homeTurn = home ? byKey.get(turnOfCall.get(home) ?? "") : undefined;
     if (homeTurn) {
       homeTurn.events.push(e);
@@ -762,10 +773,16 @@ function stringField(v: unknown, key: string): string {
  * failing both, agents and the calls still unclaimed pair in the order they
  * appeared, which is what a single `host` variable could only ever get right
  * for one agent at a time.
+ *
+ * A workflow run's members are spawned by the run, so no call starts them and
+ * none may be taken by the pairing above. `runOf` (agent id to run id, from the
+ * agent set) files each under the Workflow call whose result names its run, or
+ * under NOT_LOADED while that call is outside the loaded history.
  */
-function subagentCalls(events: Event[]): Map<string, string> {
+function subagentCalls(events: Event[], runOf?: RunMembers): Map<string, string> {
   const calls: { toolId: string; prompt: string; at: number }[] = [];
   const out = new Map<string, string>();
+  const runCalls = new Map<string, string>();
   const firsts: { agentId: string; event: Event; at: number }[] = [];
   const seen = new Set<string>();
   events.forEach((e, at) => {
@@ -782,6 +799,8 @@ function subagentCalls(events: Event[]): Map<string, string> {
     if (e.kind === "tool_result" && e.toolId) {
       const started = stringField(e.result, "agentId");
       if (started) out.set(started, e.toolId);
+      const run = runOf ? RUN_ID.exec(e.body ?? "")?.[1] : undefined;
+      if (run) runCalls.set(run, e.toolId);
     }
     if (e.sidechain && e.agentId && !seen.has(e.agentId)) {
       seen.add(e.agentId);
@@ -791,6 +810,13 @@ function subagentCalls(events: Event[]): Map<string, string> {
   const claimed = new Set(out.values());
   for (const a of firsts) {
     if (out.has(a.agentId)) continue;
+    const run = runOf?.get(a.agentId);
+    if (run !== undefined) {
+      const call = runCalls.get(run);
+      out.set(a.agentId, call ?? NOT_LOADED);
+      if (call) claimed.add(call);
+      continue;
+    }
     const open = calls.filter((c) => c.at < a.at && !claimed.has(c.toolId));
     const body = a.event.kind === "user" ? (a.event.body ?? "") : "";
     const call = (body ? open.find((c) => c.prompt === body) : undefined) ?? open[0];
@@ -806,7 +832,10 @@ function subagentCalls(events: Event[]): Map<string, string> {
  * followed it. Every accumulator here is scoped to the turn, so they are locals
  * rather than state deriveRows has to carry.
  */
-function collectTurnRows(turn: Turn): {
+function collectTurnRows(
+  turn: Turn,
+  runOf?: RunMembers,
+): {
   userRow: UserRow | ContinuationRow | null;
   work: LeafRow[];
 } {
@@ -814,7 +843,7 @@ function collectTurnRows(turn: Turn): {
   const work: LeafRow[] = [];
   const toolBy = new Map<string, ToolRow>();
   // Which call each subagent's work belongs to, by agent id (see above).
-  const callOf = subagentCalls(turn.events);
+  const callOf = subagentCalls(turn.events, runOf);
   // Sidechain work that names no agent goes under the newest subagent call
   // still waiting on its result, the only rule there is for it.
   let lastHost: ToolRow | null = null;
@@ -1765,9 +1794,9 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
  */
 export function deriveRows(
   events: Event[],
-  opts: { fold?: boolean; group?: boolean } = {},
+  opts: { fold?: boolean; group?: boolean; runOf?: RunMembers } = {},
 ): TimelineRow[] {
-  const turns = groupTurns(withoutRewound(events));
+  const turns = groupTurns(withoutRewound(events), opts.runOf);
   const out: TimelineRow[] = [];
   const fold = opts.fold !== false;
   const group = opts.group !== false;
@@ -1775,7 +1804,7 @@ export function deriveRows(
   for (const turn of turns) {
     // groupTurns settles every turn but the live one.
     const settled = turn.ended;
-    const { userRow, work } = collectTurnRows(turn);
+    const { userRow, work } = collectTurnRows(turn, opts.runOf);
     // A plan left without a result in a turn that has settled was never
     // answered: the session moved on without it.
     if (settled) for (const r of work) if (r.kind === "plan" && r.pending) supersedePlan(r);

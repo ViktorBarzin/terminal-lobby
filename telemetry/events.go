@@ -149,6 +149,7 @@ var knownEvents = map[string]bool{
 	"sidebar.toggled":        true,
 	"agents.rail_toggled":    true, // the text view's agent margin folded/opened (tl.to)
 	"agents.steer_sent":      true, // a message to an open agent: tl.result sent|unconfirmed|gone|finished|not-addressable|refused
+	"agents.panel_held":      true, // running work the panel keeps hidden: tl.runs, tl.agents, tl.turn, tl.owed, tl.quiet_ms
 
 	// -- workspaces ---------------------------------------------------------
 	// A workspace document written (PUT /workspaces), which is what every

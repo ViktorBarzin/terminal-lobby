@@ -54,6 +54,17 @@ describe("headerSubtitle", () => {
     });
   });
 
+  // The conversation reads done whenever no turn is open, which is also when a
+  // background run is working. Its "idle" must not override the session list
+  // saying the session still owes that work (2026-10-04).
+  it("keeps working while the session owes background work, whatever the conversation says", () => {
+    expect(
+      headerSubtitle({ ...base, state: "running", live: "done", background: { workflows: 1 } }),
+    ).toEqual({ dot: "working", text: "code · working · 1 workflow" });
+    // A turn that closed with nothing owed still reads idle at once.
+    expect(headerSubtitle({ ...base, state: "running", live: "done" }).text).toBe("code · idle");
+  });
+
   it("appends the background work a session still owes", () => {
     expect(headerSubtitle({ ...base, state: "running", background: { agents: 2 } }).text).toBe(
       "code · working · 2 agents",
