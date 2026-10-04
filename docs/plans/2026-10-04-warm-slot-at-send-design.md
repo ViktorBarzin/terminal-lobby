@@ -91,24 +91,30 @@ not cover the first create in a directory with no slot, a Send within ~4 s of
 opening the composer, or a second create in the same directory seconds after
 the first.
 
-1. **An install re-warms every slot.** The package's post-install step asks
-   each lobby user's manager to replace stale slots on the new mod, one at a
-   time a few seconds apart, so they do not boot together. A standing slot is
-   replaced as a standing slot and a speculative one as a speculative one, with
-   the same directory and flags.
+1. **An install re-warms every slot.** tmux-api reads the installed mod id
+   every 5 s; when it changes, it replaces each user's stale slots on the new
+   mod, one per user per pass, 5 s apart, so they do not boot together. A
+   standing slot is replaced as a standing slot and a speculative one as a
+   speculative one, with the same directory and flags. tmux-api does this
+   rather than the package's post-install step because it knows each user's
+   project directories, which is what places a slot warmed before slots were
+   stamped with their directory (a slot's name folds the path lossily).
 2. **The composer keeps its slot fresh while it is on screen.** It asks again
-   when the lobby notices a new build and when the tab becomes visible again,
-   on top of when it mounts and when the project changes. tmux-api replaces a
-   slot that is stale instead of answering that one exists.
-3. **A model or effort picked in the composer is warmed on pick.** Closing the
-   **Model sheet** with a non-default choice swaps the composer's speculative
-   slot for one booted with those flags, and the claim at Send looks for a slot
-   matching the directory, model and effort together. The standing slot stays
-   on Default.
+   when the tab becomes visible or the window regains focus, on top of when it
+   mounts and when the project changes. A new build reaches an idle composer as
+   a page reload (the deploy healer, ADR-0007), which mounts it again and asks.
+   tmux-api replaces a slot that is stale instead of answering that one exists.
+3. **A model or effort picked in the composer is warmed on pick.** A pick in
+   the **Model sheet** swaps the composer's speculative slot for one booted
+   with those flags, a second after the last pick so a model and then an
+   effort boot one Claude. The claim at Send looks for a slot matching the
+   directory, model and effort together. The standing slot stays on Default.
 4. **session-events delivers the moment the mod says hello.** A first prompt is
-   held until the hello for as long as the browser's 8 s request deadline
-   allows, and the browser repeats a held request without a gap, so a booting
-   slot costs its boot and nothing on top.
+   held until the hello for up to 25 s, past the slowest boot measured. That is
+   longer than the browser's 8 s request deadline, and it works because a
+   first prompt carries a request id: the browser's retry joins the attempt
+   already waiting. The browser repeats a request the server was holding
+   without a gap, so a booting slot costs its boot and nothing on top.
 5. **The browser times Accepted, and Prometheus alerts on it.** The composer
    records Send to the moment its prompt request is accepted, on the browser's
    clock, with what the claim found (warm, booting, stale, no slot). tmux-api
@@ -128,9 +134,10 @@ sequenceDiagram
     participant A as tmux-api
     participant E as events
 
-    I->>S: replace stale, staggered
+    I->>A: new mod id
+    A->>S: replace stale, 5 s apart
     S->>E: hello (slot name)
-    C->>A: prewarm (mount, pick, build, visible)
+    C->>A: prewarm (mount, pick, focus)
     A->>S: replace if stale
     C->>A: claim dir+model (Send)
     A->>S: rename onto match
@@ -144,12 +151,12 @@ sequenceDiagram
 
 | piece | change |
 |---|---|
-| `devvm/tmux-user-attach` | Slot name carries model and effort. Claim takes model and effort and claims only a matching slot. A `refresh` mode replaces each stale slot as the kind it was. Claim prints what it found. |
-| `release` (post-install) | Starts a slot refresh for every running user manager, without blocking the install. |
+| `devvm/tmux-user-attach` | Slot name carries model and effort. Claim takes model and effort and claims only a matching slot. A warm can be asked for by argument (`prewarm`, `pool`) and stamps the slot's directory, model and effort. Claim prints what it found. |
+| `tmux-api/slotwarm.go` | The stale-slot sweep, and warming by argument through the script. `tl-prewarm@.service` is retired. |
 | `tmux-api/prewarm.go` | Replaces a stale slot instead of answering that one exists. Takes model and effort. |
 | `tmux-api/claim.go` | Passes model and effort through, and returns the claim's outcome. |
-| `session-events` | Holds a first prompt until the hello within the browser's deadline. |
-| `frontend-v2` composer | Re-asks on new build and tab visible, warms on Model sheet pick, retries a held request without a gap, reports Send to Accepted. |
+| `session-events` | Holds a first prompt until the hello, up to 25 s, and says how long it waited. |
+| `frontend-v2` composer | Re-asks on focus and tab visible, warms on Model sheet pick, retries a held request without a gap, reports Send to Accepted. |
 | `tmux-api` metrics | `tl_first_prompt_total` and `tl_first_prompt_slow_total` by slot outcome. |
 | infra Prometheus rules | `LobbyFirstPromptSlow` on the daily share over 2 s. |
 
@@ -160,8 +167,8 @@ sequenceDiagram
   desktop, timed from Send to the turn appearing; then the same with a model
   picked in the Model sheet. `prompt.landed` and the new counter should both
   read under 2 s with the slot outcome `warm`.
-- `systemctl --user` and the journal after an install show each stale slot
-  replaced once, a few seconds apart.
+- tmux-api's journal after an install shows each stale slot replaced once,
+  5 s apart.
 
 ## Open questions
 

@@ -90,19 +90,22 @@ Send. Design: `docs/plans/2026-10-04-warm-slot-at-send-design.md`.
 
 What changes in the decision above:
 
-- **An install replaces stale slots.** The post-install step asks each lobby
-  user's manager to replace every slot warmed under the previous mod, one at a
-  time, keeping each slot's kind, directory and flags.
+- **An install replaces stale slots.** tmux-api notices a new mod id within
+  5s and replaces every slot warmed under the previous one, one per user every
+  5s, keeping each slot's kind, directory and flags. tmux-api starts a slot by
+  running `tmux-user-attach` with a `prewarm` or `pool` argument, the way it
+  claims, and `tl-prewarm@.service` is retired.
 - **Asking for a slot replaces a stale one.** `POST /sessions/prewarm` used to
-  answer that a slot exists whatever mod it ran. The composer now asks again on
-  a new build and when its tab becomes visible.
+  answer that a slot exists whatever mod it ran. The composer now asks again
+  when its tab becomes visible or its window regains focus.
 - **The first boundary above is narrowed.** "Claude with no model or effort
   flag" no longer holds: a slot can be warmed with the model and effort picked
   in the composer, and a claim takes only the slot matching directory, model and
   effort. The standing slot stays on Default.
 - **The prompt is held until the hello.** session-events holds a first prompt
-  for the mod's hello as long as the browser's request deadline allows, and the
-  browser repeats a held request without waiting between attempts.
+  for the mod's hello up to 25s, and the browser's retries join the attempt
+  already waiting (the request id), repeating a held request without waiting
+  between attempts.
 
 The pool-miss consequence above still holds for a directory with no slot and
 for a Send within one boot of opening the composer.
