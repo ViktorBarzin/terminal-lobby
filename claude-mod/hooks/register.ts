@@ -12,6 +12,7 @@ import { Decided } from './lib/decided.ts';
 import { OpenDialogs } from './lib/open.ts';
 import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
 import { steer } from './lib/steer.ts';
+import { slashCall } from './lib/command.ts';
 import { type ListedAgent, runningWorkflows, withWorkflows } from './lib/background.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
@@ -225,12 +226,23 @@ async function runCommand($: EngineInterface, c: Command): Promise<void> {
   try {
     switch (c.op) {
       case 'prompt': {
+        const text = String(c.text ?? '');
+        // A slash command runs as one (lib/command.ts). Like submit, run waits
+        // out a busy Claude, so it is acked now and again if it fails.
+        const names = (await $.command.list().catch(() => [])).map((x) => x.name);
+        const call = slashCall(text, names);
+        if (call) {
+          const ran = $.command.run(call);
+          ack(c.id, true);
+          ran.catch((err: unknown) => ack(c.id, false, errorText(err)));
+          return;
+        }
         // The first prompt of a fresh conversation is the one to title it by;
         // a resumed one already has a title. Never in the prompt's way.
         const owesSummary = summary.claim() && (await $.session.turns().catch(() => -1)) === 0;
         // submit resolves only when the prompt's turn starts, minutes later if
         // Claude is busy: ack now, and ack again with ok:false if it fails.
-        const submitted = $.prompt.submit({ text: String(c.text ?? ''), asUser: true });
+        const submitted = $.prompt.submit({ text, asUser: true });
         ack(c.id, true);
         submitted.then(
           (r) => {

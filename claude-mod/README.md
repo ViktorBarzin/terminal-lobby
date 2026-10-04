@@ -37,6 +37,7 @@ What it does, in short:
 | `hooks/lib/decided.ts` | answers already given, for a tool call checked twice |
 | `hooks/lib/open.ts` | dialogs on screen, sent again after every hello |
 | `hooks/lib/summary.ts` | the title request for a lobby-started conversation, and reading the reply |
+| `hooks/lib/command.ts` | whether a lobby prompt is a slash command to run rather than text to submit |
 | `hooks/lib/background.ts` | workflow runs in flight, from `background_tasks`, added to the agent list |
 | `test/*.test.ts` | unit tests for `hooks/lib` |
 
