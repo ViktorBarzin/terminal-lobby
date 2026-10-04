@@ -286,6 +286,9 @@ var Package = Manifest{
 	// come back after a reboot.
 	Enable: []string{
 		"ttyd", "tmux-api", "clipboard-upload",
+		// Before its service: the socket owns port 7685, and the service
+		// takes it at start (Unit.Socket).
+		"session-events.socket",
 		"session-events", "file-api", "skills-api",
 		// The machine-facing port. Enabled like the rest, and it is the
 		// credentials file rather than the unit that decides whether it can do
@@ -466,6 +469,7 @@ var Package = Manifest{
 		{Src: "devvm/tmux-api.service", Dest: "/etc/systemd/system/tmux-api.service", Mode: 0o644},
 		{Src: "devvm/clipboard-upload.service", Dest: "/etc/systemd/system/clipboard-upload.service", Mode: 0o644},
 		{Src: "devvm/session-events.service", Dest: "/etc/systemd/system/session-events.service", Mode: 0o644},
+		{Src: "devvm/session-events.socket", Dest: "/etc/systemd/system/session-events.socket", Mode: 0o644},
 		{Src: "devvm/file-api.service", Dest: "/etc/systemd/system/file-api.service", Mode: 0o644},
 		{Src: "devvm/skills-api.service", Dest: "/etc/systemd/system/skills-api.service", Mode: 0o644},
 		{Src: "devvm/agent-api.service", Dest: "/etc/systemd/system/agent-api.service", Mode: 0o644},
@@ -515,9 +519,14 @@ var Package = Manifest{
 			"/usr/local/bin/clipboard-upload",
 			"/etc/systemd/system/clipboard-upload.service",
 		}},
-		{Name: "session-events", Files: []string{
+		// systemd holds 7685 for it (devvm/session-events.socket), so a
+		// restart never leaves the port for another account to take: the
+		// Claude mods send their hellos there and run the commands that come
+		// back.
+		{Name: "session-events", Socket: "session-events.socket", Files: []string{
 			"/usr/local/bin/session-events",
 			"/etc/systemd/system/session-events.service",
+			"/etc/systemd/system/session-events.socket",
 		}},
 		{Name: "file-api", Files: []string{
 			"/usr/local/bin/file-api",
@@ -674,6 +683,10 @@ done
 # Enabling, not just restarting: a unit that was only ever restarted does not
 # come back after a reboot. Idempotent, and run every time so a unit that was
 # stopped or never enabled comes up even when its bytes did not change.
+#
+# On the release that first ships a socket unit, starting it here fails: the
+# previous version's service still holds the port. tl-apply below stops that
+# service, starts the socket and starts the new service on it.
 for unit in UNITS_TO_ENABLE; do
   systemctl enable --now "$unit" >/dev/null 2>&1 || true
 done
@@ -687,6 +700,55 @@ done
 # oneshot unit instead, which runs once dpkg has released the transaction.
 /usr/lib/terminal-lobby/tl-apply apply
 `
+
+// PostrmScript is the postrm template tl-pkg installs, rendered by
+// RenderPostrm.
+//
+// A port systemd holds for one of this version's services (Unit.Socket) has
+// to be let go of when dpkg moves to a version below this one. That version
+// may predate the socket: its service binds the port itself, and with pid 1
+// still holding the port it could never start. The revert after a failed
+// verify is exactly that move. postrm is the one script of this version that
+// runs on the way, after the incoming files are unpacked and before the
+// incoming postinst starts anything.
+//
+// Every downgrade counts, not only one to a version without the socket: when
+// this runs dpkg has not yet deleted the files the incoming version drops
+// (measured with dpkg 1.22 on scratch packages), so it cannot tell the two
+// apart. A version that ships the socket enables and starts it again in its
+// own postinst, so guessing wide costs the seconds a revert already takes.
+// An upgrade, the case on every deploy, leaves the socket alone.
+const PostrmScript = `#!/bin/sh
+set -e
+case "$1" in
+  upgrade)
+    dpkg --compare-versions "$2" lt "PACKAGE_VERSION" || exit 0
+    ;;
+  remove|purge) ;;
+  *) exit 0 ;;
+esac
+
+# Disabled while its unit file still exists for systemctl to read, then
+# stopped, which stops its service too (Requires=). Best effort: a box that
+# never had the socket is not a reason to fail the downgrade.
+for unit in SOCKET_UNITS; do
+  systemctl disable "$unit" >/dev/null 2>&1 || true
+  systemctl stop "$unit" >/dev/null 2>&1 || true
+done
+exit 0
+`
+
+// RenderPostrm fills PostrmScript in for one version of the package.
+func RenderPostrm(version string) string {
+	var socks []string
+	for _, u := range Package.Units {
+		if u.Socket != "" {
+			socks = append(socks, u.Socket)
+		}
+	}
+	post := strings.Replace(PostrmScript, "SOCKET_UNITS", strings.Join(socks, " "), 1)
+	return strings.Replace(post, "PACKAGE_VERSION", version, 1)
+}
 
 // ConffilesContent is DEBIAN/conffiles: the paths dpkg must treat as
 // configuration. Marking a File as a conffile in the manifest is only half of

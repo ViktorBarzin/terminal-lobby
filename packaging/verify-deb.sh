@@ -58,6 +58,12 @@ check "the local override is NOT a conffile" \
 
 check "postinst is present" \
   "$(printf '%s' "$ctrl" | grep -c '^./postinst$' || true)" 1
+# Without it, a revert to a version that binds 7685 itself finds pid 1 still
+# holding the port, and session-events never starts (release.PostrmScript).
+check "postrm is present (it lets go of the ports systemd holds on a downgrade)" \
+  "$(printf '%s' "$ctrl" | grep -c '^./postrm$' || true)" 1
+check "session-events' socket unit ships" \
+  "$(printf '%s' "$contents" | grep -c '^-.*etc/systemd/system/session-events\.socket$' || true)" 1
 
 check "the stamp endpoint ships (the healer polls it)" \
   "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/build-id$' || true)" 1

@@ -26,6 +26,8 @@ merge to master
       preinst  → tl-apply snapshot   (what is installed, before it is replaced)
       postinst → validate sudoers, install chunks additively, daemon-reload,
                  tl-apply apply → restart what changed, verify, keep or revert
+      postrm   → on a downgrade or removal only, let go of the ports systemd
+                 holds (session-events.socket), so an older service can bind
 ```
 
 ## What lives where

@@ -24,6 +24,73 @@ type Unit struct {
 	// the instances that are already enabled and enables nobody: enabling a user
 	// needs a hand-written env file carrying their port allocation.
 	Template bool
+	// Socket names the .socket unit that holds this service's port and hands
+	// it over at start. A release restarts the service alone, so the port
+	// stays bound through it; RestartSteps says when the socket moves too.
+	// Its unit file belongs in Files, at SocketPath(Socket).
+	Socket string
+}
+
+// UnitDir is where the package installs its system units.
+const UnitDir = "/etc/systemd/system/"
+
+// SocketPath is where a socket unit's file is installed.
+func SocketPath(socket string) string { return UnitDir + socket }
+
+// Step is one systemctl call a release makes: systemctl <Verb> <Unit>.
+type Step struct {
+	Verb string
+	Unit string
+}
+
+// RestartSteps turns what changed into systemctl calls, in order.
+//
+// A unit whose port a socket holds restarts alone while the socket is up and
+// its file unchanged, which is every release after the first: the port stays
+// bound and connections wait in its backlog. The socket is rebound in two
+// cases, and both take the same three steps: the first install of the socket,
+// when the previous version's process still holds the port and the socket
+// could not bind, and a release that changes the socket's own file. The old
+// process has to be stopped before the socket can bind, and the new one has to
+// find the socket listening when it starts.
+//
+// A socket that is down is brought up even when nothing of its unit changed:
+// a box left that way would otherwise wait for the next release that happens
+// to touch it.
+func RestartSteps(units []Unit, changed []string, enabled map[string][]string, socketActive func(string) bool) []Step {
+	moved := make(map[string]bool, len(changed))
+	for _, c := range changed {
+		moved[c] = true
+	}
+	socketOf := make(map[string]string, len(units))
+	for _, u := range units {
+		if u.Socket != "" {
+			socketOf[u.Name] = u.Socket
+		}
+	}
+	rebind := func(svc, sock string) []Step {
+		return []Step{{"stop", svc}, {"restart", sock}, {"start", svc}}
+	}
+	var steps []Step
+	done := map[string]bool{}
+	for _, t := range RestartTargets(units, changed, enabled) {
+		sock, ok := socketOf[t]
+		switch {
+		case !ok:
+			steps = append(steps, Step{"restart", t})
+		case moved[SocketPath(sock)] || !socketActive(sock):
+			steps = append(steps, rebind(t, sock)...)
+		default:
+			steps = append(steps, Step{"restart", t})
+		}
+		done[t] = true
+	}
+	for _, u := range units {
+		if u.Socket != "" && !done[u.Name] && !socketActive(u.Socket) {
+			steps = append(steps, rebind(u.Name, u.Socket)...)
+		}
+	}
+	return steps
 }
 
 // Changed reports which of paths differ between what is installed and what is

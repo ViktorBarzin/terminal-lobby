@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -395,16 +396,172 @@ func main() {
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	go timing.Run(ctx.Done())
-	srv := &http.Server{Addr: *addr, Handler: timing.Wrap(root)}
+	ln, inherited, err := listen(*addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	from := "bound here"
+	if inherited {
+		from = "held by systemd"
+		host, _, _ := net.SplitHostPort(*addr)
+		allow, err := bindAllows(host)
+		if err != nil {
+			log.Fatalf("TL_BIND %q: %v", host, err)
+		}
+		if allow != nil {
+			ln = boundListener{Listener: ln, allow: allow}
+			from += ", narrowed to " + host
+		}
+	}
+	srv := &http.Server{Handler: timing.Wrap(root)}
+	log.Printf("session-events listening on %s (%s; usermap=%s, homeBase=%s)", ln.Addr(), from, *mapPath, *homeBase)
+	if err := serveUntil(ctx, srv, ln, shutdownGrace); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// shutdownGrace is how long a stopping service gives the requests already in
+// flight. A held poll and an SSE stream never finish on their own, so every
+// restart waits this long whenever a client is attached.
+const shutdownGrace = 3 * time.Second
+
+// serveUntil serves on ln until ctx ends, then stops accepting and returns
+// once the requests in flight have finished or grace has run out.
+//
+// Serve returns the moment Shutdown begins, so a main that returned with it
+// exited under the requests Shutdown was meant to wait for: an events batch
+// cut halfway, which the mod then resends and the server applies twice.
+func serveUntil(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Duration) error {
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
-		sh, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		sh, cancel := context.WithTimeout(context.Background(), grace)
 		defer cancel()
 		srv.Shutdown(sh)
 	}()
-	log.Printf("session-events listening on %s (usermap=%s, homeBase=%s)", *addr, *mapPath, *homeBase)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	<-drained
+	return nil
+}
+
+// sdListenFDsStart is the descriptor systemd passes a socket-activated service
+// its first socket on (sd_listen_fds(3)).
+const sdListenFDsStart = 3
+
+// systemdSocketCount reads how many sockets systemd passed this process. The
+// variables are inherited by every child of the process systemd started, so
+// they count only when LISTEN_PID names this one.
+func systemdSocketCount(getenv func(string) string, pid int) (int, error) {
+	p, fds := getenv("LISTEN_PID"), getenv("LISTEN_FDS")
+	if p == "" || fds == "" || p != strconv.Itoa(pid) {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(fds)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("LISTEN_FDS=%q is not a count", fds)
+	}
+	return n, nil
+}
+
+// listen returns the socket to serve on, and whether systemd passed it.
+//
+// On the box, systemd holds port 7685 (devvm/session-events.socket) and hands
+// it over at start. Without that, the port was unbound for the moment between
+// one process exiting and the next binding, on every deploy, and port 7685 is
+// one any account can bind: whatever took it in that window would receive
+// every mod's hello and send commands the mods would run as their own users.
+// The socket systemd creates is root's, which is also what lets a mod check
+// that it is talking to this service. A dev run, the container and the tests
+// pass no socket and bind addr as before.
+func listen(addr string) (net.Listener, bool, error) {
+	n, err := systemdSocketCount(os.Getenv, os.Getpid())
+	// Cleared either way, as sd_listen_fds(1) does: the children (tmux, the
+	// privop reader) hold no such descriptor.
+	for _, k := range []string{"LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"} {
+		os.Unsetenv(k)
+	}
+	switch {
+	case err != nil:
+		return nil, false, err
+	case n == 0:
+		l, err := net.Listen("tcp", addr)
+		return l, false, err
+	case n > 1:
+		return nil, false, fmt.Errorf("systemd passed %d sockets; session-events.socket declares one", n)
+	}
+	f := os.NewFile(sdListenFDsStart, "session-events.socket")
+	// FileListener serves on a duplicate that is closed on exec, so closing
+	// this one keeps the listening socket out of every child.
+	defer f.Close()
+	l, err := net.FileListener(f)
+	if err != nil {
+		return nil, false, fmt.Errorf("the socket systemd passed: %w", err)
+	}
+	return l, true, nil
+}
+
+// bindAllows says which local addresses TL_BIND admits a connection on, for a
+// socket this process did not bind. nil admits every address.
+//
+// systemd binds session-events.socket where the unit says, every interface,
+// and a unit file cannot read TL_BIND. So the narrowing TL_BIND used to do at
+// bind time happens at accept time instead: a box that keeps the services off
+// the network still answers nothing from it. A loopback TL_BIND admits both
+// loopbacks: `localhost` resolves to ::1 first, and a connection there was
+// refused at connect, which a client retries on 127.0.0.1, where one accepted
+// and then closed is an error it does not retry.
+func bindAllows(host string) (func(net.IP) bool, error) {
+	if host == "" {
+		return nil, nil
+	}
+	ips := []net.IP{net.ParseIP(host)}
+	if ips[0] == nil {
+		found, err := net.LookupIP(host)
+		if err != nil {
+			return nil, err
+		}
+		ips = found
+	}
+	loopback := true
+	for _, ip := range ips {
+		if ip.IsUnspecified() {
+			return nil, nil
+		}
+		loopback = loopback && ip.IsLoopback()
+	}
+	if loopback {
+		return func(ip net.IP) bool { return ip.IsLoopback() }, nil
+	}
+	return func(ip net.IP) bool {
+		for _, want := range ips {
+			if ip.Equal(want) {
+				return true
+			}
+		}
+		return false
+	}, nil
+}
+
+// boundListener closes every connection that arrived on a local address allow
+// refuses, before anything reads from it.
+type boundListener struct {
+	net.Listener
+	allow func(net.IP) bool
+}
+
+func (l boundListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if a, ok := c.LocalAddr().(*net.TCPAddr); ok && l.allow(a.IP) {
+			return c, nil
+		}
+		c.Close()
 	}
 }
 
