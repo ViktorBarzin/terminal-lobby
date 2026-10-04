@@ -78,3 +78,31 @@ sequenceDiagram
   Claude's own boot and wait for the attach.
 
 Design: `docs/plans/2026-10-03-first-prompt-latency-design.md`.
+
+## Amendment, 2026-10-04: a slot is kept warm for Send
+
+Viktor, 2026-10-04: *"it takes ~20 seconds from me sending the prompt in the
+composer until i see it in the session and claude working on it."* Of 17 first
+prompts measured, 13 were Accepted within 1.1s and 4 took 3.7 to 12.9s. Each of
+the four claimed a slot whose Claude was still booting, three of them because a
+package install had made the standing slot stale and nothing replaced it until
+Send. Design: `docs/plans/2026-10-04-warm-slot-at-send-design.md`.
+
+What changes in the decision above:
+
+- **An install replaces stale slots.** The post-install step asks each lobby
+  user's manager to replace every slot warmed under the previous mod, one at a
+  time, keeping each slot's kind, directory and flags.
+- **Asking for a slot replaces a stale one.** `POST /sessions/prewarm` used to
+  answer that a slot exists whatever mod it ran. The composer now asks again on
+  a new build and when its tab becomes visible.
+- **The first boundary above is narrowed.** "Claude with no model or effort
+  flag" no longer holds: a slot can be warmed with the model and effort picked
+  in the composer, and a claim takes only the slot matching directory, model and
+  effort. The standing slot stays on Default.
+- **The prompt is held until the hello.** session-events holds a first prompt
+  for the mod's hello as long as the browser's request deadline allows, and the
+  browser repeats a held request without waiting between attempts.
+
+The pool-miss consequence above still holds for a directory with no slot and
+for a Send within one boot of opening the composer.

@@ -240,7 +240,10 @@ is the whole concurrency story: Send claims the slot, and the new session's
 terminal claims it when Send did not, whichever comes first. Slots are named past the length limit a
 client may address, so the lobby never lists one; the rename is also why a
 claimed session's **Created** cannot be tmux's own `session_created`.
-_Avoid_: pool session, warm session, spare session
+A slot booted under a Claude mod other than the one installed now is stale: it
+is replaced, never claimed, because it would hand out the old mod.
+_Avoid_: pool session, warm session, spare session, shell (a plain shell is a
+different kind of session)
 
 **Last driven**:
 When a Session was last used. The relative time the sidebar shows, and the answer
@@ -943,8 +946,11 @@ _Avoid_: initial message, opening prompt
 **Accepted** (a prompt):
 The session's Claude has taken the prompt and its turn has begun. Everything up
 to this moment is the lobby's own path, so it is the part the lobby can make
-faster.
-_Avoid_: delivered, sent (both say nothing about Claude)
+faster. The person sees it when the session first draws the turn as live, a
+little after Claude takes the prompt, so it is timed at both ends; a **First
+prompt**'s target is Send to Accepted as the person sees it.
+_Avoid_: delivered, sent (both say nothing about Claude), working (the same
+moment under another name)
 
 **Shown** (a prompt):
 Claude has written its own record of the prompt into the conversation, which is
