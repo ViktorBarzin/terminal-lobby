@@ -4047,9 +4047,11 @@ label.tl-set-row-label {
   /* A long unbroken token in the draft would otherwise set a min-content
      floor and push the field past the pill. */
   min-width: 0;
-  /* Room to write in, and a cap past which it scrolls. PromptField reads the
-     cap back when it sizes the field to its text. */
-  min-height: 60px;
+  /* One row when empty, and a cap past which it scrolls. PromptField sizes the
+     field to its text and reads the cap back, so the field grows as it is
+     written in; it held a 60px floor (two lines) until 2026-10-04, a blank row
+     under the placeholder that Viktor asked to drop. */
+  min-height: 0;
   margin: 0;
   resize: none;
   color: var(--text-primary);
@@ -4867,10 +4869,11 @@ body.tl-kb-up {
     line-height: max(24px, calc(24px * var(--tl-text-scale, 1)));
     padding: 10px 8px 4px;
   }
-  /* The phone's box: 86px of room to write in, 148px before it scrolls, so
-     the focused box is 142px and the keyboard leaves the conversation room. */
+  /* The phone's box: one row when empty and 148px before it scrolls. The
+     86px floor it had (three lines) left a blank row under the placeholder
+     with the keyboard up, which only took room from the conversation. */
   .tl-composer-input {
-    min-height: 86px;
+    min-height: 0;
     max-height: 148px;
   }
 

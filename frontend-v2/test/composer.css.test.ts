@@ -137,24 +137,27 @@ describe("the modes that ask nothing", () => {
 
 describe("the field", () => {
   // The box is the default shape, so the field's own rules are the box's.
-  it("is 14px on 22px in the desktop box, between 60px and 220px", () => {
+  // No floor beyond its one row: empty, the field is one line tall, and it
+  // grows with what is written up to the cap (Viktor, 2026-10-04: the blank
+  // row under the placeholder "is a buffer that's not needed").
+  it("is 14px on 22px in the desktop box, one line up to 220px", () => {
     const f = rule(".tl-composer-input,\n.tl-composer-mirror");
     expect(f).toMatch(/font-size:\s*calc\(14px \* var\(--tl-text-scale, 1\)\)/);
     expect(f).toMatch(/line-height:\s*calc\(22px \* var\(--tl-text-scale, 1\)\)/);
     expect(f).toMatch(/padding:\s*10px 8px 6px/);
     const input = rule(".tl-composer-input");
-    expect(input).toMatch(/min-height:\s*60px/);
+    expect(input).toMatch(/min-height:\s*0[;\s]/);
     expect(input).toMatch(/max-height:\s*220px/);
   });
 
   // 16px keeps iOS Safari from zooming the page on focus.
-  it("is 16px on 24px on a coarse pointer, between 86px and 148px in the box", () => {
+  it("is 16px on 24px on a coarse pointer, one line up to 148px in the box", () => {
     const within = coarse();
     const size = rule(".tl-composer-input,\n.tl-composer-mirror", within);
     expect(size).toMatch(/font-size:\s*max\(16px, calc\(16px \* var\(--tl-text-scale, 1\)\)\)/);
     expect(within).toMatch(/line-height:\s*max\(24px, calc\(24px \* var\(--tl-text-scale, 1\)\)\)/);
     const input = rule(".tl-composer-input", within);
-    expect(input).toMatch(/min-height:\s*86px/);
+    expect(input).toMatch(/min-height:\s*0[;\s]/);
     expect(input).toMatch(/max-height:\s*148px/);
   });
 
