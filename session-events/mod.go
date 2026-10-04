@@ -584,7 +584,6 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		case sessionio.ModHistoryEvent:
 			// Only the last chunk of a long history may close the last turn.
 			fs.FeedHistory(ev.Messages, ev.Running || ev.More)
-			continue
 		case sessionio.ModAckEvent:
 			c.deliver(ev.ID, modAck{OK: ev.OK, Error: ev.Error})
 			continue

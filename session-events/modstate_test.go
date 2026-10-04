@@ -278,3 +278,36 @@ func TestStampSummaryLandsOnItsOption(t *testing.T) {
 		}
 	}
 }
+
+// session-events keeps the turn in memory, so a restart mid-turn starts the
+// state over knowing nothing. The history the mod sends after its next hello
+// says whether a main-thread turn is running; without it, the first dialog to
+// close dropped a working session to done (2026-10-04: a grilling turn opened
+// at 15:23, session-events restarted at 15:52, the next answer read done).
+func TestStampHistoryReopensATurnThatSpannedARestart(t *testing.T) {
+	var s stampState
+	s.apply(sessionio.ModEvent{Type: sessionio.ModHistoryEvent, Running: true, More: true}, stampNow)
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModHistoryEvent, Running: true}, stampNow)
+	if got := writeKeys(w); got != "@claude_state=running" {
+		t.Fatalf("history of a running turn writes %q", got)
+	}
+	s.apply(sessionio.ModEvent{Type: sessionio.ModAskEvent, ToolID: "toolu_q"}, stampNow)
+	w = s.apply(sessionio.ModEvent{Type: sessionio.ModResultEvent, ToolID: "toolu_q"}, stampNow)
+	if got := writeKeys(w); got != "-@claude_ask @claude_state=running" {
+		t.Fatalf("answering a question mid-turn writes %q", got)
+	}
+}
+
+func TestStampHistoryOfAnIdleSessionIsDone(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	// Only the last chunk speaks for the turn.
+	s.apply(sessionio.ModEvent{Type: sessionio.ModHistoryEvent, More: true}, stampNow)
+	if s.state != "running" {
+		t.Fatalf("a non-final history chunk moved the state to %s", s.state)
+	}
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModHistoryEvent}, stampNow)
+	if got := writeKeys(w); got != "@claude_state=done" {
+		t.Fatalf("history of an idle session writes %q", got)
+	}
+}
