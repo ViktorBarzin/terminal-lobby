@@ -175,7 +175,7 @@ export function sameRunMembers(
 }
 
 /** How recently a running workflow must have written to count on its own. */
-export const RUN_FRESH_MS = 15 * 60_000;
+const RUN_FRESH_MS = 15 * 60_000;
 
 /** A running run with its start or a member's last record inside RUN_FRESH_MS of `now`. */
 function runWritten(run: WorkflowInfo, agents: AgentInfo[], now: number): boolean {
