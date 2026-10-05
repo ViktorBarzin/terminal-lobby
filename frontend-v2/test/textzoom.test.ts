@@ -16,12 +16,16 @@ import {
   CLASSIFY_MOVE,
   CLASSIFY_RATIO,
   STEP_RATIO,
+  TEXT_SIZE_KEY,
   clampTextSize,
   installTextZoom,
   isPinch,
   scaleFor,
+  setTextSize,
   sizeForRatio,
   span,
+  stepTextSize,
+  textSize,
 } from "../src/mobile/textzoom";
 import { FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN } from "../src/store/prefs";
 
@@ -370,5 +374,34 @@ describe("the scale is a font-size scale", () => {
     expect(css).toMatch(
       /\.tl-composer-input,\s*\.tl-composer-mirror\s*\{\s*font-size:\s*max\(16px,\s*calc\(16px \* var\(--tl-text-scale, 1\)\)\)/,
     );
+  });
+});
+
+/**
+ * One size for every text view on this device, which the A−/A+ buttons in the
+ * session bar step on a desktop, where there is no pinch. Viktor, 2026-10-05:
+ * "lets add option to change font size in text mode".
+ *
+ * Shared rather than held per view, so a workspace of several text tiles moves
+ * together, and the buttons step from wherever a pinch left it.
+ */
+describe("the shared text size", () => {
+  it("steps by one, persists, and clamps at both ends", () => {
+    setTextSize(FONT_SIZE_DEFAULT);
+    expect(localStorage.getItem(TEXT_SIZE_KEY)).toBeNull(); // the default is not stored
+
+    stepTextSize(1);
+    expect(textSize()).toBe(FONT_SIZE_DEFAULT + 1);
+    expect(localStorage.getItem(TEXT_SIZE_KEY)).toBe(String(FONT_SIZE_DEFAULT + 1));
+
+    setTextSize(FONT_SIZE_MAX);
+    stepTextSize(1);
+    expect(textSize()).toBe(FONT_SIZE_MAX);
+    setTextSize(FONT_SIZE_MIN);
+    stepTextSize(-1);
+    expect(textSize()).toBe(FONT_SIZE_MIN);
+
+    setTextSize(FONT_SIZE_DEFAULT);
+    expect(localStorage.getItem(TEXT_SIZE_KEY)).toBeNull();
   });
 });

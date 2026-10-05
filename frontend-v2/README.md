@@ -1144,7 +1144,9 @@ src/
                          same 7%-per-step arithmetic, in both views. It scales
                          FONT SIZES: every font-size in app.css multiplies by
                          --tl-text-scale, set on .tl-textview, so transcript,
-                         answer card and composer move together
+                         answer card and composer move together. Also holds the
+                         one device-local text size every text view reads,
+                         which the session bar's A−/A+ step on a desktop
     swipe.ts             PURE swipe classification + the session-switch gesture
   clipboard/
     paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame

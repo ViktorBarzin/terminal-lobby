@@ -30,6 +30,7 @@
  * variable in each rule, rather than inheriting a font-size, is also what keeps
  * nested rules from compounding.
  */
+import { createSignal } from "solid-js";
 import { FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN } from "../store/prefs";
 import { lsGet, lsSet } from "../lib/storage";
 
@@ -65,15 +66,33 @@ export function scaleFor(size: number): number {
   return clampTextSize(size) / FONT_SIZE_DEFAULT;
 }
 
-export function loadTextSize(): number {
+function loadTextSize(): number {
   const raw = lsGet(TEXT_SIZE_KEY);
   return raw ? clampTextSize(Number(raw)) : FONT_SIZE_DEFAULT;
 }
 
 /** A refused write still leaves the gesture working for this view's lifetime. */
-export function saveTextSize(size: number): void {
+function saveTextSize(size: number): void {
   const clamped = clampTextSize(size);
   lsSet(TEXT_SIZE_KEY, clamped === FONT_SIZE_DEFAULT ? null : String(clamped));
+}
+
+/**
+ * The one text size for this device. Every text view reads it, so the tiles of
+ * a workspace move together, and the session bar's A−/A+ (the desktop's way in,
+ * where there is no pinch) step from wherever a pinch left it.
+ */
+const [size, setSize] = createSignal(loadTextSize());
+export const textSize = size;
+
+export function setTextSize(n: number): void {
+  const clamped = clampTextSize(n);
+  setSize(clamped);
+  saveTextSize(clamped);
+}
+
+export function stepTextSize(delta: number): void {
+  setTextSize(size() + delta);
 }
 
 /** Two fingers, as far apart as they are. */
