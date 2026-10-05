@@ -139,6 +139,13 @@ export const PromptField: Component<{
   sendTitle?: string;
   /** Prompts already sent here, oldest first (↑ recalls them). */
   history?: string[];
+  /**
+   * Prompts are queued behind the turn: ↑ on an empty field asks for them back
+   * to edit, as Claude Code's own box does, and the caller puts them in the
+   * field. Resolves false when nothing came back, and the same ↑ then recalls
+   * history. Absent while nothing is queued.
+   */
+  onEditQueued?: () => Promise<boolean>;
   /** Directory listing for `@` path completion. */
   onListDir?: (dir: string) => Promise<string[]>;
   /** Slash commands offered by `/` beside the built-ins this page ships. */
@@ -961,6 +968,8 @@ export const PromptField: Component<{
     void submitWith(props.onSend);
   };
 
+  /** A ↑ that asked for the queue is waiting on the answer. */
+  let askingQueue = false;
   const onKeyDown = (e: KeyboardEvent) => {
     const empty = (ta?.value ?? "") === "";
     const c = completion();
@@ -1021,6 +1030,26 @@ export const PromptField: Component<{
     // permission affordance) before it is treated as typing.
     if (empty && /^[1-9]$/.test(e.key) && props.onEmptyDigit?.(e.key)) {
       e.preventDefault();
+      return;
+    }
+
+    // ↑ from an empty field with prompts queued takes them back to edit.
+    const editQueued = props.onEditQueued;
+    if (e.key === "ArrowUp" && empty && histAt() < 0 && editQueued) {
+      e.preventDefault();
+      if (askingQueue) return;
+      askingQueue = true;
+      void editQueued()
+        .catch(() => false)
+        .then((ok) => {
+          askingQueue = false;
+          // The turn ended and sent them a moment ago: the key does what it
+          // would have done, unless the writer has typed since.
+          const hist = props.history ?? [];
+          if (ok || (ta?.value ?? "") !== "" || histAt() >= 0 || hist.length === 0) return;
+          setHistAt(hist.length - 1);
+          recall(hist[hist.length - 1] ?? "");
+        });
       return;
     }
 

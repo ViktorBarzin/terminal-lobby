@@ -839,8 +839,11 @@ is one surface in two shapes: on a phone at rest a 50px pill with "+", one line
 of the field and the round button; focused on the phone, and always on a
 desktop, a box with the text on top and "+", the **Model sheet**'s button and
 the round button beneath. Bypass and No ask turn its border the danger colour. A
-watching device's pill reads "Watching" with Take control. The prompts Claude
-has queued are drawn as ghost bubbles at the end of the conversation.
+watching device's pill reads "Watching" with Take control. The prompts waiting
+behind the turn are drawn as ghost bubbles at the end of the conversation. On a
+desktop, Up in the empty field takes them all back into the field to edit,
+oldest first with a blank line between them, as Claude Code's own box does; when
+nothing is waiting, Up recalls the last prompt sent.
 _Avoid_: chat box, prompt bar
 
 **Round button**:
@@ -855,8 +858,9 @@ opened until the stamp moves), and it takes one press per turn: an interrupt is 
 C-c, and a second one at an idle prompt exits Claude. Enter in an empty field
 does nothing. A watching device can neither send nor stop. Stop with queued
 messages puts them back in the field as a draft and sends nothing: the server
-takes them off Claude's queue before the interrupt, which would otherwise run
-them as the next turn.
+takes them back before the interrupt, which would otherwise run them as the
+next turn. session-events holds a prompt sent mid-turn until the turn ends
+(`session-events/held.go`), because nothing takes one back once Claude has it.
 _Avoid_: send button, stop button
 
 **Status line**:

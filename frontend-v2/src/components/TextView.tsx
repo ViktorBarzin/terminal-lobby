@@ -390,6 +390,12 @@ export const TextView: Component<{
    * back in the field.
    */
   onStop: (restoreQueue?: readonly string[], returnPrompt?: string) => Promise<StopResult> | void;
+  /**
+   * Take back the prompts held behind the running turn, for ↑ to put in the
+   * field to edit (session-events/held.go). Resolves to what came back,
+   * oldest first; empty when nothing did.
+   */
+  onUnqueue?: () => Promise<string[]>;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
   sendToTerminal?: (bytes: string) => void;
@@ -1255,9 +1261,11 @@ export const TextView: Component<{
     try {
       const got = await asking;
       if (!got) return;
+      // What the server took, when it says: it held them, and may have held
+      // one another device sent that this view has not drawn yet.
       const text = [
         ...(got.returned && stopped ? [stopped.back] : []),
-        ...(got.restored ? back : []),
+        ...(got.restored ? (got.queue ?? back) : []),
       ];
       if (text.length === 0) return;
       waitingBack = [...waitingBack, text.join("\n\n")];
@@ -1267,6 +1275,25 @@ export const TextView: Component<{
       done();
       focusAfterStop();
     }
+  };
+
+  /**
+   * ↑ on an empty field with messages queued: take them back into the field
+   * to edit, as Claude Code's own box does. Nothing is sent. False when
+   * nothing came back, and the field's ↑ then recalls history.
+   *
+   * What lands is what the server held, oldest first, a blank line between
+   * each, the same shape a Stop hands back. The reader asked for it and is
+   * looking at the field, so no fast-Enter guard applies (`landed`).
+   */
+  const editQueued = async (): Promise<boolean> => {
+    if (props.inertReason || !props.onUnqueue) return false;
+    const before = composerSinks()?.text() ?? "";
+    const texts = await props.onUnqueue();
+    if (texts.length === 0) return false;
+    waitingBack = [...waitingBack, texts.join("\n\n")];
+    landHandedBack(before, { asked: true });
+    return true;
   };
 
   /**
@@ -1302,21 +1329,24 @@ export const TextView: Component<{
   let handingBack: Promise<void> | null = null;
   let waitingBack: string[] = [];
   let sendsWaiting = 0;
-  const landHandedBack = (before: string): void => {
+  const landHandedBack = (before: string, how: { asked?: boolean } = {}): void => {
     const sinks = composerSinks();
     if (!sinks || waitingBack.length === 0 || sendsWaiting > 0) return;
     const now = sinks.text();
     if (now !== before && now.trim() !== "") {
       props.notify?.(
-        "Stopped. Your earlier message comes back to the field once this one is sent.",
+        how.asked
+          ? "Your queued messages come back to the field once this one is sent."
+          : "Stopped. Your earlier message comes back to the field once this one is sent.",
         "info",
       );
       return;
     }
     const text = waitingBack.join("\n\n");
     waitingBack = [];
-    // Alone in the field, it is guarded against a quick Enter (`send`).
-    landed = now.trim() === "" ? land(text) : null;
+    // Alone in the field after a Stop, it is guarded against a quick Enter
+    // (`send`). One ↑ asked for is the reader's to edit.
+    landed = now.trim() === "" && !how.asked ? land(text) : null;
     sinks.prependText(text);
   };
   /**
@@ -2644,6 +2674,7 @@ export const TextView: Component<{
         live={lineLive()}
         claudeState={props.claudeState?.()}
         queued={queued().length}
+        onEditQueued={props.onUnqueue ? editQueued : undefined}
         background={showAgents() ? undefined : backgroundLabel(props.background?.())}
         pending={props.pending}
         onSend={send}

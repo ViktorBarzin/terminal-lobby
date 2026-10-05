@@ -180,6 +180,9 @@ type modConn struct {
 	// firstPrompts are composer first prompts the mod accepted and Claude has
 	// not yet recorded, oldest first (firstprompt.go).
 	firstPrompts []firstPromptMark
+	// held are the lobby's prompts waiting behind the running main turn,
+	// oldest first (held.go).
+	held []string
 }
 
 // alive reports whether the mod is still there to keep the session's state
@@ -229,6 +232,10 @@ type modHub struct {
 	// greeted are the OS users some mod has said hello for, which is the
 	// evidence that a restarted Claude of theirs will load one.
 	greeted map[string]bool
+	// files keeps held prompts across a restart, and carry what an ended
+	// conversation held for the next one in its pane (held.go).
+	files heldFiles
+	carry map[string]heldCarry // user\x00pane
 }
 
 func newModHub(rg *registry, stamp sessionio.Options) *modHub {
@@ -236,7 +243,7 @@ func newModHub(rg *registry, stamp sessionio.Options) *modHub {
 		rg: rg, stamp: stamp, now: time.Now,
 		byToken: map[string]*modConn{}, bySID: map[string]*modConn{},
 		bySession: map[string]*modConn{}, waiting: map[string][]chan struct{}{},
-		greeted: map[string]bool{},
+		greeted: map[string]bool{}, carry: map[string]heldCarry{},
 	}
 }
 
@@ -432,6 +439,7 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 		c = &modConn{hub: h, user: osUser, sid: b.SID, wake: make(chan struct{}, 1),
 			acks: map[string]chan modAck{}, inflight: map[string]modCommand{}}
 		h.bySID[hubKey(osUser, b.SID)] = c
+		h.adoptLocked(c, b.Pane)
 	}
 	c.mu.Lock()
 	if c.token != "" {
@@ -602,6 +610,7 @@ func (h *modHub) capLocked(osUser string) {
 
 // dropLocked forgets a connection and ends its streams. Caller holds h.mu.
 func (h *modHub) dropLocked(c *modConn) {
+	h.carryLocked(c)
 	c.mu.Lock()
 	delete(h.byToken, c.token)
 	if h.bySID[hubKey(c.user, c.sid)] == c {
@@ -701,7 +710,7 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 	// state says the batch carries the session's whole state: a level, or the
 	// last history chunk of a mod from before levels. moved says the fold's
 	// state left what was last written at some step, even if it came back.
-	bye, state, moved := false, false, false
+	bye, state, moved, rebuilt := false, false, false, false
 	for _, ev := range evs {
 		if modOwnDialog(ev) {
 			continue
@@ -714,6 +723,7 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 			if ev.More {
 				c.historyChunks++
 			} else {
+				rebuilt = c.historyOwed
 				c.historyOwed, c.historyChunks = false, 0
 				// A 0.3.0 mod's snapshot ends in its level, which may come in
 				// the next batch with the dialogs: the history alone would
@@ -793,7 +803,14 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		h.mu.Lock()
 		h.dropLocked(c)
 		h.mu.Unlock()
+		return
 	}
+	// A stream rebuilt from history shows what is held as queued again, and
+	// what is held goes out once no turn runs.
+	if rebuilt {
+		c.showHeld()
+	}
+	c.releaseHeld()
 }
 
 func (c *modConn) sessionName() string {
@@ -1113,6 +1130,58 @@ func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
 		c.forget(cmd.ID)
 		return modAck{}, ctx.Err()
 	}
+}
+
+// sendResult is one command's outcome in a sendAll.
+type sendResult struct {
+	ack modAck
+	err error
+}
+
+// sendAll queues commands together, in order, so one poll hands the mod all
+// of them, and waits for every ack.
+func (c *modConn) sendAll(ctx context.Context, cmds []modCommand) []sendResult {
+	chans := make([]chan modAck, len(cmds))
+	c.mu.Lock()
+	for i := range cmds {
+		c.nextID++
+		cmds[i].ID = "c" + strconv.Itoa(c.nextID) + "." + bootID
+		chans[i] = make(chan modAck, 1)
+		c.acks[cmds[i].ID] = chans[i]
+		c.cmds = append(c.cmds, cmds[i])
+	}
+	c.mu.Unlock()
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+	t := time.NewTimer(modAckWait)
+	defer t.Stop()
+	out := make([]sendResult, len(cmds))
+	for i, ch := range chans {
+		select {
+		case a, ok := <-ch:
+			if !ok {
+				out[i].err = errModGone
+			} else {
+				out[i].ack = a
+			}
+		case <-t.C:
+			out[i].err = context.DeadlineExceeded
+		case <-ctx.Done():
+			out[i].err = ctx.Err()
+		}
+		if out[i].err != nil {
+			for _, cmd := range cmds[i:] {
+				c.forget(cmd.ID)
+			}
+			for j := i + 1; j < len(out); j++ {
+				out[j].err = out[i].err
+			}
+			break
+		}
+	}
+	return out
 }
 
 // forget drops a command its route stopped waiting on, wherever it is: not

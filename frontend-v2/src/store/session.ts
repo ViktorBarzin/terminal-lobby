@@ -24,6 +24,7 @@ import {
   commandsUrl,
   paneUrl,
   promptUrl,
+  unqueueUrl,
   resultUrl,
   answerTextUrl,
   searchUrl,
@@ -100,6 +101,9 @@ export const TRANSCRIPT_WINDOW_TURNS = 20;
 export interface StopResult {
   restored: boolean;
   returned: boolean;
+  /** The prompts the server took off the queue, oldest first, when it says.
+   *  Absent from a server that only says whether it took them. */
+  queue?: string[];
 }
 
 export interface SessionStore {
@@ -148,6 +152,14 @@ export interface SessionStore {
    * `returned` is true once it did; a held copy of it is let go then too.
    */
   interrupt: (restoreQueue?: readonly string[], returnPrompt?: string) => Promise<StopResult>;
+  /**
+   * Take back the prompts session-events holds behind the running turn, for
+   * Up in the Text view to put in the field to edit (session-events/held.go).
+   * Resolves to what came back, oldest first, and empty when nothing did or
+   * the request failed. The prompts this store was holding for them are let
+   * go: they never reached Claude, so no record will release them.
+   */
+  unqueue: () => Promise<string[]>;
   /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
@@ -419,6 +431,11 @@ let sharedCache: TranscriptCache | null = null;
 function defaultTranscriptCache(): TranscriptCache {
   if (!sharedCache) sharedCache = createTranscriptCache(sharedIndexedDbBackend());
   return sharedCache;
+}
+
+/** A reply's list of prompt texts, or undefined when it is not one. */
+function textsOf(v: unknown): string[] | undefined {
+  return Array.isArray(v) && v.every((t) => typeof t === "string") ? v : undefined;
 }
 
 export function createSessionStore(
@@ -1237,17 +1254,38 @@ export function createSessionStore(
         restored: restoring && reply?.restored === true,
         returned: returning && reply?.returned === true,
       };
-      const back = new Set([
-        ...(out.restored ? (restoreQueue ?? []).map((t) => t.trim()) : []),
-        ...(out.returned ? [(returnPrompt ?? "").trim()] : []),
+      const queue = textsOf((reply as { queue?: unknown } | null)?.queue);
+      if (out.restored && queue) out.queue = queue;
+      letGo([
+        ...(out.restored ? (out.queue ?? restoreQueue ?? []) : []),
+        ...(out.returned ? [returnPrompt ?? ""] : []),
       ]);
-      if (back.size > 0)
-        setPendingPrompts((cur) => cur.filter((p) => p.command || !back.has(p.text)));
       return out;
     } catch {
       /* best-effort cancel */
       opts.notify?.("Couldn't interrupt the session", "error");
       return nothing;
+    }
+  };
+
+  /** Drops the held copies of prompts that came back to the field. */
+  const letGo = (texts: readonly string[]): void => {
+    const back = new Set(texts.map((t) => t.trim()));
+    if (back.size > 0)
+      setPendingPrompts((cur) => cur.filter((p) => p.command || !back.has(p.text)));
+  };
+
+  const unqueue = async (): Promise<string[]> => {
+    try {
+      const res = await fetchWithDeadline(unqueueUrl(session()), { method: "POST" });
+      if (!res.ok) return [];
+      const reply = (await res.json().catch(() => null)) as { restored?: unknown; queue?: unknown } | null;
+      const queue = reply?.restored === true ? textsOf(reply.queue) : undefined;
+      if (!queue) return [];
+      letGo(queue);
+      return queue;
+    } catch {
+      return [];
     }
   };
 
@@ -1414,6 +1452,7 @@ export function createSessionStore(
     resolvePermission,
     send,
     interrupt,
+    unqueue,
     answer,
     answerText,
     answerOne,

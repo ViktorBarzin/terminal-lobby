@@ -24,12 +24,24 @@ func modTurnMux(t *testing.T, f *fakeTurns) (*registry, http.Handler) {
 	mux.HandleFunc("POST /prompt/{session}", handlePrompt(rg, f))
 	mux.HandleFunc("POST /cancel/{session}", handleCancel(rg, f))
 	mux.HandleFunc("POST /model/{session}", handleModel(f))
+	mux.HandleFunc("POST /prompt/{session}/unqueue", handleUnqueue(rg))
 	return rg, mux
 }
 
 // fakeMod acks every command the connection is sent until the test ends, and
 // collects them.
 func fakeMod(t *testing.T, c *modConn) func() []modCommand {
+	t.Helper()
+	return ackingMod(t, c, modAck{OK: true})
+}
+
+// refuseMod acks every command as refused, with this error.
+func refuseMod(t *testing.T, c *modConn, why string) func() []modCommand {
+	t.Helper()
+	return ackingMod(t, c, modAck{Error: why})
+}
+
+func ackingMod(t *testing.T, c *modConn, a modAck) func() []modCommand {
 	t.Helper()
 	got := make(chan modCommand, 64)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -43,7 +55,7 @@ func fakeMod(t *testing.T, c *modConn) func() []modCommand {
 			c.mu.Unlock()
 			for _, cmd := range cmds {
 				got <- cmd
-				c.deliver(cmd.ID, modAck{OK: true})
+				c.deliver(cmd.ID, a)
 			}
 			select {
 			case <-ctx.Done():

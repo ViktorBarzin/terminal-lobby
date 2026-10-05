@@ -192,6 +192,50 @@ func TestModFeedQueuedPromptWhileTurnRuns(t *testing.T) {
 	}
 }
 
+// A prompt session-events holds behind the turn shows as queued, and leaves
+// the queue when its row arrives, as one the mod reported would.
+func TestModQueueShowsAHeldPromptUntilItsRow(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	fs.Queue(" later\n", 1790900000400)
+	fs.Feed(ModEvent{Type: ModTurnEndEvent})
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "later"}}))
+	evs := fs.Replay(0)
+	if got := strings.Join(modKinds(evs), ","); got != "user,meta:queued,turn_end,meta:unqueued,user" {
+		t.Fatalf("kinds = %s", got)
+	}
+	if evs[1].Body != "later" || evs[1].At != 1790900000400 || evs[1].TurnID == "" {
+		t.Fatalf("queued = %+v", evs[1])
+	}
+	if st := fs.State(0); len(st.Queue) != 0 {
+		t.Fatalf("queue after its row = %q", st.Queue)
+	}
+}
+
+// Prompts handed back to the web leave the queue on every device, and
+// only those that were queued: a text the queue does not hold adds nothing.
+func TestModUnqueueTakesTheNamedPromptsOffTheQueue(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "second", Origin: json.RawMessage(`{"kind":"plugin"}`)})
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "third\n", Origin: json.RawMessage(`{"kind":"plugin"}`)})
+	fs.Unqueue([]string{"second", " third", "never queued"}, 1790900000500)
+	evs := fs.Replay(0)
+	if got := strings.Join(modKinds(evs), ","); got != "user,meta:queued,meta:queued,meta:unqueued,meta:unqueued" {
+		t.Fatalf("kinds = %s", got)
+	}
+	if evs[3].Body != "second" || evs[4].Body != "third" || evs[4].At != 1790900000500 {
+		t.Fatalf("unqueued = %+v %+v", evs[3], evs[4])
+	}
+	// Taken back, a later row with the same words is a new prompt, not one
+	// leaving the queue.
+	fs.Feed(ModEvent{Type: ModTurnEndEvent})
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "second"}}))
+	if got := strings.Join(modKinds(fs.Replay(0))[5:], ","); got != "turn_end,user" {
+		t.Fatalf("after the hand-back: %s", got)
+	}
+}
+
 // A prompt the mod submitted is reported when its turn starts, after the row
 // that opened the turn: it is that turn's prompt, not one waiting behind it.
 func TestModFeedTheTurnsOwnPromptIsNotQueued(t *testing.T) {

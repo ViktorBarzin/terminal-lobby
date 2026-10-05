@@ -132,6 +132,14 @@ export function promptUrl(session: string): string {
   return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}`);
 }
 
+/** POST target that hands back the prompts session-events holds behind the
+ *  running turn, for Up in the Text view to edit. No body; the reply is
+ *  {restored, queue}. Under /prompt/ because the proxies forward only the
+ *  prefixes they name. */
+export function unqueueUrl(session: string): string {
+  return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}/unqueue`);
+}
+
 /**
  * POST target that puts the session on a model and an effort level
  * (session-events). Body: {tool, model, effort, awaitReady}; the reply is what

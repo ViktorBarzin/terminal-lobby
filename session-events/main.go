@@ -32,6 +32,7 @@ func main() {
 	homeBase := flag.String("home-base", "/home", "base dir holding per-user homes")
 	poll := flag.Duration("poll", 200*time.Millisecond, "transcript tail interval")
 	hb := flag.Duration("heartbeat", 20*time.Second, "SSE heartbeat interval")
+	heldDir := flag.String("held-dir", defaultHeldDir(), "where prompts held behind a running turn are kept across a restart (held.go); empty keeps them in memory only")
 	// The privileged read child (privop.go). It serves ONE user — whoever sudo
 	// started it as — over stdin/stdout and never listens on anything, so it is
 	// handled before any of the service's own setup.
@@ -96,6 +97,7 @@ func main() {
 	// A Caller's session is recorded with tl.caller (callertag.go).
 	events.SetCallerRule(newCallerTags(injector).callerOf)
 	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
+	rg.mods.files = heldFiles{dir: *heldDir}
 	// The mod hub clears options in one tmux call; drill-ins nobody reads and
 	// connections whose mod went quiet are swept on a ticker.
 	rg.mods.unset = injector.UnsetOptions
@@ -186,6 +188,9 @@ func main() {
 	// Typing a prompt into the session: the harness decides what "ready" means,
 	// and a suspended session or a pi trust question refuses (turn_routes.go).
 	web.HandleFunc("POST /prompt/{session}", handlePrompt(rg, injector))
+	// Up in the Text view: the prompts held behind the running turn, handed
+	// back to edit (held.go).
+	web.HandleFunc("POST /prompt/{session}/unqueue", handleUnqueue(rg))
 	// One step further back — what a reader reaching the top of the transcript
 	// asks for (see OpenBackfillBytes).
 	web.HandleFunc("GET /earlier/{session}", func(w http.ResponseWriter, r *http.Request) {

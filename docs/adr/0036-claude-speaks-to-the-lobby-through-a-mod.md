@@ -289,8 +289,17 @@ version 1 rules above and are upgraded only by a restart.
   route does not use it.
 - Prompts sent from the web show in the pane as "Prompt from the terminal-lobby
   plugin" followed by the text, and a prompt sent mid-turn waits for the turn to
-  end instead of being folded into it. Stop does not hand queued prompts back:
-  no mod API takes them off Claude's queue.
+  end instead of being folded into it. No mod API takes a prompt off Claude's
+  queue, and Up in the pane does not pop one the mod submitted (measured on
+  2.1.289, 2026-10-05).
+- Amended 2026-10-05: so that Stop and the Text view's Up can hand queued
+  prompts back, session-events holds a prompt sent while a main turn runs and
+  sends it through the mod when the turn ends (`session-events/held.go`). The
+  stream shows it queued meanwhile. `POST /prompt/<session>/unqueue` hands every
+  held prompt back, and a Stop that names a queue takes them first. Held
+  prompts are written to a file per conversation under `-held-dir` so a restart
+  keeps them, since tmux refuses a command over about 16 KB. Sent at a turn's
+  end together, they reach Claude in one poll.
 - If session-events is down, the mod keeps retrying hello with backoff and
   Claude itself is unaffected; what happened meanwhile is delivered in order
   once it is back.

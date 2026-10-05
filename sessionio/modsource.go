@@ -468,6 +468,44 @@ func (f *FileSource) feedPrompt(ev ModEvent) {
 	f.appendLive(Event{Kind: KindMeta, Meta: MetaQueued, Body: text, TurnID: f.TurnID(), At: ev.T})
 }
 
+// Queue shows a prompt session-events is holding behind the running turn as
+// queued, at `at` (epoch ms). Its row leaves the queue as it arrives, as a
+// prompt the mod reported would (feedRow).
+func (f *FileSource) Queue(text string, at int64) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	turn := f.TurnID()
+	f.mu.Lock()
+	f.mod.queued = append(f.mod.queued, text)
+	f.mu.Unlock()
+	f.appendLive(Event{Kind: KindMeta, Meta: MetaQueued, Body: text, TurnID: turn, At: at})
+}
+
+// Unqueue takes prompts handed back to the web off the queue at `at` (epoch
+// ms), so every device stops showing them as waiting. A text the queue does
+// not hold is skipped.
+func (f *FileSource) Unqueue(texts []string, at int64) {
+	turn := f.TurnID()
+	f.mu.Lock()
+	var gone []Event
+	for _, t := range texts {
+		t = strings.TrimSpace(t)
+		for i, q := range f.mod.queued {
+			if q == t {
+				f.mod.queued = append(f.mod.queued[:i], f.mod.queued[i+1:]...)
+				gone = append(gone, Event{Kind: KindMeta, Meta: MetaUnqueued, Body: q, TurnID: turn, At: at})
+				break
+			}
+		}
+	}
+	f.mu.Unlock()
+	for _, e := range gone {
+		f.appendLive(e)
+	}
+}
+
 func (f *FileSource) feedModel(ev ModEvent) {
 	now := ModelState{Model: ev.Model, Effort: ev.Effort}
 	if now.Model == "" {

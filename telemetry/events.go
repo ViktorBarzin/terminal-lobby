@@ -284,8 +284,12 @@ var knownEvents = map[string]bool{
 	// tl.ms, tl.slot = what the claim and the hold found (warm | booting |
 	// stale | none | unknown), tl.hidden. tmux-api counts these into
 	// tl_first_prompt_total and tl_first_prompt_slow_total for the alert.
-	"prompt.accepted":      true,
-	"claude.cancelled":     true,
+	"prompt.accepted":  true,
+	"claude.cancelled": true,
+	// Prompts held behind a running turn handed back to the composer
+	// (session-events/held.go): tl.count prompts, tl.via = edit (the Text
+	// view's Up) or stop. Their text is never recorded.
+	"claude.queue_taken":   true,
 	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
 	"claude.state_changed": true, // running/awaiting/done transition (tl.to)
 	// A PERSON set the state by hand, correcting a dot the hooks got wrong

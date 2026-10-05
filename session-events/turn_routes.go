@@ -309,6 +309,15 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 	if p.ID != "" {
 		w.Header().Set(helloWaitHeader, strconv.FormatInt(time.Since(start).Milliseconds(), 10))
 	}
+	// Behind a running turn the prompt waits here rather than in Claude,
+	// where nothing could take it back to edit (held.go).
+	if c.hold(p.Text) {
+		events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.count": len(p.Text), "tl.client": "mod", "tl.held": true,
+		})
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	ack, err := c.send(r.Context(), modCommand{Op: "prompt", Text: p.Text})
 	if err != nil {
 		// The mod may still submit it: a command in hand goes out again to the
@@ -440,7 +449,17 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		// API takes them back, so the reply says nothing came back and the
 		// caller leaves its ghosts in place.
 		if c := rg.mods.conn(osUser, session); c != nil && (h == "" || h == sessionio.HarnessClaude) {
+			// The prompts held behind the turn come off first when the caller
+			// asks for them: the turn's end would send them (held.go). An
+			// abort that fails puts them back.
+			var took []string
+			if len(body.RestoreQueue) > 0 {
+				took = c.takeHeld()
+			}
 			ack, err := c.send(r.Context(), modCommand{Op: "abort"})
+			if err != nil || !ack.OK {
+				c.putBack(took)
+			}
 			if err != nil {
 				http.Error(w, "cancel failed", http.StatusBadGateway)
 				return
@@ -452,13 +471,19 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 				return
 			}
 			events.Emit("claude.cancelled", osUser, telemetry.Attrs{"tl.session": session, "tl.client": "mod"})
+			if len(took) > 0 {
+				events.Emit("claude.queue_taken", osUser, telemetry.Attrs{
+					"tl.session": session, "tl.count": len(took), "tl.via": "stop",
+				})
+			}
 			if len(body.RestoreQueue) == 0 && strings.TrimSpace(body.ReturnPrompt) == "" {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			writeJSON(w, struct {
-				Restored bool `json:"restored"`
-			}{false})
+			if took == nil {
+				took = []string{}
+			}
+			writeJSON(w, takeReply{Restored: len(took) > 0, Queue: took})
 			return
 		}
 		restoring := len(body.RestoreQueue) > 0

@@ -593,3 +593,27 @@ describe("<Composer> focus after the round button", () => {
     expect(document.activeElement).toBe(field);
   });
 });
+
+describe("<Composer> ↑ edits the queue", () => {
+  it("hands ↑ on an empty field to the caller while prompts are queued, and says so", () => {
+    const edit = vi.fn(async () => true);
+    const { field } = mount({ ...RUNNING, queued: 2, onEditQueued: edit });
+    expect(field.placeholder).toBe("Press ↑ to edit queued messages");
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(edit).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves ↑ to history with nothing queued", () => {
+    const edit = vi.fn(async () => true);
+    const { field } = mount({ ...RUNNING, queued: 0, onEditQueued: edit, history: ["before"] });
+    expect(field.placeholder).not.toContain("queued");
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(edit).not.toHaveBeenCalled();
+    expect(field.value).toBe("before");
+  });
+
+  it("keeps a caller's own placeholder", () => {
+    const { field } = mount({ ...RUNNING, queued: 1, onEditQueued: async () => true, placeholder: "Run a command…" });
+    expect(field.placeholder).toBe("Run a command…");
+  });
+});

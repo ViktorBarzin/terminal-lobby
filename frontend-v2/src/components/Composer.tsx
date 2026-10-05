@@ -19,6 +19,7 @@ import type { DraftAttachment } from "../store/drafts";
 import type { ContextState } from "./context.logic";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
 import { ModelSheet } from "./ModelSheet";
+import { isCoarsePointer } from "../mobile/pointer";
 import type { ModelField, ModelHarness, ModelState, PiOffer } from "../lib/models";
 
 /**
@@ -146,6 +147,9 @@ export const Composer: Component<{
   claudeState?: ClaudeState;
   /** How many prompts Claude holds queued behind the turn (the ghosts). */
   queued?: number;
+  /** Take the queued prompts back into the field to edit: ↑ on an empty field
+   *  while `queued` is above zero. Resolves false when nothing came back. */
+  onEditQueued?: () => Promise<boolean>;
   /** What the session still owes once its turn has closed ("2 agents"). */
   background?: string;
   pending: PendingPermission[];
@@ -338,6 +342,10 @@ export const Composer: Component<{
     if (state !== "running" && state !== "awaiting") settled();
   });
   onCleanup(settled);
+  /** ↑'s hand-off while prompts are queued, and not on a watching device. */
+  const editQueued = (): (() => Promise<boolean>) | undefined =>
+    (props.queued ?? 0) > 0 && !props.inertReason ? props.onEditQueued : undefined;
+
   const stop = (): void => {
     if (stopping()) return;
     setStopping(true);
@@ -435,8 +443,14 @@ export const Composer: Component<{
         textSize={props.textSize}
         onSend={send}
         label={props.label ?? "Message to send to the session"}
-        placeholder={props.placeholder ?? "Ask Claude, or run a command…"}
+        placeholder={
+          props.placeholder ??
+          (editQueued() && !isCoarsePointer()
+            ? "Press ↑ to edit queued messages"
+            : "Ask Claude, or run a command…")
+        }
         history={props.history}
+        onEditQueued={editQueued()}
         onListDir={props.onListDir}
         commands={props.commands}
         commandsOk={props.commandsOk}
