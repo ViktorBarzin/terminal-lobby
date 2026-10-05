@@ -49,6 +49,11 @@ type Normalizer struct {
 	// reported when it differs. Every assistant record carries the pair, and a
 	// marker on each of them would say nothing.
 	model ModelState
+	// promptLine is the text of the prompt that opened the current turn,
+	// until Claude writes anything. A slash command the lobby sends is stored
+	// twice: the prompt the mod submitted, then Claude's own command record
+	// naming the same command. The second is the same command, not a prompt.
+	promptLine string
 	// root is the directory Claude Code was launched in: the cwd of the first
 	// record that carries one. A screenshot's link is relative to it (see
 	// shotFiles), and it is NOT the cwd of the record holding the link, which
@@ -390,6 +395,14 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 	// but it is the subagent's, so it opens nothing here.
 	typed := role == "user" && !rec.IsMeta && hasBlock(blocks, "text")
 	isPrompt := typed && !sub
+	if isPrompt {
+		if line, ok := commandLine(blockText(blocks)); ok && n.promptLine != "" && line == n.promptLine {
+			return nil
+		}
+		n.promptLine = strings.TrimSpace(blockText(blocks))
+	} else if role == "assistant" && !sub {
+		n.promptLine = ""
+	}
 	switch {
 	case sub:
 	case isPrompt:
