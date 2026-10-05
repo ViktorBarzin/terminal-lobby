@@ -291,6 +291,11 @@ version 1 rules above and are upgraded only by a restart.
   plugin" followed by the text, and a prompt sent mid-turn waits for the turn to
   end instead of being folded into it. Stop does not hand queued prompts back:
   no mod API takes them off Claude's queue.
+- `$.prompt.submit` resolves only once the prompt runs, so the mod reports a
+  web prompt after it has opened its own turn. session-events therefore puts a
+  prompt sent mid-turn on the session's queue when the mod acks it, and every
+  device watching the session sees it waiting (2026-10-05). Before that, only
+  the device that sent it showed it.
 - If session-events is down, the mod keeps retrying hello with backoff and
   Claude itself is unaffected; what happened meanwhile is delivered in order
   once it is back.

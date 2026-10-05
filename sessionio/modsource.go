@@ -3,6 +3,7 @@ package sessionio
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -239,7 +240,11 @@ type modState struct {
 	order   []string             // insertion order of full, oldest first
 	size    int
 	queued  []string // prompts typed while a turn ran, oldest first
-	model   ModelState
+	// sent are the queued prompts the lobby handed the mod (QueueSent),
+	// oldest first, so one a hook then drops can leave the queue by its
+	// command id.
+	sent  []sentPrompt
+	model ModelState
 	// rows are the uuids already in the log. A mod re-sends a batch after a
 	// failed request and history after a fresh hello, so a row can arrive
 	// twice.
@@ -327,6 +332,23 @@ func (f *FileSource) Feed(ev ModEvent) {
 // feedCommandFailed shows a command that did not take effect as an error row
 // in the session's own timeline: the web had already been told it was sent.
 func (f *FileSource) feedCommandFailed(ev ModEvent) {
+	if ev.Op == "prompt" {
+		f.mu.Lock()
+		var text string
+		left := false
+		if i := slices.IndexFunc(f.mod.sent, func(p sentPrompt) bool { return p.id == ev.ID }); i >= 0 {
+			text = f.mod.sent[i].text
+			f.mod.sent = slices.Delete(f.mod.sent, i, i+1)
+			if q := slices.Index(f.mod.queued, text); q >= 0 {
+				f.mod.queued = slices.Delete(f.mod.queued, q, q+1)
+				left = true
+			}
+		}
+		f.mu.Unlock()
+		if left {
+			f.appendLive(Event{Kind: KindMeta, Meta: MetaUnqueued, Body: text, TurnID: f.TurnID(), At: ev.T})
+		}
+	}
 	what := "the lobby's " + ev.Op
 	if ev.Op == "prompt" {
 		what = "the prompt sent from the lobby"
@@ -387,6 +409,7 @@ func (f *FileSource) feedRow(ev ModEvent) {
 		for i, q := range f.mod.queued {
 			if q == text {
 				f.mod.queued = append(f.mod.queued[:i], f.mod.queued[i+1:]...)
+				f.forgetSent(q)
 				lead = append(lead, Event{Kind: KindMeta, Meta: MetaUnqueued, Body: q, At: ev.T})
 				break
 			}
@@ -453,9 +476,15 @@ func (f *FileSource) feedDelta(ev ModEvent) {
 // feedPrompt records a prompt typed while a turn runs: Claude queues it, and
 // the composer shows it waiting until its row arrives. A prompt sent while the
 // session is idle opens its turn through its row, so it records nothing here.
+//
+// Nor does a prompt the lobby sent through the mod. The mod reports one only
+// once it has opened its own turn, so it is never waiting by then; one sent
+// mid-turn was queued when the mod took it (QueueSent). Two of them run back
+// to back put the first one's report after the second one's row, where it read
+// as a prompt waiting behind the second and never left the queue.
 func (f *FileSource) feedPrompt(ev ModEvent) {
 	text := strings.TrimSpace(ev.Text)
-	if text == "" || !f.TurnOpen() {
+	if text == "" || fromLobby(ev.Origin) || !f.TurnOpen() {
 		return
 	}
 	f.mu.Lock()
@@ -466,6 +495,51 @@ func (f *FileSource) feedPrompt(ev ModEvent) {
 	f.mod.queued = append(f.mod.queued, text)
 	f.mu.Unlock()
 	f.appendLive(Event{Kind: KindMeta, Meta: MetaQueued, Body: text, TurnID: f.TurnID(), At: ev.T})
+}
+
+// lobbyPlugin is the name Claude Code gives the lobby's mod in a prompt's
+// origin.
+const lobbyPlugin = "terminal-lobby"
+
+// fromLobby reports whether a prompt's origin is the lobby's mod.
+func fromLobby(origin json.RawMessage) bool {
+	var o struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}
+	return json.Unmarshal(origin, &o) == nil && o.Kind == "plugin" && o.Name == lobbyPlugin
+}
+
+// QueueSent records a prompt the lobby has just handed the mod (command id)
+// as waiting, when a turn is running. Claude holds such a prompt until the
+// session is idle and the mod reports it only then (Claude Code 2.1.289,
+// measured 2026-10-05), so without this only the device that sent it knew it
+// was waiting. Its row takes it off the queue as it opens its turn, as for a
+// typed one. A slash command runs as one and leaves no prompt row, so it is
+// not queued. Reports whether the prompt was queued.
+func (f *FileSource) QueueSent(id, text string) bool {
+	text = strings.TrimSpace(text)
+	if f.mod == nil || text == "" || strings.HasPrefix(text, "/") || !f.TurnOpen() {
+		return false
+	}
+	f.mu.Lock()
+	f.mod.queued = append(f.mod.queued, text)
+	f.mod.sent = append(f.mod.sent, sentPrompt{id: id, text: text})
+	f.mu.Unlock()
+	f.appendLive(Event{Kind: KindMeta, Meta: MetaQueued, Body: text, TurnID: f.TurnID(), At: time.Now().UnixMilli()})
+	return true
+}
+
+// sentPrompt is a prompt QueueSent put on the queue, and the command that
+// carried it.
+type sentPrompt struct{ id, text string }
+
+// forgetSent drops the oldest sent entry for text, which has left the queue.
+// Called with f.mu held.
+func (f *FileSource) forgetSent(text string) {
+	if i := slices.IndexFunc(f.mod.sent, func(p sentPrompt) bool { return p.text == text }); i >= 0 {
+		f.mod.sent = slices.Delete(f.mod.sent, i, i+1)
+	}
 }
 
 func (f *FileSource) feedModel(ev ModEvent) {
