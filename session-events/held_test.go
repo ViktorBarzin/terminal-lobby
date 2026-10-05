@@ -73,6 +73,21 @@ func TestAPromptDuringATurnIsHeldAndShownQueued(t *testing.T) {
 	}
 }
 
+// A slash command runs as one and leaves no prompt row, so held it would sit
+// on the queue for good after it ran. It goes to the mod as before.
+func TestASlashCommandDuringATurnIsNotHeld(t *testing.T) {
+	rg, mux := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	sent := fakeMod(t, c)
+	postTurn(t, mux, "/prompt/demo", `{"text":"  /compact"}`)
+	if got := prompts(t, sent, 1); !slices.Equal(got, []string{"prompt   /compact"}) {
+		t.Fatalf("sent %q", got)
+	}
+	if q := queueOf(c); len(q) != 0 {
+		t.Fatalf("queue = %q", q)
+	}
+}
+
 func TestAPromptWhileIdleIsSentAtOnce(t *testing.T) {
 	rg, mux := heldMux(t, t.TempDir())
 	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i1"})
@@ -265,6 +280,21 @@ func TestAHeldPromptTheModRefusesIsShownAsAnError(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("no error row names the refused prompt")
+}
+
+func TestAHeldPromptTheModRefusesLeavesTheQueue(t *testing.T) {
+	rg, mux := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	postTurn(t, mux, "/prompt/demo", `{"text":"refused one"}`)
+	refuseMod(t, c, "dropped: policy")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}})
+	deadline := time.Now().Add(2 * time.Second)
+	for len(queueOf(c)) > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if q := queueOf(c); len(q) != 0 {
+		t.Fatalf("queue = %q after the mod refused it", q)
+	}
 }
 
 func TestHeldFilesRoundTrip(t *testing.T) {

@@ -123,8 +123,12 @@ func (c *modConn) knownLocked() bool {
 }
 
 // hold keeps a prompt behind the running main turn and shows it queued. False
-// when no main turn is known to run: the caller sends it now.
+// when no main turn is known to run, or for a slash command, which runs as one
+// and leaves no prompt row to take it off the queue: the caller sends it now.
 func (c *modConn) hold(text string) bool {
+	if strings.HasPrefix(strings.TrimSpace(text), "/") {
+		return false
+	}
 	// Ordered against apply, so a turn end being folded either sees this
 	// prompt and sends it, or comes first and this sends it now.
 	c.applyMu.Lock()
@@ -231,6 +235,7 @@ func (c *modConn) submitHeld(texts []string, ls *liveSource) {
 		if r.err == nil && r.ack.OK {
 			continue
 		}
+		ls.fs.Unqueue(texts[i:i+1], c.hub.now().UnixMilli())
 		ls.fs.Feed(sessionio.ModEvent{
 			Type: sessionio.ModCommandFailedEvent, T: c.hub.now().UnixMilli(), Op: "prompt",
 			Error: why + ". It was queued as: " + quoteStart(texts[i]),
