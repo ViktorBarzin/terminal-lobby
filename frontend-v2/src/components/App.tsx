@@ -103,6 +103,8 @@ import { buildProbes } from "../diagnostics/probes";
 import { worst, type SseStatus, type TerminalReport } from "../diagnostics/status";
 import { createDockStore } from "../store/dock";
 import { createSidebarWidthStore } from "../store/sidebar-width";
+import { textColumn, textColumnDragging } from "../store/text-column";
+import { columnCss } from "../store/text-column.logic";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
 import { installViewportSync } from "../mobile/viewport";
@@ -2450,10 +2452,16 @@ export const App: Component = () => {
       // The column width, for the grid track, the sidebar inside it and the
       // grip that drags it — one property, so the three cannot disagree. The
       // stacked layouts override it rather than read it (sidebar.css).
-      style={{ "--tl-sidebar-w": `${sidebarWidth.width()}px` }}
+      // `--tl-col-w` is the Text view's reading column, which the composer's
+      // edges drag and Settings > Appearance presets (store/text-column.ts).
+      style={{
+        "--tl-sidebar-w": `${sidebarWidth.width()}px`,
+        "--tl-col-w": columnCss(textColumn()),
+      }}
       classList={{
         "tl-shell-collapsed": collapsed(),
         "tl-shell-resizing": sidebarWidth.dragging(),
+        "tl-col-resizing": textColumnDragging(),
         "tl-flip": flip(),
         // Paints the coloured frame + tinted bars. Driven by the server's
         // answer, so a refused ?as= leaves the tab looking exactly like yours.
@@ -2690,7 +2698,9 @@ export const App: Component = () => {
               // With no row yet, the line the person typed stands in, as it
               // does on the card (store/prompt-line.ts).
               const label = () =>
-                sessionLabel(tileSession() ?? { name: name(), title: promptLineFor(name()) ?? undefined });
+                sessionLabel(
+                  tileSession() ?? { name: name(), title: promptLineFor(name()) ?? undefined },
+                );
               return (
                 <div
                   class="tl-session-slot"

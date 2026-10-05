@@ -22,14 +22,10 @@ function fakePrefs(): PrefsStore {
 }
 
 const panel = (initialPage?: Parameters<typeof SettingsPanel>[0]["initialPage"]) =>
-  render(() => (
-    <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage={initialPage} />
-  ));
+  render(() => <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage={initialPage} />);
 
-const rail = (c: HTMLElement) =>
-  [...c.querySelectorAll<HTMLElement>(".tl-set-rail-item")];
-const onPage = (c: HTMLElement) =>
-  c.querySelector(".tl-set-rail-item.is-on")?.textContent;
+const rail = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>(".tl-set-rail-item")];
+const onPage = (c: HTMLElement) => c.querySelector(".tl-set-rail-item.is-on")?.textContent;
 const title = (c: HTMLElement) => c.querySelector(".tl-set-page-title")?.textContent;
 
 describe("the Settings rail", () => {
@@ -62,9 +58,7 @@ describe("the Settings rail", () => {
 
   it("takes focus on the selected entry, so ↑↓ work immediately", async () => {
     panel();
-    await waitFor(() =>
-      expect(document.activeElement?.textContent).toBe("Appearance"),
-    );
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Appearance"));
     expect((document.activeElement as HTMLElement).getAttribute("role")).toBe("tab");
   });
 
@@ -197,13 +191,9 @@ describe("a settings row", () => {
     expect(info.getAttribute("aria-expanded")).toBe("false");
 
     fireEvent.click(info);
-    await waitFor(() =>
-      expect(container.textContent).toContain("does nothing while that is off"),
-    );
+    await waitFor(() => expect(container.textContent).toContain("does nothing while that is off"));
     expect(info.getAttribute("aria-expanded")).toBe("true");
-    expect(info.getAttribute("aria-controls")).toBe(
-      container.querySelector(".tl-set-hint")?.id,
-    );
+    expect(info.getAttribute("aria-controls")).toBe(container.querySelector(".tl-set-hint")?.id);
 
     fireEvent.click(info);
     await waitFor(() =>
@@ -212,8 +202,9 @@ describe("a settings row", () => {
   });
 
   it("marks what does not roam, and leaves what does unmarked", () => {
-    // Appearance is where a chipped row lives: the theme is stored per browser
-    // under `tmux-theme`, so it wears the chip. Checking the chip on a page
+    // Appearance is where the chipped rows live: the theme is stored per
+    // browser under `tmux-theme`, and the Text view width under
+    // `tl:text-col-w:v1`, so both wear the chip. Checking the chip on a page
     // that still has one keeps the mechanism covered, which the Terminal page
     // stopped doing when its last device-stored row left.
     const appearance = panel();
@@ -222,6 +213,7 @@ describe("a settings row", () => {
     );
     expect(chipped.map((r) => r.querySelector(".tl-set-row-label")?.textContent)).toEqual([
       "Theme",
+      "Text view width",
     ]);
     cleanup();
 
