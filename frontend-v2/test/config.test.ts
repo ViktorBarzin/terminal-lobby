@@ -53,6 +53,8 @@ describe("config — tmux-api prefix (PROD ingress: PathPrefix /api/sessions/ ->
     // under the prefix would break them, so the fix must leave them alone.
     // `rev=1` asks for the reverse open; the route is still at the root.
     expect(eventsUrl("s", 0)).toBe("/events/s?rev=1");
+    expect(eventsUrl("s", 7, "e1")).toBe("/events/s?lastEventId=7&epoch=e1&rev=1");
+    expect(eventsUrl("s", 0, "e1")).toBe("/events/s?rev=1"); // nothing held, no log to name
     expect(promptUrl("s")).toBe("/prompt/s");
     expect(cancelUrl("s")).toBe("/cancel/s");
   });

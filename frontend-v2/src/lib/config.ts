@@ -98,7 +98,7 @@ export const TMUX_API_PREFIX = "/api/sessions";
 export const NET_HEADER = "X-TL-Net";
 
 /** SSE endpoint for a session's normalized event stream (session-events). */
-export function eventsUrl(session: string, lastEventId: number): string {
+export function eventsUrl(session: string, lastEventId: number, epoch = ""): string {
   const u = `${API_BASE}/events/${encodeURIComponent(session)}`;
   // The Go SSE handler reads Last-Event-ID (header) first, then ?lastEventId=.
   // EventSource's native header only survives within one instance; because we
@@ -116,8 +116,13 @@ export function eventsUrl(session: string, lastEventId: number): string {
   // that does not know `rev` ignores it and serves the older turn-counted
   // window, and this is where a slow tier still asks for a smaller one. A
   // server that DOES know `rev` bounds the open in bytes and has no use for it.
+  //
+  // `epoch=` names the log the held ids belong to. A server whose log is
+  // another one (a restart rebuilt it) answers with the ready frame alone
+  // instead of replaying a gap the client would render and then discard.
   const params: string[] = [];
   if (lastEventId > 0) params.push(`lastEventId=${lastEventId}`);
+  if (lastEventId > 0 && epoch) params.push(`epoch=${encodeURIComponent(epoch)}`);
   params.push("rev=1");
   const turns = openWindowTurns(effectiveTier());
   if (turns !== 20) params.push(`turns=${turns}`);

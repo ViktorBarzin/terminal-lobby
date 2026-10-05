@@ -456,6 +456,31 @@ func TestResumeReadyNamesTheLogItIsResuming(t *testing.T) {
 	}
 }
 
+// A client resuming onto a log rebuilt by a restart holds ids from the old one.
+// Replaying the gap above its cursor would hand it the new log's tail, which
+// it renders and then throws away when the ready frame names the new log; a
+// rebuilt log holds the whole conversation, so that tail runs to megabytes.
+// A client that says which log its ids belong to gets the ready frame alone.
+func TestResumeOntoAnotherLogSkipsTheReplay(t *testing.T) {
+	src := &fakeSource{
+		all:   []sessionio.Event{{ID: 1, Kind: sessionio.KindText, Body: "a"}, {ID: 2, Kind: sessionio.KindText, Body: "b"}},
+		live:  make(chan sessionio.Event),
+		head:  2,
+		epoch: "newlog",
+	}
+	body := read(t, src, "/events/demo?rev=1&lastEventId=1&epoch=oldlog")
+	if strings.Contains(body, `"body":"b"`) {
+		t.Fatalf("a resume naming another log was replayed the gap:\n%s", body)
+	}
+	if !strings.Contains(body, `"epoch":"newlog"`) {
+		t.Fatalf("no ready frame naming the log:\n%s", body)
+	}
+	// The same log resumes as before.
+	if body := read(t, src, "/events/demo?rev=1&lastEventId=1&epoch=newlog"); !strings.Contains(body, `"body":"b"`) {
+		t.Fatalf("a resume on its own log missed the gap:\n%s", body)
+	}
+}
+
 // The fresh open carries it too, so the client records which log its history
 // belongs to before anything can move underneath it.
 func TestFreshOpenReadyNamesTheLog(t *testing.T) {

@@ -851,7 +851,7 @@ export function createSessionStore(
 
   const client = new SseClient({
     session: session(),
-    url: (_name, lastEventId) => eventsUrl(session(), lastEventId),
+    url: (_name, lastEventId, epoch) => eventsUrl(session(), lastEventId, epoch),
     onReset: reset,
     onEvent: (e: Event) => {
       streamWork = afterEvent(streamWork, e);

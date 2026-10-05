@@ -32,7 +32,7 @@ const full: { [K in ModEventType]: Required<Extract<ModEvent, { type: K }>> } = 
   prompt: { type: 'prompt', t: 1, text: 'x', origin: {} },
   model: { type: 'model', t: 1, model: 'm', effort: 'high' },
   agents: { type: 'agents', t: 1, agents: [] },
-  history: { type: 'history', t: 1, messages: [], running: true, more: true },
+  history: { type: 'history', t: 1, messages: [], running: true, more: true, last: 'u' },
   ask: { type: 'ask', t: 1, toolId: 't', questions: [] },
   plan: { type: 'plan', t: 1, toolId: 't', plan: 'p', planFilePath: '/p' },
   permission: { type: 'permission', t: 1, toolId: 't', tool: 'Bash', input: {}, reason: 'r', agentId: 'a' },

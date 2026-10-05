@@ -138,6 +138,17 @@ func parseLastEventID(r *http.Request) int64 {
 	return 0
 }
 
+// foreignResume reports whether a resuming client named the log its ids belong
+// to (?epoch=) and that log is not this source's.
+func foreignResume(r *http.Request, src interface{ Head() (int64, string) }) bool {
+	held := r.URL.Query().Get("epoch")
+	if held == "" {
+		return false
+	}
+	_, epoch := src.Head()
+	return held != epoch
+}
+
 // writeSSE streams a source to the client as Server-Sent Events: it replays from
 // the resume cursor, then tails live, emitting a heartbeat comment every hb to
 // keep NAT/proxy timeouts from silently dropping the connection. Returns when the
@@ -355,6 +366,15 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 		// guess. This says so once, as a NAMED event, so it reaches a listener
 		// rather than the event array.
 		sink.printf("event: ready\ndata: %d\n\n", lastID)
+
+	case resume > 0 && foreignResume(r, src):
+		// The client's ids belong to a log this source is not, most often
+		// the one before a restart. The gap above its cursor means nothing to
+		// it, and a rebuilt log holds the whole conversation, so the ready
+		// frame goes alone and the client resyncs from it.
+		head, epoch := src.Head()
+		sinkFrame(sink, "ready", readyFrame{Head: head, Epoch: epoch})
+		announced = epoch
 
 	case resume > 0:
 		// A reconnecting client holds its history and is asking for the gap.

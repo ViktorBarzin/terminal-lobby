@@ -154,6 +154,13 @@ type modConn struct {
 	historyOwed bool
 	// historyChunks counts the chunks of an owed history applied so far.
 	historyChunks int
+	// historyBuf holds the messages of an owed history's chunks until the
+	// final one says whether the transcript can be replayed instead.
+	historyBuf []sessionio.ModHistoryMessage
+	// helloModel is the model a hello named on a log still owed its history.
+	// It is fed after the rebuild, so the log is empty until then: a reader
+	// holding an event from before would be handed the rebuild as a gap.
+	helloModel string
 	// stamps is false for a second live Claude in a tmux session another
 	// connection holds: it keeps its token, but writes no options and has no
 	// stream, so the two do not take the session from each other.
@@ -517,12 +524,12 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 			// A new log, for a new connection, a rename, or a new module: it
 			// is rebuilt from the history this hello asks for.
 			c.ls = h.rg.startMod(b.Session, b.Transcript, us.reader, us.agents)
-			c.historyOwed, c.historyChunks = true, 0
+			c.historyOwed, c.historyChunks, c.historyBuf = true, 0, nil
 			built = true
 		}
 		c.ls.agents.SetSteer(slices.Contains(b.Ops, "steer"))
 	} else {
-		c.historyOwed, c.historyChunks = false, 0
+		c.historyOwed, c.historyChunks, c.historyBuf = false, 0, nil
 		log.Printf("mod %s/%s: a second Claude (pane %s) said hello in a session another one holds; it writes nothing", osUser, b.Session, b.Pane)
 	}
 	// A mod from before 0.3.0 puts a history it is sent ahead of everything
@@ -533,6 +540,17 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 	history := c.historyOwed
 	if b.Instance == "" {
 		history = built
+	}
+	// Mod rows carry no model, so a log built after a restart would show none
+	// until someone switched model. The hello names it, and it goes in once
+	// the history has (apply).
+	feedModel := false
+	if built && b.Model != "" {
+		if history {
+			c.helloModel = b.Model
+		} else {
+			feedModel = true
+		}
 	}
 	ls, token, stamps := c.ls, c.token, c.stamps
 	c.mu.Unlock()
@@ -548,9 +566,7 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 		r.fs.Close()
 		r.drills.close()
 	}
-	// Mod rows carry no model, so a log built after a restart would show none
-	// until someone switched model. The hello names it.
-	if built && b.Model != "" {
+	if feedModel {
 		ls.fs.Feed(sessionio.ModEvent{Type: sessionio.ModModelEvent, T: h.now().UnixMilli(), Model: b.Model})
 	}
 	if b.Dropped > 0 {
@@ -691,6 +707,32 @@ func (h *modHub) handleEvents() http.HandlerFunc {
 	}
 }
 
+// replayWait bounds how long a rebuild waits for the transcript to reach the
+// row the mod's history ends at. Claude writes it every 100 ms.
+var replayWait = 2 * time.Second
+
+// replaySlots bounds the transcript replays running at once. Every mod says
+// hello within a minute of a restart, and the largest transcript on this box
+// (39 MB) costs about 1.5 s of CPU and briefly a few times its size in memory.
+var replaySlots = make(chan struct{}, 3)
+
+// rebuildLog fills a log that has none from an owed history's final chunk:
+// the transcript up to the row the mod named, which holds the whole
+// conversation, or the mod's own history when the mod named none (before
+// 0.4.0) or the file never reached it (ADR-0036).
+func rebuildLog(name string, fs *sessionio.FileSource, final sessionio.ModEvent, msgs []sessionio.ModHistoryMessage) {
+	if final.Last != "" {
+		replaySlots <- struct{}{}
+		err := fs.ReplayTranscript(final.Last, final.Running, replayWait)
+		<-replaySlots
+		if err == nil {
+			return
+		}
+		log.Printf("mod %s: transcript replay: %v; rebuilding from the mod's history", name, err)
+	}
+	fs.FeedHistory(msgs, final.Running)
+}
+
 // apply feeds a batch of events to the session: the log, the dialogs and the
 // tmux options. The option writes are merged across the batch so a burst of
 // events costs one tmux call.
@@ -719,19 +761,33 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		}
 		switch ev.Type {
 		case sessionio.ModHistoryEvent:
-			// Only the last chunk of a long history may close the last turn.
-			fs.FeedHistory(ev.Messages, ev.Running || ev.More)
 			c.mu.Lock()
+			if !c.historyOwed {
+				// A batch resent after its POST outlived the mod's fetch cap:
+				// this history is in the log already.
+				c.mu.Unlock()
+				continue
+			}
+			c.historyBuf = append(c.historyBuf, ev.Messages...)
 			if ev.More {
 				c.historyChunks++
-			} else {
-				rebuilt = c.historyOwed
-				c.historyOwed, c.historyChunks = false, 0
-				// A 0.3.0 mod's snapshot ends in its level, which may come in
-				// the next batch with the dialogs: the history alone would
-				// write a session with a dialog open as done in between.
-				state = !newMod
+				c.mu.Unlock()
+				continue
 			}
+			msgs, model, name := c.historyBuf, c.helloModel, c.user+"/"+c.session
+			c.historyBuf, c.helloModel = nil, ""
+			c.mu.Unlock()
+			rebuildLog(name, fs, ev, msgs)
+			if model != "" {
+				fs.Feed(sessionio.ModEvent{Type: sessionio.ModModelEvent, T: ev.T, Model: model})
+			}
+			c.mu.Lock()
+			rebuilt = c.historyOwed
+			c.historyOwed, c.historyChunks = false, 0
+			// A 0.3.0 mod's snapshot ends in its level, which may come in
+			// the next batch with the dialogs: the history alone would
+			// write a session with a dialog open as done in between.
+			state = !newMod
 			c.mu.Unlock()
 		case sessionio.ModAckEvent:
 			c.deliver(ev.ID, modAck{OK: ev.OK, Error: ev.Error})

@@ -70,3 +70,13 @@ test('an empty history is one event', () => {
   assert.equal(evs.length, 1);
   assert.equal(evs[0]?.more, undefined);
 });
+
+// The server replays the transcript up to the last main-thread row this
+// history covers, so the final chunk names it and no other chunk does.
+test('only the final history chunk names the last row it covers', () => {
+  const messages = Array.from({ length: 40 }, (_, i) => msg(i, 200_000));
+  const evs = historyEvents(5, messages, false, 'uuid-last');
+  assert.ok(evs.length > 1);
+  assert.deepEqual(evs.map((e) => e.last), [...evs.slice(1).map(() => undefined), 'uuid-last']);
+  assert.equal(historyEvents(5, [], false).at(-1)?.last, undefined, 'no row stored yet, no barrier');
+});

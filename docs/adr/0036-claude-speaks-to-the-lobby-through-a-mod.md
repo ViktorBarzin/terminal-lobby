@@ -39,11 +39,30 @@ flowchart TD
 
 ## Decisions
 
-**Full replacement.** The mod is the only channel for a Claude session. History
-after a reconnect comes from the mod too (`$.session.messages()`), not from
-the transcript file. On-demand reads of large blobs that the wire never carries
-(a truncated tool result, a picture) still open the transcript file by the row
-id the mod reported, because those ids are the same in the file.
+**Full replacement.** The mod is the only channel for a Claude session while
+it runs. On-demand reads of large blobs that the wire never carries (a
+truncated tool result, a picture) open the transcript file by the row id the
+mod reported, because those ids are the same in the file.
+
+**A rebuilt log is replayed from the transcript (2026-10-05).** Until then the
+history after a session-events restart came from the mod's
+`$.session.messages()`, which holds the newest 4096 entries, starts at the last
+`/compact`, and carries no uuid, timestamp or stop reason. Measured on the day:
+a session with three compactions came back with 9 of its 19 prompts, led by the
+compaction summary drawn as a prompt. Now a 0.4.0 mod puts `last`, the uuid of
+the newest main-thread row its snapshot covers, on the history's final chunk,
+and session-events replays the transcript through the Normalizer up to exactly
+that row (`FileSource.ReplayTranscript`). Rows stored after it arrive live, and
+a live copy of a replayed row is dropped by uuid. Claude writes the transcript
+in batches every 100 ms (2.1.289), so the replay waits up to 2 s for that row
+to reach the file. When it never does, the read fails, or the mod is older and
+names no row, the log is rebuilt from the mod's history as before. Up to three
+replays run at once; the largest transcript on the box (39 MB) took about 1.5 s
+of CPU and kept 6 to 13 MB of log. The log stays empty until the rebuild, so a
+reader attached early holds nothing that would make the rebuild look like a
+gap, and its stream is ended so it reopens with the usual window. The scope is
+the current conversation: `/clear` starts a new transcript, and the replay does
+not reach across it.
 
 **session-events is the server, the mod is the client.** A mod cannot listen on
 a socket. It POSTs events and long-polls for commands over loopback HTTP. Each
@@ -137,7 +156,9 @@ picture or full result could be read back and the agent panel listed nothing.
 A text view re-rendering 34 such pictures sent 421 requests that answered 404,
 and the edge banned the phone for probing. Rebuilding the source with history
 was considered and not taken: history entries carry no row uuid, so a first row
-still queued while history was read would be drawn twice.
+still queued while history was read would be drawn twice. (The transcript replay
+that came later dedupes by uuid, but this hello still only sets the path: a
+rebuild runs only on an owed history.)
 
 After every hello the mod also sends the `ask`, `plan` and `permission` events
 of the dialogs still on screen, behind the history and ahead of anything else
@@ -153,7 +174,7 @@ arrive in order. Every event has `type` and `t` (epoch ms).
 
 | type | fields | from |
 |---|---|---|
-| `history` | `messages` (as `$.session.messages()` returns them), `running` (a main-thread turn is in flight) | answer to hello |
+| `history` | `messages` (as `$.session.messages()` returns them), `running` (a main-thread turn is in flight), `last` on the final chunk (0.4.0: the newest main-thread row covered) | answer to hello |
 | `row` | `uuid`, `door`, `origin`, `agentId?`, `message` {`type`, `name?`, `role?`, `isMeta?`, `content`} | `session.append` |
 | `result` | `toolId`, `tool`, `agentId?`, `result`, `text`, `isError?` | `tool.call` after `next` |
 | `turn_start` | `turnId`, `agentId?`, `text?` | `turn.start` |
@@ -251,7 +272,8 @@ version 1 rules above and are upgraded only by a restart.
   `ack`, `summary` and `command_failed`, since the history, the open dialogs and
   the level restore the rest. Before this, the backlog replayed after the
   history and the Text view showed the conversation's tail twice.
-- History carries no stop reason and no turn edges, so session-events closes a
+- When the log is rebuilt from the mod's history (the fallback above), that
+  history carries no stop reason and no turn edges, so session-events closes a
   turn where Claude replied without a tool call and the next message is a
   prompt or a harness notice (2026-10-05). Before this, a rebuilt session ran
   every turn up to the next prompt together, and the Text view folded a turn's

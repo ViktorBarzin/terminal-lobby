@@ -461,10 +461,12 @@ func TestOneListOfDialogsForTheCardTheRoutesAndTheOption(t *testing.T) {
 }
 
 // Q-F3: the hello names the model, so a source built after a restart shows it
-// before anyone switches model.
+// before anyone switches model. It goes in once the history has: the log
+// stays empty until the rebuild (TestHistoryRebuild).
 func TestTheHellosModelReachesAFreshSource(t *testing.T) {
 	rg, _ := newTestRegistry(t, "wizard/demo")
 	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Model: "claude-opus-5-5"})
+	rg.mods.conn("wizard", "demo").apply([]sessionio.ModEvent{idleHistory()})
 	fs, _ := rg.source("wizard", "demo")
 	var model string
 	for _, e := range fs.Replay(0) {

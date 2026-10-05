@@ -144,7 +144,7 @@ export interface EventSourceLike {
 export interface SseClientOptions {
   session: string;
   /** builds the stream URL, carrying the resume cursor (see lib/config). */
-  url: (session: string, lastEventId: number) => string;
+  url: (session: string, lastEventId: number, epoch?: string) => string;
   onEvent: (e: Event) => void;
   /**
    * One frame of the opening backfill — history, newest first.
@@ -363,7 +363,7 @@ export class SseClient {
     if (this.stopped || this.source) return;
     this.setStatus(this.attempt === 0 ? "connecting" : "reconnecting");
     const create = this.o.createSource ?? this.defaultCreate.bind(this);
-    const es = create(this.o.url(this.o.session, this.lastEventId));
+    const es = create(this.o.url(this.o.session, this.lastEventId, this.epoch));
     this.source = es;
     // A source that never opens is as stale as one that stopped delivering, so
     // the liveness clock starts at creation, not at onopen.
@@ -511,7 +511,7 @@ export class SseClient {
    * and gets the same endless retry ladder.
    */
   private async classifyFailure(): Promise<void> {
-    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId));
+    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId, this.epoch));
     // close() or an instantRetry may have overtaken the probe.
     if (this.stopped || this.source) return;
     if (status === NO_STREAM_STATUS) this.enterNoTranscript();
@@ -557,7 +557,7 @@ export class SseClient {
 
   private async reprobe(): Promise<void> {
     if (this.stopped || this.source) return;
-    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId));
+    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId, this.epoch));
     if (this.stopped || this.source) return;
     if (status === NO_STREAM_STATUS) this.enterNoTranscript();
     else this.connect(); // registered (or unknown) → back to the normal path

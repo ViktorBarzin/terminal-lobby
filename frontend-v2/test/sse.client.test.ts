@@ -455,7 +455,9 @@ describe("SseClient resync", () => {
     h.sources[0]!.onerror?.(null);
     await flush();
     h.timers[0]!.fn();
-    expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=5000&rev=1");
+    // It names the log its ids belong to, so a server that is not that log
+    // sends the ready frame without first replaying a gap it would discard.
+    expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=5000&epoch=aaaa&rev=1");
 
     // A different transcript answers: same session name, a log of its own.
     h.sources[1]!.emit("ready", ready({ head: 3, epoch: "bbbb" }));

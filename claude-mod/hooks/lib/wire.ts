@@ -12,7 +12,7 @@ import type {
 // run an old copy (fixed by restarting them). .claude-plugin/plugin.json says
 // the same; test/version.test.ts keeps them equal and asks for a bump when
 // hooks/ changed.
-export const MOD_VERSION = '0.3.0';
+export const MOD_VERSION = '0.4.0';
 
 export type AgentStatus = 'pending' | 'running' | 'waiting' | 'idle' | 'completed' | 'failed' | 'killed';
 
@@ -63,7 +63,9 @@ export type TurnEndEvent = {
 export type PromptEvent = { type: 'prompt'; t: number; text: string; origin: unknown };
 export type ModelEvent = { type: 'model'; t: number; model: string; effort?: string };
 export type AgentsEvent = { type: 'agents'; t: number; agents: ModAgent[] };
-export type HistoryEvent = { type: 'history'; t: number; messages: unknown[]; running: boolean; more?: true };
+// `last` (final chunk only) is the uuid of the newest main-thread row the
+// history covers: session-events replays the transcript up to it (0.4.0).
+export type HistoryEvent = { type: 'history'; t: number; messages: unknown[]; running: boolean; more?: true; last?: string };
 export type AskEvent = TerminalLobbyAsk;
 export type PlanEvent = TerminalLobbyPlan;
 export type PermissionEvent = TerminalLobbyPermission;

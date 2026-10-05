@@ -1,6 +1,6 @@
 {
   "name": "terminal-lobby",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": { "name": "Viktor Barzin" },
   "description": "Reports this Claude session to terminal-lobby's session-events and lets the lobby send prompts, answer questions and approve plans and permissions.",
   "types": "./hooks/state.d.ts"

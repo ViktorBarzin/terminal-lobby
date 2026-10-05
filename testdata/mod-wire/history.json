@@ -13,5 +13,6 @@
     {"role": "user", "text": "", "toolResults": [{"tool_use_id": "toolu_01"}]}
   ],
   "running": true,
-  "more": true
+  "more": true,
+  "last": "u-last"
 }

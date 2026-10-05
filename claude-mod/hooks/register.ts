@@ -38,6 +38,10 @@ const LEVEL_STATE = { plugin: 'terminal-lobby', key: 'level' } as const;
 // session.start, and what must survive it is in `level`, saved to $.state.
 let link: Link | null = null;
 let lastModel = '';
+// The newest main-thread row stored in this conversation, named on the final
+// history chunk. Empty after a reload or a /clear until the next row, which
+// leaves the server on the plain history.
+let lastMainUuid = '';
 let tmuxSession = '';
 // The conversation a /clear or a resume just ended: no hello may name it.
 let endedSid = '';
@@ -233,7 +237,12 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
     },
     // The `history` event's fields: what the session holds, and whether a
     // main-thread turn is running (the server closes the last turn when not).
-    history: async () => ({ messages: await $.session.messages(), running: level.mainTurn !== null }),
+    // `last` is read straight after the messages, so it names a row they hold
+    // or one stored a moment later, which the transcript replay covers too.
+    history: async () => {
+      const messages = await $.session.messages();
+      return { messages, running: level.mainTurn !== null, ...(lastMainUuid ? { last: lastMainUuid } : {}) };
+    },
     open: () => level.dialogs(),
     level: () => levelEvent($),
     onCommand: (c) => { if (commandDeps) void runCommand(commandDeps, c as Command); },
@@ -272,6 +281,7 @@ export const register: Register = (on) => {
         summary.reset();
         planFeedback.clear();
         lastModel = '';
+        lastMainUuid = '';
       },
       rehello: (sid) => {
         endedSid = sid;
@@ -295,7 +305,9 @@ export const register: Register = (on) => {
       try {
         const t = now();
         level.rowSeen(e.agentId, r.message.content, t);
-        send(shapeRow(e, r, t));
+        const row = shapeRow(e, r, t);
+        if (row.agentId === undefined) lastMainUuid = row.uuid;
+        send(row);
       } catch { /* never block a row */ }
       // The first stored row is what creates the transcript: say hello again
       // so session-events can stamp it while this first turn still runs.

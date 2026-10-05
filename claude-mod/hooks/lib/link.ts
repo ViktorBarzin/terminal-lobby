@@ -20,8 +20,10 @@ export type LinkDeps = {
   trusted?: () => Promise<boolean>;
   // The hello body; the link adds how many events its queue has dropped.
   hello: () => Promise<Omit<HelloBody, 'dropped'>>;
-  // The `history` event's fields: `messages`, and `running` (a main-thread turn in flight).
-  history: () => Promise<{ messages: unknown; running: boolean }>;
+  // The `history` event's fields: `messages`, `running` (a main-thread turn in
+  // flight), and `last`, the uuid of the newest main-thread row stored when
+  // the messages were read, which the server replays the transcript up to.
+  history: () => Promise<{ messages: unknown; running: boolean; last?: string }>;
   // The dialogs still on screen. Each went out once, when it opened; a
   // server that restarted since has forgotten it, so every hello sends them
   // again, behind the history.
@@ -174,7 +176,7 @@ export class Link {
     if (covered) {
       try {
         const h = await this.#deps.history();
-        resent.push(...historyEvents(this.#deps.now(), h.messages, h.running));
+        resent.push(...historyEvents(this.#deps.now(), h.messages, h.running, h.last));
       } catch {
         // The server asks for a history only in a hello's reply, so a read
         // that failed is a failed hello: say it again later, queue untouched.

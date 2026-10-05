@@ -95,7 +95,7 @@ function trimHistoryMessage(m: unknown): unknown {
 // order, trimmed, split into chunks under HISTORY_CHUNK_CHARS. Every chunk but
 // the last carries `more: true`, and only the last says whether a main-thread
 // turn is running, which is what lets the server close the last turn.
-export function historyEvents(t: number, messages: unknown, running: boolean): HistoryEvent[] {
+export function historyEvents(t: number, messages: unknown, running: boolean, last?: string): HistoryEvent[] {
   const list = Array.isArray(messages) ? messages.map(trimHistoryMessage) : [];
   const chunks: unknown[][] = [];
   let cur: unknown[] = [];
@@ -114,7 +114,7 @@ export function historyEvents(t: number, messages: unknown, running: boolean): H
   return chunks.map((c, i) =>
     i < chunks.length - 1
       ? { type: 'history', t, messages: c, running, more: true }
-      : { type: 'history', t, messages: c, running });
+      : { type: 'history', t, messages: c, running, ...(last ? { last } : {}) });
 }
 
 type AppendIn = { door: string; origin: unknown; uuid: string; agentId?: string };

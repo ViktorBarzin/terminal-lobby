@@ -135,6 +135,9 @@ type ModEvent struct {
 	Notice *ModNote `json:"notice,omitempty"`
 	// More is set on every chunk of a long history but the last (ADR-0036).
 	More bool `json:"more,omitempty"`
+	// Last, on a history's final chunk (mod 0.4.0), is the uuid of the newest
+	// main-thread row the history covers: the transcript is replayed up to it.
+	Last string `json:"last,omitempty"`
 
 	// ack, command_failed
 	ID    string `json:"id,omitempty"`
