@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { SessionView } from "../src/components/SessionView";
+import { setTextSize } from "../src/mobile/textzoom";
 
 /** The lazily-imported CodeMirror host, faked so a draft edit is drivable. */
 let cmChange: ((text: string) => void) | null = null;
@@ -527,6 +528,37 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     expect(container.querySelector('[aria-label="Paste from clipboard"]')).toBeNull();
     expect(container.querySelector('[aria-label="Smaller terminal font"]')).toBeNull();
     localStorage.removeItem("tl:viewmode:v1:qa-tools-text");
+  });
+
+  it("sizes the TEXT view's type from the bar, leaving the terminal's font alone", () => {
+    // The desktop has no pinch, so the text view needs buttons of its own.
+    // They step the device-local size the pinch sets, not the roamed terminal
+    // font, which belongs to a view that is not on screen.
+    setTextSize(15);
+    const roamed: number[] = [];
+    const prefs = {
+      prefs: () => ({ fontSize: 15 }),
+      setFontSize: (n: number) => roamed.push(n),
+    } as unknown as Parameters<typeof SessionView>[0]["prefs"];
+    const { container } = render(() => <SessionView session="qa-tools-size" prefs={prefs} />);
+    expect(mode(container)).toBe("text");
+    const scale = () =>
+      container
+        .querySelector<HTMLElement>(".tl-textview")
+        ?.style.getPropertyValue("--tl-text-scale");
+    const click = (label: string) => {
+      const b = container.querySelector(`.tl-session-bar [aria-label="${label}"]`);
+      expect(b, label).toBeTruthy();
+      fireEvent.click(b!);
+    };
+
+    click("Larger text");
+    click("Larger text");
+    expect(Number(scale())).toBeCloseTo(17 / 15);
+    click("Smaller text");
+    expect(Number(scale())).toBeCloseTo(16 / 15);
+    expect(roamed).toEqual([]);
+    setTextSize(15);
   });
 
   it("steps the roamed font size, clamped at the ends", () => {

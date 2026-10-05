@@ -83,7 +83,7 @@ import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
 import { isCoarsePointer } from "../mobile/pointer";
 import { trustDialogUp } from "../lib/first-prompt";
-import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
+import { installTextZoom, scaleFor, setTextSize, textSize } from "../mobile/textzoom";
 import { lsGet, lsSet } from "../lib/storage";
 import { track } from "../telemetry/track";
 import { Composer, type ComposerSinks } from "./Composer";
@@ -1152,7 +1152,6 @@ export const TextView: Component<{
     onCleanup(() => ro.disconnect());
   };
 
-  const [textSize, setTextSize] = createSignal(loadTextSize());
   const [sizing, setSizing] = createSignal<number | null>(null);
   let viewEl: HTMLDivElement | undefined;
   onMount(() => {
@@ -1160,10 +1159,7 @@ export const TextView: Component<{
       // Whichever timeline is showing: the session's, or the drill-in's.
       surface: () => viewEl?.querySelector<HTMLElement>(".tl-timeline:not(.tl-hidden)") ?? null,
       get: textSize,
-      set: (n) => {
-        setTextSize(n);
-        saveTextSize(n);
-      },
+      set: setTextSize,
       onReadout: setSizing,
     });
     onCleanup(stop);
