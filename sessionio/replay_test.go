@@ -65,7 +65,6 @@ func prompts(evs []Event) []string {
 	return out
 }
 
-
 // The mod's history starts at the last /compact and holds the newest 4096
 // entries. Measured 2026-10-05: a session with three compactions showed 9 of
 // its 19 prompts after a restart, led by the compaction summary drawn as a

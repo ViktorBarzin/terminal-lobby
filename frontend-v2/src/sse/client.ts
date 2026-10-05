@@ -511,7 +511,9 @@ export class SseClient {
    * and gets the same endless retry ladder.
    */
   private async classifyFailure(): Promise<void> {
-    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId, this.epoch));
+    const status = await this.o.probeStatus(
+      this.o.url(this.o.session, this.lastEventId, this.epoch),
+    );
     // close() or an instantRetry may have overtaken the probe.
     if (this.stopped || this.source) return;
     if (status === NO_STREAM_STATUS) this.enterNoTranscript();
@@ -557,7 +559,9 @@ export class SseClient {
 
   private async reprobe(): Promise<void> {
     if (this.stopped || this.source) return;
-    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId, this.epoch));
+    const status = await this.o.probeStatus(
+      this.o.url(this.o.session, this.lastEventId, this.epoch),
+    );
     if (this.stopped || this.source) return;
     if (status === NO_STREAM_STATUS) this.enterNoTranscript();
     else this.connect(); // registered (or unknown) → back to the normal path
