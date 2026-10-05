@@ -712,7 +712,7 @@ export const NewSessionComposer: Component<{
                   class="tl-composer-input tl-new-name"
                   rows={1}
                   placeholder="Name this shell…"
-                  aria-label="Name for the new session"
+                  aria-label="Name for the shell"
                   maxlength={MAX_TITLE_RUNES}
                   enterkeyhint="go"
                   value={name()}
@@ -750,9 +750,14 @@ export const NewSessionComposer: Component<{
             onSend={submit}
             onAttach={holdFiles}
             pendingAttachments
-            label="Prompt for a new session"
+            // No sign-in words in what a field is called. "Prompt for a new
+            // session" and "Enter to start the session" made iOS treat this box
+            // as a login field: a Passwords key where the word suggestions go,
+            // and autocorrect off (2026-10-05). The open session's box is the
+            // same field with different words, and never had it.
+            label="First message to Claude"
             placeholder={placeholder()}
-            hint="Enter to start the session · Shift+Enter for a newline"
+            hint="Enter to send · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}
             commands={commands()}
             commandsOk={commandsOk()}
