@@ -450,6 +450,7 @@ export const Composer: Component<{
         onEmptyDigit={onEmptyDigit}
         register={props.register}
         fold
+        resizable
         danger={danger()}
         tools={tools()}
         canStop={turnRunning() && !props.inertReason}

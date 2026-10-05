@@ -1,6 +1,7 @@
 /**
  * The T3 pass's reading column: the three derived colours, the system font
- * and the 760px column the conversation and the composer share.
+ * and the column the conversation and the composer share (760px unless
+ * someone drags it, test/column.resize.test.tsx).
  *
  * docs/plans/2026-09-27-text-view-t3-pass.md, prototype
  * pages/wizard/composer/6-t3.html (`.col` and `.dock-in`). The prototype
@@ -229,18 +230,18 @@ describe("the prose", () => {
   });
 });
 
-describe("one 760px column", () => {
-  it("caps the timeline's rows at 760px, centred", () => {
-    expect(decl(appCss, ".tl-row", "max-width")).toBe("760px");
+describe("one column, 760px unless resized", () => {
+  it("caps the timeline's rows at the column, centred", () => {
+    expect(decl(appCss, ".tl-row", "max-width")).toBe("var(--tl-col-w, 760px)");
     expect(decl(appCss, ".tl-row", "margin")).toBe("0 auto");
   });
 
-  it("caps what the dock holds at the same 760px, centred", () => {
+  it("caps what the dock holds at the same column, centred", () => {
     for (const box of [".tl-pillwrap", ".tl-permpanel"]) {
-      expect(decl(appCss, box, "max-width"), box).toBe("760px");
+      expect(decl(appCss, box, "max-width"), box).toBe("var(--tl-col-w, 760px)");
       expect(decl(appCss, box, "margin"), box).toMatch(/^0 auto/);
     }
-    expect(decl(appCss, ".tl-qcard", "max-width")).toBe("760px");
+    expect(decl(appCss, ".tl-qcard", "max-width")).toBe("var(--tl-col-w, 760px)");
   });
 
   it("leaves no 860px column behind", () => {

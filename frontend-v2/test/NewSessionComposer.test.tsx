@@ -230,9 +230,8 @@ const aFile = (name: string, type = "image/png"): File =>
   new File([new Uint8Array([1, 2, 3])], name, { type });
 
 const field = (c: HTMLElement) =>
-  c.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt for a new session"]');
-const nameBox = (c: HTMLElement) =>
-  c.querySelector<HTMLTextAreaElement>('[aria-label="Name for the new session"]');
+  c.querySelector<HTMLTextAreaElement>("textarea.tl-composer-input:not(.tl-new-name)");
+const nameBox = (c: HTMLElement) => c.querySelector<HTMLTextAreaElement>("textarea.tl-new-name");
 /**
  * The control each choice opens from. The project and the command sit in the
  * strip under the box; the model and the effort share the model button in the
@@ -885,6 +884,37 @@ describe("<NewSessionComposer> — the command it runs", () => {
     await m.store.refresh();
     choose(m.container, "Command for new session", "codex");
     expect(m.prefs.prefs().session.newCommand).toBe("codex");
+    m.store.dispose();
+  });
+});
+
+// iOS read the prompt box as a login field: the bar over the keyboard showed
+// a key and "Passwords" in place of word suggestions, and autocorrect stayed
+// off, in Safari and the home-screen app alike (Viktor, 2026-10-05). The open
+// session's box is the same PromptField with the same attributes and was fine;
+// what differed was the words. "Prompt for a new session" and "Enter to start
+// the session" are sign-in vocabulary (`sessions/new` is the login page of
+// half the web), and the box has no other text for a heuristic to read.
+const SIGN_IN_WORDS =
+  /\b(new|start(ing)?|open)\s+(the\s+|a\s+)?session\b|\blog\s*-?in\b|\bsign\s*-?in\b/i;
+const wordsOf = (el: HTMLElement): string[] =>
+  ["aria-label", "title", "placeholder"].map((a) => el.getAttribute(a) ?? "");
+
+describe("<NewSessionComposer> — the box does not read as a sign-in form", () => {
+  it("names the prompt box without sign-in words", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(field(m.container)).not.toBeNull());
+    for (const words of wordsOf(field(m.container)!)) expect(words).not.toMatch(SIGN_IN_WORDS);
+    m.store.dispose();
+  });
+
+  it("names the shell's name box without sign-in words", async () => {
+    const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
+    await m.store.refresh();
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    for (const words of wordsOf(nameBox(m.container)!)) expect(words).not.toMatch(SIGN_IN_WORDS);
     m.store.dispose();
   });
 });

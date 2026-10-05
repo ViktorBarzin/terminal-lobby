@@ -1393,7 +1393,7 @@ label.tl-set-row-label {
 .tl-textview[data-rail] > .tl-qcard,
 .tl-textview[data-rail] > .tl-trust-band {
   width: calc(100% - var(--tl-rail-w) - 2 * var(--tl-gutter));
-  margin-left: max(var(--tl-gutter), calc((100% - var(--tl-rail-w) - 760px) / 2));
+  margin-left: max(var(--tl-gutter), calc((100% - var(--tl-rail-w) - var(--tl-col-w, 760px)) / 2));
   margin-right: auto;
 }
 /* Claude Code names a colour per agent; these are the fixed mapping, the
@@ -1903,7 +1903,7 @@ label.tl-set-row-label {
 }
 /* The reading column's own width, as the timeline's rows have it. */
 .tl-drill-inner {
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin: 0 auto;
 }
 /* The same button again at the top of the agent rail (AgentPanel.tsx), next
@@ -1983,7 +1983,7 @@ label.tl-set-row-label {
 /* Content-box, so the line starts where the header's column does. */
 .tl-drill-missing {
   box-sizing: content-box;
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin: 0 auto;
   padding: 24px var(--tl-gutter);
   color: var(--text-muted);
@@ -2033,12 +2033,12 @@ label.tl-set-row-label {
 }
 /* In the conversation's column, where the first reply will land. */
 .tl-empty-state {
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   width: 100%;
   margin: 0 auto;
 }
 .tl-row {
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   width: 100%;
   margin: 0 auto;
 }
@@ -3044,7 +3044,7 @@ label.tl-set-row-label {
 .tl-new-composer > .tl-pillwrap,
 .tl-new-composer > .tl-new-hint {
   width: 100%;
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin-left: auto;
   margin-right: auto;
 }
@@ -3203,8 +3203,69 @@ label.tl-set-row-label {
    the positioned box the + menu and the completion menu float above. */
 .tl-pillwrap {
   position: relative;
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin: 0 auto;
+}
+/* The column's width, dragged from either edge of the box (ColumnGrip).
+   `--tl-col-w` is published by App.tsx from store/text-column.ts, and every
+   rule that draws the column reads it, so the transcript, the box and the
+   docked cards move together. The hit area sits in the composer's gutter,
+   which is at least 12px; the handle drawn inside it is a short bar, shown
+   faintly while the pointer is over the composer so the edge reads as
+   something that moves. */
+.tl-col-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 2;
+  cursor: ew-resize;
+  /* A pen or trackpad drag resizes rather than scrolling the page under it. */
+  touch-action: none;
+}
+.tl-col-grip[data-side="left"] {
+  left: -12px;
+}
+.tl-col-grip[data-side="right"] {
+  right: -12px;
+}
+.tl-col-grip::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 4px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.tl-composer:hover .tl-col-grip::after {
+  opacity: 0.35;
+}
+.tl-col-grip:hover::after,
+.tl-col-grip:focus-visible::after,
+.tl-col-resizing .tl-col-grip::after {
+  background: var(--accent);
+  opacity: 0.9;
+}
+/* The bar IS the focus ring, as the sidebar's seam has it. */
+.tl-col-grip:focus-visible {
+  outline: none;
+}
+/* The pointer keeps the resize cursor over the transcript, and a drag across
+   it selects nothing. */
+.tl-col-resizing {
+  cursor: ew-resize;
+  user-select: none;
+}
+/* A phone's column is the screen, and a 10px target is a mouse target. */
+@media (pointer: coarse) {
+  .tl-col-grip {
+    display: none;
+  }
 }
 .tl-pill {
   position: relative;
@@ -4185,7 +4246,7 @@ label.tl-set-row-label {
 
 /* ---- the permission panel, docked above the composer ------------------ */
 .tl-permpanel {
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin: 0 auto 8px;
   border: 1px solid var(--state-awaiting);
   border-radius: var(--radius);
@@ -6235,7 +6296,7 @@ body.tl-kb-up {
   gap: 4px 10px;
   box-sizing: border-box;
   width: calc(100% - 24px);
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin: 0 auto 6px;
   padding: 8px 14px;
   border: 1px solid color-mix(in srgb, var(--state-awaiting) 45%, var(--border));
@@ -6417,7 +6478,7 @@ body.tl-kb-up {
    While Claude waits on a question, a permission or a plan, the card takes
    the composer's place (the T3 pass, prototype `.card`): the composer is
    hidden but stays mounted (`.tl-composer[hidden]`), and the card sits where
-   the box was, in the composer's gutters and the 760px column, drawn as the
+   the box was, in the composer's gutters and the reading column, drawn as the
    same rounded surface edged in the awaiting colour. */
 .tl-composer[hidden] {
   display: none;
@@ -6441,7 +6502,7 @@ body.tl-kb-up {
   /* `.tl-composer`'s own gutters, so the card lines up with the box it
      replaces and with the conversation's column above. */
   width: calc(100% - 2 * var(--tl-gutter));
-  max-width: 760px;
+  max-width: var(--tl-col-w, 760px);
   margin: 0 auto 14px;
   padding: 12px 12px 10px;
   border: 1px solid color-mix(in srgb, var(--state-awaiting) 55%, var(--border-strong));
