@@ -39,7 +39,10 @@ const queued = (id: number, body: string): Event => ({
 });
 const WITH_GHOSTS: Event[] = [...RUNNING_TURN, queued(3, "first"), queued(4, "second\nline two")];
 
-type StopFn = (restoreQueue?: readonly string[], returnPrompt?: string) => Promise<StopResult> | void;
+type StopFn = (
+  restoreQueue?: readonly string[],
+  returnPrompt?: string,
+) => Promise<StopResult> | void;
 
 function mount(opts: {
   events?: Event[];
@@ -96,7 +99,9 @@ describe("<TextView>: ↑ edits the queued messages", () => {
   });
 
   it("puts in what the server held, which can be more than this view showed", async () => {
-    const { field } = mount({ onUnqueue: async () => ["from the phone", "first", "second\nline two"] });
+    const { field } = mount({
+      onUnqueue: async () => ["from the phone", "first", "second\nline two"],
+    });
     fireEvent.keyDown(field(), { key: "ArrowUp" });
     await waitFor(() => expect(field().value).toBe("from the phone\n\nfirst\n\nsecond\nline two"));
   });
@@ -105,7 +110,11 @@ describe("<TextView>: ↑ edits the queued messages", () => {
   // quick Enter send the field as it reads (unlike a Stop's hand-back).
   it("sends the edited draft whole, however quickly Enter follows", async () => {
     const onSend = vi.fn(async (_t: string) => true);
-    const { field } = mount({ onUnqueue: async () => ["first"], onSend, events: [...RUNNING_TURN, queued(3, "first")] });
+    const { field } = mount({
+      onUnqueue: async () => ["first"],
+      onSend,
+      events: [...RUNNING_TURN, queued(3, "first")],
+    });
     fireEvent.keyDown(field(), { key: "ArrowUp" });
     await waitFor(() => expect(field().value).toBe("first"));
     fireEvent.input(field(), { target: { value: "first, but better" } });
@@ -129,7 +138,10 @@ describe("<TextView>: ↑ edits the queued messages", () => {
 
   it("does nothing on a watching device", async () => {
     const onUnqueue = vi.fn(async () => ["first"]);
-    const { field } = mount({ onUnqueue, inertReason: "Watching: this device does not type into the session" });
+    const { field } = mount({
+      onUnqueue,
+      inertReason: "Watching: this device does not type into the session",
+    });
     fireEvent.keyDown(field(), { key: "ArrowUp" });
     await Promise.resolve();
     expect(onUnqueue).not.toHaveBeenCalled();

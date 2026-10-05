@@ -1279,7 +1279,10 @@ export function createSessionStore(
     try {
       const res = await fetchWithDeadline(unqueueUrl(session()), { method: "POST" });
       if (!res.ok) return [];
-      const reply = (await res.json().catch(() => null)) as { restored?: unknown; queue?: unknown } | null;
+      const reply = (await res.json().catch(() => null)) as {
+        restored?: unknown;
+        queue?: unknown;
+      } | null;
       const queue = reply?.restored === true ? textsOf(reply.queue) : undefined;
       if (!queue) return [];
       letGo(queue);

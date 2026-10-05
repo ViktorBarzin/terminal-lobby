@@ -1194,7 +1194,8 @@ export const PromptField: Component<{
    * the time a tap takes, and nothing after it.
    */
   const holdTap = (opening: boolean): void => {
-    const offField = (ev: Event): boolean => !(ev.target instanceof Node && ta?.contains(ev.target));
+    const offField = (ev: Event): boolean =>
+      !(ev.target instanceof Node && ta?.contains(ev.target));
     const onDown = (ev: Event): void => {
       if (offField(ev)) ev.preventDefault();
     };

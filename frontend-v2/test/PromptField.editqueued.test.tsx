@@ -23,7 +23,12 @@ const press = (el: HTMLTextAreaElement, key: string): boolean => fireEvent.keyDo
 
 const mount = (onEditQueued?: () => Promise<boolean>) =>
   render(() => (
-    <PromptField onSend={onSend} label="Message" history={["alpha", "beta"]} onEditQueued={onEditQueued} />
+    <PromptField
+      onSend={onSend}
+      label="Message"
+      history={["alpha", "beta"]}
+      onEditQueued={onEditQueued}
+    />
   ));
 
 describe("<PromptField> ↑ with a queue", () => {

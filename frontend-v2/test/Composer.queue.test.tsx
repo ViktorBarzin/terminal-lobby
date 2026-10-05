@@ -613,7 +613,12 @@ describe("<Composer> ↑ edits the queue", () => {
   });
 
   it("keeps a caller's own placeholder", () => {
-    const { field } = mount({ ...RUNNING, queued: 1, onEditQueued: async () => true, placeholder: "Run a command…" });
+    const { field } = mount({
+      ...RUNNING,
+      queued: 1,
+      onEditQueued: async () => true,
+      placeholder: "Run a command…",
+    });
     expect(field.placeholder).toBe("Run a command…");
   });
 });
