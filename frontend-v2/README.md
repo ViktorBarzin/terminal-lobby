@@ -597,6 +597,11 @@ src/
     sidebar-width.ts     Per-browser session-list width (tl:sidebar-w:v1), read
                          back capped to the window so a narrow one borrows the
                          width and a wide one gives it back
+    text-column.logic.ts PURE Text view column width: 760px default, the
+                         Settings presets, the 560px floor, and a drag that
+                         reaches the room's edge meaning "full"
+    text-column.ts       Per-browser Text view column width (tl:text-col-w:v1),
+                         published by App.tsx as --tl-col-w
     collapse.ts          Per-browser group-collapse (tmux-collapsed-<user>)
     visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
                          → the unseen-done predicate behind the tab-title (N✓)
@@ -1041,6 +1046,8 @@ src/
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     SidebarGrip.tsx      The seam between the list and the session, dragged with
                          a pointer or the arrow keys; double-click resets
+    ColumnGrip.tsx       Either edge of the live composer: drags the Text view's
+                         column wider or narrower; double-click resets to 760px
     BellIcon.tsx         Header notification-bell glyph (on/off)
     stream-body.ts       The context a streaming row reads its words through,
                          so a growing reply re-renders its own row and never
@@ -1137,7 +1144,9 @@ src/
                          same 7%-per-step arithmetic, in both views. It scales
                          FONT SIZES: every font-size in app.css multiplies by
                          --tl-text-scale, set on .tl-textview, so transcript,
-                         answer card and composer move together
+                         answer card and composer move together. Also holds the
+                         one device-local text size every text view reads,
+                         which the session bar's A−/A+ step on a desktop
     swipe.ts             PURE swipe classification + the session-switch gesture
   clipboard/
     paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame

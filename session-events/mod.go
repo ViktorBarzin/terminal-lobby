@@ -123,6 +123,8 @@ type modCommand struct {
 type modAck struct {
 	OK    bool
 	Error string
+	// ID is the command's id, which a later command_failed names.
+	ID string
 }
 
 // modConn is one Claude session's link to its mod.
@@ -813,6 +815,16 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 	c.releaseHeld()
 }
 
+// source is the log this connection feeds, nil before its hello built one.
+func (c *modConn) source() *sessionio.FileSource {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ls == nil {
+		return nil
+	}
+	return c.ls.fs
+}
+
 func (c *modConn) sessionName() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1122,6 +1134,7 @@ func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
 		if !ok {
 			return modAck{}, errModGone
 		}
+		a.ID = cmd.ID
 		return a, nil
 	case <-t.C:
 		c.forget(cmd.ID)

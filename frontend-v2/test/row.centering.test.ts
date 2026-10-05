@@ -1,8 +1,8 @@
 /**
  * Every timeline row sits in the SAME column.
  *
- * `.tl-row` is `max-width: 760px; width: 100%; margin: 0 auto` — the auto side
- * margins are what centre a row in a timeline wider than 760px. A row type that
+ * `.tl-row` is `max-width: var(--tl-col-w, 760px); width: 100%; margin: 0 auto` — the auto side
+ * margins are what centre a row in a timeline wider than the column. A row type that
  * wants breathing room above and below reaches for `margin: 8px 0`, which is the
  * shorthand: it resets the side margins to 0 and the row drops out of the column
  * to the timeline's left edge.
@@ -54,7 +54,7 @@ describe("timeline rows keep their column", () => {
   it("has rows centred by auto side margins", () => {
     const base = /\.tl-row\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
     expect(base).toMatch(/margin:\s*0\s+auto/);
-    expect(base).toMatch(/max-width:\s*760px/);
+    expect(base).toMatch(/max-width:\s*var\(--tl-col-w, 760px\)/);
   });
 
   it("never lets a row type cancel them with the margin shorthand", () => {

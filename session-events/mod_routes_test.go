@@ -96,6 +96,28 @@ func TestAClaudePromptGoesThroughItsMod(t *testing.T) {
 	}
 }
 
+// A prompt sent while a turn runs is on the session's queue as soon as the
+// mod takes it, so a second device opening the session sees it waiting.
+func TestAPromptSentMidTurnIsQueuedForEveryViewer(t *testing.T) {
+	f := &fakeTurns{}
+	rg, mux := modTurnMux(t, f)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	fakeMod(t, c)
+	c.apply([]sessionio.ModEvent{userRow("first")})
+
+	if rec := postTurn(t, mux, "/prompt/demo", `{"text":"second"}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
+	}
+	fs, ok := rg.source("wizard", "demo")
+	if !ok {
+		t.Fatal("no source")
+	}
+	if q := fs.State(10).Queue; len(q) != 1 || q[0] != "second" {
+		t.Fatalf("queue = %q, want [second]", q)
+	}
+}
+
 func TestAClaudePromptWithNoModIsNotReady(t *testing.T) {
 	f := &fakeTurns{}
 	_, mux := modTurnMux(t, f)

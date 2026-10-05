@@ -247,6 +247,102 @@ func TestModFeedTheTurnsOwnPromptIsNotQueued(t *testing.T) {
 	}
 }
 
+// A prompt the lobby hands the mod mid-turn waits for the session to go idle
+// before Claude reports it, so the server records it as queued itself, the
+// moment the mod takes it: every device watching sees it, not only the one
+// that sent it (measured live on Claude Code 2.1.289, 2026-10-05).
+func TestModSentPromptWhileTurnRunsIsQueuedAtOnce(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	if !fs.QueueSent("c1", "second ") {
+		t.Fatal("QueueSent = false while the turn runs")
+	}
+	fs.Feed(ModEvent{Type: ModTurnEndEvent})
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "second"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "second", Origin: json.RawMessage(`{"kind":"plugin"}`)})
+	got := fs.Replay(0)
+	if k := strings.Join(modKinds(got), ","); k != "user,meta:queued,turn_end,meta:unqueued,user" {
+		t.Fatalf("kinds = %s", k)
+	}
+	if got[1].Body != "second" {
+		t.Fatalf("queued body = %q", got[1].Body)
+	}
+}
+
+// Two sent behind one turn, each with its own row when the turn ends.
+func TestModSentPromptsLeaveTheQueueOneByOne(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	fs.QueueSent("c1", "beta")
+	fs.QueueSent("c2", "gamma")
+	fs.Feed(ModEvent{Type: ModTurnEndEvent})
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "beta"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "beta", Origin: json.RawMessage(`{"kind":"plugin"}`)})
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "gamma"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "gamma", Origin: json.RawMessage(`{"kind":"plugin"}`)})
+	want := "user,meta:queued,meta:queued,turn_end,meta:unqueued,user,meta:unqueued,user"
+	if k := strings.Join(modKinds(fs.Replay(0)), ","); k != want {
+		t.Fatalf("kinds = %s, want %s", k, want)
+	}
+}
+
+// Two queued prompts run back to back, and the mod reports the first only
+// after the second's row has opened a turn (measured live 2026-10-05: rows
+// 25 ms apart, the first's prompt event 27 ms after the second row). The
+// report is late, not a third prompt waiting; read as one it stayed on the
+// queue for good.
+func TestModLobbyPromptReportedLateIsNotQueuedAgain(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	lobby := json.RawMessage(`{"kind":"plugin","name":"terminal-lobby","asUser":true}`)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "beta"}}))
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "gamma"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "beta", Origin: lobby})
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "gamma", Origin: lobby})
+	for _, e := range fs.Replay(0) {
+		if e.Kind == KindMeta && e.Meta == MetaQueued {
+			t.Fatalf("queued %q after it ran", e.Body)
+		}
+	}
+}
+
+// Sent while idle, the prompt opens its own turn through its row.
+func TestModSentPromptWhileIdleIsNotQueued(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	if fs.QueueSent("c1", "hi") {
+		t.Fatal("QueueSent = true with no turn running")
+	}
+	if got := fs.Replay(0); len(got) != 0 {
+		t.Fatalf("idle send produced %v", modKinds(got))
+	}
+}
+
+// A slash command runs as one and leaves no prompt row to take it off the
+// queue, so it is never put on it.
+func TestModSentSlashCommandIsNotQueued(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	if fs.QueueSent("c1", "/compact") {
+		t.Fatal("a slash command was queued")
+	}
+}
+
+// A prompt a hook dropped after the ack never runs: it leaves the queue with
+// the error that says so.
+func TestModSentPromptThatFailedLeavesTheQueue(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	fs.QueueSent("c1", "second")
+	fs.QueueSent("c2", "third")
+	fs.Feed(ModEvent{Type: ModCommandFailedEvent, ID: "c1", Op: "prompt", Error: "dropped: hook"})
+	got := fs.Replay(0)
+	if k := strings.Join(modKinds(got), ","); k != "user,meta:queued,meta:queued,meta:unqueued,error" {
+		t.Fatalf("kinds = %s", k)
+	}
+	if got[3].Body != "second" {
+		t.Fatalf("unqueued %q, want second", got[3].Body)
+	}
+}
+
 func TestModFeedPromptWhileIdleIsNotQueued(t *testing.T) {
 	fs := NewModSource("s", "", nil)
 	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "hi", Origin: json.RawMessage(`{"kind":"composer"}`)})

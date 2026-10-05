@@ -330,6 +330,12 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 		http.Error(w, "the session's Claude refused the prompt: "+ack.Error, http.StatusBadGateway)
 		return
 	}
+	// Claude holds a prompt sent mid-turn until it is idle, and only then does
+	// the mod report it, so it goes on the session's queue here: every device
+	// watching sees it waiting, not only the one that sent it.
+	if fs := c.source(); fs != nil {
+		fs.QueueSent(ack.ID, p.Text)
+	}
 	events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.count": len(p.Text), "tl.client": "mod",
 	})

@@ -41,6 +41,7 @@ import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { dismissFloat, dismissOnPress } from "./overlay";
 import { PlusMenu } from "./PlusMenu";
+import { ColumnGrip } from "./ColumnGrip";
 
 /**
  * The field a prompt is written in: the pill, with `+` before it and Send
@@ -200,6 +201,9 @@ export const PromptField: Component<{
    * composer asks for it; the new-session screen is the box at full size.
    */
   fold?: boolean;
+  /** Draw a grip on each edge of the box that drags the Text view's column
+   *  wider or narrower (ColumnGrip). The live composer asks for it. */
+  resizable?: boolean;
   /** The mode lets every tool through (Bypass, No ask): the surface's border
    *  turns the danger colour, and nothing else changes. */
   danger?: boolean;
@@ -1322,6 +1326,10 @@ export const PromptField: Component<{
   return (
     <>
       <div class="tl-pillwrap">
+        <Show when={props.resizable}>
+          <ColumnGrip side="left" />
+          <ColumnGrip side="right" />
+        </Show>
         <Show when={plusOpen()}>
           <PlusMenu
             ref={(el) => (menuPlusEl = el)}

@@ -50,6 +50,7 @@ import {
 } from "./Icons";
 import { headerSubtitle } from "./header.logic";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
+import { stepTextSize } from "../mobile/textzoom";
 import { listDir as fileList } from "../lib/file-api";
 import { uploadAttachments } from "../clipboard/attach-files";
 import type { ComposerSinks } from "./Composer";
@@ -1699,6 +1700,30 @@ export const SessionView: Component<{
                 >
                   <ClipboardIcon />
                   <span class="tl-btn-label">Paste</span>
+                </button>
+              </span>
+            </Show>
+            {/* The Text view's own A−/A+, in the same place. They step the
+              device-local text size a pinch sets (mobile/textzoom.ts), which is
+              the only way to size the transcript on a desktop. Hidden on a
+              coarse pointer for the same reason as the terminal's: the pinch. */}
+            <Show when={!coarse() && mode() === "text"}>
+              <span class="tl-term-tools">
+                <button
+                  class="tl-icon-btn tl-font-btn"
+                  aria-label="Smaller text"
+                  title="Smaller text"
+                  onClick={() => stepTextSize(-1)}
+                >
+                  A&#8722;
+                </button>
+                <button
+                  class="tl-icon-btn tl-font-btn"
+                  aria-label="Larger text"
+                  title="Larger text"
+                  onClick={() => stepTextSize(1)}
+                >
+                  A+
                 </button>
               </span>
             </Show>

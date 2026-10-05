@@ -292,14 +292,20 @@ version 1 rules above and are upgraded only by a restart.
   end instead of being folded into it. No mod API takes a prompt off Claude's
   queue, and Up in the pane does not pop one the mod submitted (measured on
   2.1.289, 2026-10-05).
+- `$.prompt.submit` resolves only once the prompt runs, so the mod reports a
+  web prompt after it has opened its own turn. session-events therefore puts a
+  prompt sent mid-turn on the session's queue when the mod acks it, and every
+  device watching the session sees it waiting (2026-10-05). Before that, only
+  the device that sent it showed it.
 - Amended 2026-10-05: so that Stop and the Text view's Up can hand queued
   prompts back, session-events holds a prompt sent while a main turn runs and
   sends it through the mod when the turn ends (`session-events/held.go`). The
   stream shows it queued meanwhile. `POST /prompt/<session>/unqueue` hands every
-  held prompt back, and a Stop that names a queue takes them first. Held
-  prompts are written to a file per conversation under `-held-dir` so a restart
-  keeps them, since tmux refuses a command over about 16 KB. Sent at a turn's
-  end together, they reach Claude in one poll.
+  held prompt back, and a Stop that names a queue takes them first. A slash
+  command is not held: it leaves no row to take it off the queue. Held prompts
+  are written to a file per conversation under `-held-dir` so a restart keeps
+  them, since tmux refuses a command over about 16 KB. Sent at a turn's end
+  together, they reach Claude in one poll.
 - If session-events is down, the mod keeps retrying hello with backoff and
   Claude itself is unaffected; what happened meanwhile is delivered in order
   once it is back.
