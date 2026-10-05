@@ -1,6 +1,12 @@
 import { For, createSignal, onCleanup, onMount, type Component } from "solid-js";
 import { THEMES, THEME_LABELS, setTheme, theme } from "../../../theme/theme";
-import { Group, Row } from "../controls";
+import { Group, Row, Segmented } from "../controls";
+import { setTextColumn, textColumn } from "../../../store/text-column";
+import {
+  matchingPreset,
+  TEXT_COL_PRESETS,
+  type TextColumn,
+} from "../../../store/text-column.logic";
 
 /**
  * Which theme's colours a swatch should paint.
@@ -23,9 +29,7 @@ const resolvePreview = (name: string, prefersDark: boolean): string =>
  */
 export const AppearancePage: Component = () => {
   const [prefersDark, setPrefersDark] = createSignal(
-    typeof matchMedia === "function"
-      ? matchMedia("(prefers-color-scheme: dark)").matches
-      : true,
+    typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)").matches : true,
   );
 
   // Only the "System" swatch depends on this, but it depends on it while the
@@ -47,8 +51,8 @@ export const AppearancePage: Component = () => {
         stacked
         hint={
           <>
-            Stored in this browser under <code>tmux-theme</code>. A change
-            applies to the attached terminal straight away, without a reload.
+            Stored in this browser under <code>tmux-theme</code>. A change applies to the attached
+            terminal straight away, without a reload.
           </>
         }
       >
@@ -78,6 +82,28 @@ export const AppearancePage: Component = () => {
             )}
           </For>
         </div>
+      </Row>
+      {/* The same width the composer's edges drag (ColumnGrip), so a drag
+          that lands between presets lights none of them and says so. */}
+      <Row
+        label="Text view width"
+        deviceOnly
+        stacked
+        note={matchingPreset(textColumn()) ? undefined : `Now ${textColumn()}px, set by dragging.`}
+        hint={
+          <>
+            How wide the conversation and the composer are in a Text view. You can also drag either
+            edge of the composer; double-click an edge to go back to Normal. Stored in this browser.
+          </>
+        }
+      >
+        <Segmented<TextColumn>
+          label="Text view width"
+          options={TEXT_COL_PRESETS.map((p) => p.value)}
+          value={textColumn()}
+          onChange={setTextColumn}
+          format={(v) => matchingPreset(v)?.label ?? String(v)}
+        />
       </Row>
     </Group>
   );
