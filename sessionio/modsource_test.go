@@ -3,6 +3,7 @@ package sessionio
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -380,6 +381,72 @@ func TestModFeedHistoryRebuildsTheConversation(t *testing.T) {
 	}
 	if string(got[2].Result) != `{"stdout":"a b","stderr":""}` || got[2].Body != "a b" {
 		t.Errorf("tool_result = %+v", got[2])
+	}
+}
+
+// History carries no stop_reason and no turn_end, so the turns have to be read
+// off its shape: Claude's turn is over when it answers without calling a tool
+// and the next thing in the conversation is not more of Claude. Measured on a
+// live session, 2026-10-05: session-events restarted after a 42-minute turn
+// that ended in a report, then a background task's notification and a one-line
+// reply. The rebuild filed all of it under one turn, and the Text view folded
+// the report into the turn's work as an interim note, so it showed the prompt,
+// one "Ran 115 commands" row and the one-line reply.
+func TestModFeedHistoryEndsATurnWhereClaudeStoppedAnswering(t *testing.T) {
+	notice := "<task-notification>\n<summary>Agent \"notes\" finished</summary>\n</task-notification>"
+	tool := func(id string) []ModHistoryMessage {
+		return []ModHistoryMessage{
+			{Role: "assistant", ToolUses: []ModToolUse{{ToolUseID: id, Tool: "Bash", Text: "ok"}}},
+			{Role: "user", ToolResults: json.RawMessage(`[{"tool_use_id":"` + id + `"}]`)},
+		}
+	}
+	cat := func(parts ...[]ModHistoryMessage) []ModHistoryMessage { return slices.Concat(parts...) }
+	for _, tc := range []struct {
+		name   string
+		chunks [][]ModHistoryMessage
+		want   string
+	}{{
+		name: "a notification after the reply",
+		chunks: [][]ModHistoryMessage{cat(
+			[]ModHistoryMessage{{Role: "user", Text: "fix it"}}, tool("toolu_1"),
+			[]ModHistoryMessage{{Role: "assistant", Text: "fixed"}, {Role: "user", Text: notice}, {Role: "assistant", Text: "noted"}},
+		)},
+		want: "user/t1 tool_use/t1 tool_result/t1 text/t1 turn_end/t1 state/t1 text/t2 turn_end/t2",
+	}, {
+		name: "a second prompt",
+		chunks: [][]ModHistoryMessage{{
+			{Role: "user", Text: "one"}, {Role: "assistant", Text: "a"},
+			{Role: "user", Text: "two"}, {Role: "assistant", Text: "b"},
+		}},
+		want: "user/t1 text/t1 turn_end/t1 user/t2 text/t2 turn_end/t2",
+	}, {
+		name: "text that leads into a tool call",
+		chunks: [][]ModHistoryMessage{cat(
+			[]ModHistoryMessage{{Role: "user", Text: "go"}, {Role: "assistant", Text: "looking"}}, tool("toolu_2"),
+			[]ModHistoryMessage{{Role: "assistant", Text: "done"}},
+		)},
+		want: "user/t1 text/t1 tool_use/t1 tool_result/t1 text/t1 turn_end/t1",
+	}, {
+		name: "a reply and the next prompt in different chunks",
+		chunks: [][]ModHistoryMessage{
+			{{Role: "user", Text: "one"}, {Role: "assistant", Text: "a"}},
+			{{Role: "user", Text: "two"}, {Role: "assistant", Text: "b"}},
+		},
+		want: "user/t1 text/t1 turn_end/t1 user/t2 text/t2 turn_end/t2",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := NewModSource("s", "", nil)
+			for i, c := range tc.chunks {
+				fs.FeedHistory(c, i < len(tc.chunks)-1)
+			}
+			var got []string
+			for _, e := range fs.Replay(0) {
+				got = append(got, string(e.Kind)+"/"+e.TurnID)
+			}
+			if g := strings.Join(got, " "); g != tc.want {
+				t.Fatalf("got  %s\nwant %s", g, tc.want)
+			}
+		})
 	}
 }
 

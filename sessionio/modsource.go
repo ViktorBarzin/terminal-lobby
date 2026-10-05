@@ -257,6 +257,11 @@ type modState struct {
 	// prompt the mod submitted itself is reported when its turn starts, after
 	// its row, and must not then read as one waiting behind that same turn.
 	opened string
+	// answered says the last history message was Claude replying without a
+	// tool call, so the next person-or-harness message ends that turn (see
+	// FeedHistory). Held across chunks; a live row clears it. Guarded by
+	// normMu.
+	answered bool
 }
 
 // NewModSource builds a source fed by the mod. transcript is the file Claude
@@ -417,6 +422,7 @@ func (f *FileSource) feedRow(ev ModEvent) {
 		f.mu.Unlock()
 	}
 	f.normMu.Lock()
+	f.mod.answered = false
 	for i := range lead {
 		lead[i].TurnID = f.norm.turnID
 	}
@@ -603,6 +609,13 @@ func (f *FileSource) feedModel(ev ModEvent) {
 // FeedHistory rebuilds the conversation from $.session.messages(), for a
 // session this process has no log for. running says the main thread is mid-turn,
 // which leaves the last turn open; otherwise it is closed.
+//
+// History carries no stop_reason and no turn_end, so a turn is closed where
+// Claude replied without calling a tool and the next message is a person's
+// prompt or the harness's own notice. Without that, every turn up to the next
+// prompt ran together: a background task's notification and Claude's reply to
+// it joined the turn before, whose final answer the Text view then folded into
+// its work as an interim note.
 func (f *FileSource) FeedHistory(msgs []ModHistoryMessage, running bool) {
 	if f.mod == nil {
 		return
@@ -623,6 +636,12 @@ func (f *FileSource) FeedHistory(msgs []ModHistoryMessage, running bool) {
 			Message: Message{Role: "user", Content: block}}
 	}
 	var recs []Record
+	// endsBefore[i]: the turn ends ahead of recs[i]. answered is read and
+	// written under normMu, which also orders history chunks.
+	endsBefore := map[int]bool{}
+	f.normMu.Lock()
+	answered := f.mod.answered
+	f.normMu.Unlock()
 	for _, m := range msgs {
 		switch m.Role {
 		case "user":
@@ -635,10 +654,15 @@ func (f *FileSource) FeedHistory(msgs []ModHistoryMessage, running bool) {
 						recs = append(recs, result(u))
 					}
 				}
+				answered = false
 				continue
 			}
 			if strings.TrimSpace(m.Text) == "" {
 				continue
+			}
+			if answered {
+				endsBefore[len(recs)] = true
+				answered = false
 			}
 			block, _ := json.Marshal([]map[string]any{{"type": "text", "text": m.Text}})
 			recs = append(recs, Record{Type: RecordUser, Message: Message{Role: "user", Content: block}})
@@ -657,6 +681,7 @@ func (f *FileSource) FeedHistory(msgs []ModHistoryMessage, running bool) {
 			if len(blocks) == 0 {
 				continue
 			}
+			answered = len(m.ToolUses) == 0
 			content, _ := json.Marshal(blocks)
 			recs = append(recs, Record{Type: RecordAssistant, Message: Message{Role: "assistant", Content: content}})
 			// A result the user message does not carry still belongs right
@@ -669,8 +694,14 @@ func (f *FileSource) FeedHistory(msgs []ModHistoryMessage, running bool) {
 		}
 	}
 	f.normMu.Lock()
+	f.mod.answered = answered
 	var out []Event
-	for _, rec := range recs {
+	for i, rec := range recs {
+		if endsBefore[i] {
+			if e, ok := f.norm.EndTurn(0, nil); ok {
+				out = append(out, e)
+			}
+		}
 		out = append(out, f.norm.Record(rec)...)
 	}
 	if !running {

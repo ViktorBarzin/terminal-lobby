@@ -251,6 +251,11 @@ version 1 rules above and are upgraded only by a restart.
   `ack`, `summary` and `command_failed`, since the history, the open dialogs and
   the level restore the rest. Before this, the backlog replayed after the
   history and the Text view showed the conversation's tail twice.
+- History carries no stop reason and no turn edges, so session-events closes a
+  turn where Claude replied without a tool call and the next message is a
+  prompt or a harness notice (2026-10-05). Before this, a rebuilt session ran
+  every turn up to the next prompt together, and the Text view folded a turn's
+  final answer into its work when a background task's notice followed it.
 - **bye** carries `sid`; a bye for another conversation is ignored, which
   covers `/clear` while the old id is still answered for about 500 ms.
   `/clear` and `/resume` both keep the link and say hello again.
