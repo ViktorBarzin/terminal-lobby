@@ -61,7 +61,7 @@ func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Durat
 		got := f.norm.Record(rec)
 		for _, e := range got {
 			if e.Kind == KindUser {
-				opened = strings.TrimSpace(rec.Text())
+				opened = Unmark(strings.TrimSpace(rec.Text()))
 			}
 		}
 		evs = append(evs, got...)

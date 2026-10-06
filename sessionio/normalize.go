@@ -450,6 +450,9 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 				if steer, ok := steerText(body); ok && n.agent {
 					body, steered = steer, true
 				}
+				// A path-first prompt the lobby marked so Claude would take it
+				// (prose.go).
+				body = Unmark(body)
 			}
 			e := n.emit(k, at)
 			e.Body = plainText(body)

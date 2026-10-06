@@ -411,7 +411,7 @@ func (f *FileSource) feedRow(ev ModEvent) {
 	// A prompt that waited behind a turn arrives as a prompt row: it leaves the
 	// queue as it opens its own turn.
 	if ev.Door == "prompt" && rec.Role() == "user" && ev.AgentID == "" {
-		text := strings.TrimSpace(rec.Text())
+		text := Unmark(strings.TrimSpace(rec.Text()))
 		f.mu.Lock()
 		f.mod.opened = text
 		for i, q := range f.mod.queued {

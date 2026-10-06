@@ -1170,8 +1170,18 @@ func (h *modHub) handlePoll() http.HandlerFunc {
 
 var errModGone = errors.New("the session's mod is not connected")
 
+// marked is the command as the mod gets it: a prompt that starts with a path
+// carries the mark Claude Code needs to take it (sessionio/prose.go).
+func marked(cmd modCommand) modCommand {
+	if cmd.Op == "prompt" {
+		cmd.Text = sessionio.MarkProse(cmd.Text)
+	}
+	return cmd
+}
+
 // send queues a command and waits for its ack.
 func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
+	cmd = marked(cmd)
 	c.mu.Lock()
 	c.nextID++
 	cmd.ID = "c" + strconv.Itoa(c.nextID) + "." + bootID
@@ -1213,6 +1223,7 @@ func (c *modConn) sendAll(ctx context.Context, cmds []modCommand) []sendResult {
 	chans := make([]chan modAck, len(cmds))
 	c.mu.Lock()
 	for i := range cmds {
+		cmds[i] = marked(cmds[i])
 		c.nextID++
 		cmds[i].ID = "c" + strconv.Itoa(c.nextID) + "." + bootID
 		chans[i] = make(chan modAck, 1)
