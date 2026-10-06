@@ -54,7 +54,12 @@ const Transcript: Component<{ link: string; onGone: () => void }> = (props) => {
           </p>
         }
       >
-        {(d) => <MessagesTimeline events={d().events} onLoadFull={loadFull} me="" />}
+        {(d) => (
+          // `session` is the link id: the timeline draws a picture only when it
+          // has a session to name, and on this page every picture URL comes
+          // from the link's routes (useLinkTranscriptRoutes), which ignore it.
+          <MessagesTimeline events={d().events} onLoadFull={loadFull} session={props.link} me="" />
+        )}
       </Show>
     </div>
   );
