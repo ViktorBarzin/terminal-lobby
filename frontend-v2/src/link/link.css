@@ -61,6 +61,9 @@ body {
 .tl-link-term {
   flex: 1;
   min-height: 0;
+  /* A watcher is drawn at the session's window size, which can be taller
+     than the screen; it scrolls rather than being cut off. */
+  overflow: auto;
   padding: 4px 0 0 4px;
   padding-bottom: env(safe-area-inset-bottom);
 }

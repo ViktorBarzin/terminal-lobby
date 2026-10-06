@@ -263,9 +263,16 @@ type liveSession struct {
 	Created int64
 	Name    string
 	Title   string
+	// Cols and Rows are the session's window: what a read-only visitor's
+	// terminal is drawn at, since a watcher never sizes the window itself.
+	Cols int
+	Rows int
 }
 
-const liveSessionFmt = "#{session_id}\t#{session_created}\t#{session_name}\t#{" + sessionTitleOption + "}"
+// The title goes last: it is free text and the only field that could hold a
+// tab, so SplitN keeps it whole.
+const liveSessionFmt = "#{session_id}\t#{session_created}\t#{session_name}\t" +
+	"#{window_width}\t#{window_height}\t#{" + sessionTitleOption + "}"
 
 // listLiveSessions reads one owner's sessions. A server that is not running
 // has no sessions, which is an answer (every link on it has ended); any other
@@ -285,7 +292,7 @@ var listLiveSessions = func(owner string) ([]liveSession, error) {
 func parseLiveSessions(out []byte) []liveSession {
 	ss := []liveSession{}
 	for _, line := range strings.Split(string(out), "\n") {
-		col := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 4)
+		col := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 6)
 		if len(col) < 3 || !sessionIDRe.MatchString(col[0]) {
 			continue
 		}
@@ -294,8 +301,12 @@ func parseLiveSessions(out []byte) []liveSession {
 			continue
 		}
 		s := liveSession{ID: col[0], Created: created, Name: col[2]}
-		if len(col) == 4 {
-			s.Title = col[3]
+		if len(col) >= 5 {
+			s.Cols, _ = strconv.Atoi(col[3])
+			s.Rows, _ = strconv.Atoi(col[4])
+		}
+		if len(col) == 6 {
+			s.Title = col[5]
 		}
 		ss = append(ss, s)
 	}
@@ -546,7 +557,7 @@ func (b *visitorBook) reconcile(owner string, clients []client, now time.Time) m
 		out = append(out, v)
 		vc := counts[v.SessionID]
 		vc.Total++
-		if !strings.Contains(c.Flags, "readonly") {
+		if !isReadOnly(c.Flags) {
 			vc.Driving++
 		}
 		counts[v.SessionID] = vc
@@ -994,6 +1005,10 @@ func handleLinkRedeem(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
 		Token string `json:"token"`
+		// Peek asks about the link without minting a ticket: the visitor page
+		// polls it for the window size, which moves when the owner resizes,
+		// and to notice the link ending while its socket is still open.
+		Peek bool `json:"peek"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || !linkTokenRe.MatchString(body.Token) {
 		http.Error(w, "link not found", http.StatusNotFound)
@@ -1004,18 +1019,23 @@ func handleLinkRedeem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "link not found", http.StatusNotFound)
 		return
 	}
-	t, err := tickets.mint(l.ID, linkNow())
-	if err != nil {
-		http.Error(w, "busy", http.StatusServiceUnavailable)
-		return
+	t := ""
+	if !body.Peek {
+		var err error
+		if t, err = tickets.mint(l.ID, linkNow()); err != nil {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
-		Ticket    string `json:"ticket"`
+		Ticket    string `json:"ticket,omitempty"`
 		Mode      string `json:"mode"`
 		Title     string `json:"title"`
 		ExpiresAt int64  `json:"expiresAt"`
-	}{t, l.Mode, titleOrName(s), l.ExpiresAt})
+		Cols      int    `json:"cols"`
+		Rows      int    `json:"rows"`
+	}{t, l.Mode, titleOrName(s), l.ExpiresAt, s.Cols, s.Rows})
 }
 
 func titleOrName(s liveSession) string {

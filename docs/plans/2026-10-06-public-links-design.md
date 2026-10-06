@@ -50,32 +50,22 @@ identity headers blanked, and visitor records kept on disk.
 ## How a visit works
 
 ```mermaid
-sequenceDiagram
-  participant V as Visitor browser
-  participant T as Traefik (no forward-auth on /s/)
-  participant L as ttyd-link-ro :7692 or -rw :7693
-  participant S as tmux-link-attach.sh (tl-link)
-  participant A as tmux-api :7684
-  participant J as tmux-link-join (owner)
-  participant X as owner's tmux
-
-  V->>T: GET /s/  (token stays in #fragment)
-  T->>L: GET /s/
-  L-->>V: link.html (chunks from /s/assets/)
-  Note over V: token moved to sessionStorage, address bar cleaned
-  V->>T: POST /s/api/link/redeem {token}
-  T->>A: POST /link/redeem (identity blanked, proxy secret stamped)
-  A-->>V: {ticket, mode, title}
-  V->>T: WS /s/ws?arg=<ticket>  (or /s/rw/ws for a read-write link)
-  T->>L: upgrade
-  L->>S: spawn: <mode> <ticket>
-  S->>A: POST /internal/link-attach {ticket, tty, mode}
-  A-->>S: {owner, grant}
-  S->>J: sudo -u owner tmux-link-join <grant>
-  J->>A: POST /internal/link-join {grant, user, tty}
-  A-->>J: {target: "$12", mode}
-  J->>X: tmux attach-session [-r] -t '$12'
+flowchart TD
+  open["1 Visitor opens /s/ + token in the fragment"] --> page["2 ttyd-link serves link.html;<br/>token moves to sessionStorage"]
+  page --> redeem["3 POST /s/api/link/redeem {token}<br/>Traefik: identity blanked, secret stamped"]
+  redeem --> ticket["4 tmux-api: single-use ticket, 30 s"]
+  ticket --> ws["5 WS /s/ws or /s/rw/ws ?arg=ticket"]
+  ws --> attach["6 tmux-link-attach.sh as tl-link<br/>spends ticket at /internal/link-attach"]
+  attach --> grant["7 tmux-api: owner + single-use grant, 15 s"]
+  grant --> join["8 sudo -u owner tmux-link-join<br/>spends grant at /internal/link-join"]
+  join --> tmux["9 tmux attach-session [-r] -t $12"]
 ```
+
+`attach` is `devvm/tmux-link-attach.sh`, running as `tl-link` under
+`ttyd-link-ro` (:7692) or `ttyd-link-rw` (:7693). `join` is
+`devvm/tmux-link-join`, running as the session's owner. Traefik blanks the
+identity headers on every `/s/` route and stamps the proxy secret on redeem
+only. The token never leaves the browser except in the redeem POST body.
 
 Each reconnect redeems the token again, so a ticket is never reused. Revoking a
 link, or reaching its expiry, deletes the row, drops any outstanding tickets and

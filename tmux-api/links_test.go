@@ -414,7 +414,7 @@ func TestGuestsAreNumberedFromOne(t *testing.T) {
 		t.Fatalf("visitors: %+v", got)
 	}
 	// Guest 1 leaves; the next visitor takes number 1 again.
-	visitors.reconcile(w.me, []client{{Session: "deploy", Flags: "attached,readonly", Name: "/dev/pts/2"}}, w.now.Add(time.Minute))
+	visitors.reconcile(w.me, []client{{Session: "deploy", Flags: "attached,focused,ignore-size,read-only,UTF-8", Name: "/dev/pts/2"}}, w.now.Add(time.Minute))
 	w.now = w.now.Add(time.Minute)
 	w.visit(token, "/dev/pts/3", "ro")
 	vs := visitors.forLink(got[0].ID)
@@ -432,7 +432,7 @@ func TestVisitorCountsComeFromTheClientList(t *testing.T) {
 	w.visit(ro, "/dev/pts/3", "ro") // recorded, but tmux never listed it
 
 	clients := []client{
-		{Session: "deploy", Flags: "attached,readonly", Name: "/dev/pts/1"},
+		{Session: "deploy", Flags: "attached,focused,ignore-size,read-only,UTF-8", Name: "/dev/pts/1"},
 		{Session: "deploy", Flags: "attached", Name: "/dev/pts/2"},
 		{Session: "deploy", Flags: "attached", Name: "/dev/pts/5"}, // the owner
 	}
@@ -490,9 +490,10 @@ func TestSameClient(t *testing.T) {
 }
 
 func TestParseLiveSessions(t *testing.T) {
-	out := "$1\t1000\tdeploy\tDeploy the thing\n$2\t1001\tbare\t\ngarbage\n$x\t1\tbad\t\n"
+	out := "$1\t1000\tdeploy\t120\t32\tDeploy\tthe thing\n$2\t1001\tbare\t80\t24\t\ngarbage\n$x\t1\tbad\t1\t1\t\n"
 	got := parseLiveSessions([]byte(out))
-	if len(got) != 2 || got[0] != (liveSession{"$1", 1000, "deploy", "Deploy the thing"}) || got[1].Name != "bare" {
+	want := liveSession{ID: "$1", Created: 1000, Name: "deploy", Title: "Deploy\tthe thing", Cols: 120, Rows: 32}
+	if len(got) != 2 || got[0] != want || got[1].Name != "bare" || got[1].Cols != 80 {
 		t.Fatalf("parsed %+v", got)
 	}
 }
@@ -546,5 +547,24 @@ func TestPruneAndStampShares(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "kept:$1,legacy:$4,other-owner:$7" {
 		t.Fatalf("after stamp+prune: %v", names)
+	}
+}
+
+// The visitor page polls with peek for the window size; a peek must never
+// mint a ticket, or polling would be a way to fill the ticket book.
+func TestAPeekReportsTheWindowAndMintsNoTicket(t *testing.T) {
+	w := newLinkWorld(t)
+	w.live[w.me][0].Cols, w.live[w.me][0].Rows = 120, 32
+	_, token, _ := w.create(`{"name":"deploy","mode":"ro","ttl":"1h"}`)
+	rec := httptest.NewRecorder()
+	handleLinkRedeem(rec, httptest.NewRequest(http.MethodPost, "/link/redeem",
+		strings.NewReader(`{"token":"`+token+`","peek":true}`)))
+	var got map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if rec.Code != http.StatusOK || got["cols"] != float64(120) || got["rows"] != float64(32) {
+		t.Fatalf("peek: %d %v", rec.Code, got)
+	}
+	if _, has := got["ticket"]; has || len(tickets.m) != 0 {
+		t.Fatalf("a peek minted a ticket: %v, book %d", got, len(tickets.m))
 	}
 }

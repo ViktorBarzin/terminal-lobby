@@ -18,6 +18,7 @@ import {
   argsFor,
   badgeFor,
   baseFor,
+  fontToFit,
   pickToken,
   readRedeem,
   REDEEM_URL,
@@ -85,6 +86,19 @@ const LinkPage: Component = () => {
     let ticket = "";
     let attachment: Attachment | null = null;
     let base = "/s";
+    // The session's window, for a watcher. 0 until the first answer.
+    let grid = { cols: 0, rows: 0 };
+    const watching = (): boolean => mode() !== "rw";
+
+    const end = (): void => {
+      setPhase("ended");
+      try {
+        sessionStorage.removeItem(TOKEN_KEY);
+      } catch {
+        /* nothing stored */
+      }
+      queueMicrotask(() => attachment?.dispose());
+    };
 
     // One redeem per connect attempt: a ticket is spent by the attach it rides
     // on, so a reconnect needs a new one. A 404 means the link has ended for
@@ -99,17 +113,12 @@ const LinkPage: Component = () => {
       const body = await res.json().catch(() => null);
       const out = readRedeem(res.status, body);
       if (out.kind === "ended") {
-        setPhase("ended");
-        try {
-          sessionStorage.removeItem(TOKEN_KEY);
-        } catch {
-          /* nothing stored */
-        }
-        queueMicrotask(() => attachment?.dispose());
+        end();
         throw new Error("link ended");
       }
       if (out.kind === "retry") throw new Error("redeem failed");
       ticket = out.value.ticket;
+      grid = { cols: out.value.cols, rows: out.value.rows };
       setTitle(out.value.title);
       setMode(out.value.mode);
       document.title = out.value.title ? `${out.value.title} · shared terminal` : "Shared terminal";
@@ -118,6 +127,7 @@ const LinkPage: Component = () => {
         base = baseFor(out.value.mode);
         deps.base = base;
       }
+      refit();
     };
 
     const deps = {
@@ -137,24 +147,66 @@ const LinkPage: Component = () => {
       // A watcher's keystrokes go nowhere (ttyd-link-ro takes no input), so
       // the attachment drops them here too rather than holding them for a
       // replay that cannot happen.
-      watch: () => mode() !== "rw",
+      watch: watching,
     };
     attachment = attach(deps);
     term.onData((d) => attachment?.send(d));
     term.onBinary((d) => attachment?.sendBinary(d));
 
-    const refit = () => {
+    // One cell's width over the font size, from the real face, so the fit is
+    // right for whatever monospace actually loaded.
+    const cellRatio = (): number => {
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (!ctx) return 0.6;
+      ctx.font = `100px ${term.options.fontFamily ?? "monospace"}`;
+      return ctx.measureText("M").width / 100 || 0.6;
+    };
+
+    // A driver sizes the window to its screen, like any read-write client. A
+    // watcher is drawn at the window's size with the font scaled to fit, so a
+    // phone sees the whole window rather than its left edge.
+    function refit(): void {
+      if (watching() && grid.cols > 0 && grid.rows > 0) {
+        const size = fontToFit(host.clientWidth - 8, grid.cols, cellRatio());
+        if (term.options.fontSize !== size) term.options.fontSize = size;
+        if (term.cols !== grid.cols || term.rows !== grid.rows) term.resize(grid.cols, grid.rows);
+        return;
+      }
       try {
         fit.fit();
       } catch {
         return;
       }
       attachment?.resize();
-    };
+    }
     refit();
-    const ro = new ResizeObserver(refit);
+    const ro = new ResizeObserver(() => refit());
     ro.observe(host);
+
+    // A watcher's window moves when the owner resizes, and nothing on the
+    // socket says so. A peek mints no ticket, so polling costs one small
+    // request; it also notices a link that ended while its socket stayed up.
+    const poll = window.setInterval(async () => {
+      if (phase() === "ended" || !watching()) return;
+      try {
+        const res = await fetch(REDEEM_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, peek: true }),
+          credentials: "omit",
+        });
+        const out = readRedeem(res.status, await res.json().catch(() => null), true);
+        if (out.kind === "ended") return end();
+        if (out.kind !== "ok") return;
+        grid = { cols: out.value.cols, rows: out.value.rows };
+        refit();
+      } catch {
+        /* the next tick asks again */
+      }
+    }, 5000);
+
     onCleanup(() => {
+      window.clearInterval(poll);
       ro.disconnect();
       attachment?.dispose();
       term.dispose();
@@ -178,13 +230,20 @@ const LinkPage: Component = () => {
       </header>
       <Show when={phase() === "ended" || phase() === "nolink"}>
         <div class="tl-link-ended" role="status">
-          <Show when={phase() === "ended"} fallback={<p>This page needs the full link you were sent.</p>}>
+          <Show
+            when={phase() === "ended"}
+            fallback={<p>This page needs the full link you were sent.</p>}
+          >
             <p>This link has ended. It expired, was revoked, or its session finished.</p>
           </Show>
           <p class="tl-link-hint">Ask whoever shared it for a new one.</p>
         </div>
       </Show>
-      <div class="tl-link-term" ref={host} classList={{ "tl-link-term-gone": phase() === "ended" }} />
+      <div
+        class="tl-link-term"
+        ref={host}
+        classList={{ "tl-link-term-gone": phase() === "ended" }}
+      />
     </div>
   );
 };

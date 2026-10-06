@@ -52,6 +52,9 @@ export interface Redeemed {
   mode: LinkMode;
   title: string;
   expiresAt: number;
+  /** The session's window, which a watcher is drawn at. 0 when unknown. */
+  cols: number;
+  rows: number;
 }
 
 /**
@@ -61,28 +64,47 @@ export interface Redeemed {
  * `retry` is everything else that is not a ticket, which the reconnect ladder
  * should keep trying.
  */
-export type RedeemOutcome =
-  | { kind: "ok"; value: Redeemed }
-  | { kind: "ended" }
-  | { kind: "retry" };
+export type RedeemOutcome = { kind: "ok"; value: Redeemed } | { kind: "ended" } | { kind: "retry" };
 
-export function readRedeem(status: number, body: unknown): RedeemOutcome {
+export function readRedeem(status: number, body: unknown, peek = false): RedeemOutcome {
   if (status === 404) return { kind: "ended" };
   if (status !== 200 || typeof body !== "object" || body === null) return { kind: "retry" };
   const b = body as Record<string, unknown>;
   const mode = b.mode === "rw" ? "rw" : b.mode === "ro" ? "ro" : null;
-  if (typeof b.ticket !== "string" || !TICKET_RE.test(b.ticket) || mode === null) {
-    return { kind: "retry" };
-  }
+  const ticket = typeof b.ticket === "string" ? b.ticket : "";
+  // A peek carries no ticket by design; a redeem without a well-formed one is
+  // not an answer worth acting on.
+  if (mode === null || (!peek && !TICKET_RE.test(ticket))) return { kind: "retry" };
+  const dim = (v: unknown): number =>
+    typeof v === "number" && Number.isInteger(v) && v > 0 && v < 2000 ? v : 0;
   return {
     kind: "ok",
     value: {
-      ticket: b.ticket,
+      ticket,
       mode,
       title: typeof b.title === "string" ? b.title : "",
       expiresAt: typeof b.expiresAt === "number" ? b.expiresAt : 0,
+      cols: dim(b.cols),
+      rows: dim(b.rows),
     },
   };
+}
+
+/**
+ * The font size that fits a watcher's whole window across the screen.
+ *
+ * A read-only visitor never sizes the session's window (tmux ignores a
+ * read-only client's size), so the page draws at the window's own size, the
+ * way the lobby draws a watching view, and scales the font instead: on a
+ * phone that means a small font rather than a window cut off at the right
+ * edge. `cellRatio` is one cell's width over the font size, measured from the
+ * real face. Clamped to 6..14px: below 6 nothing is legible, and above 14 the
+ * page would only be bigger than the lobby's own default.
+ */
+export function fontToFit(width: number, cols: number, cellRatio: number): number {
+  if (cols <= 0 || width <= 0 || cellRatio <= 0) return 14;
+  const px = Math.floor((width / cols / cellRatio) * 10) / 10;
+  return Math.max(6, Math.min(14, px));
 }
 
 /** The badge: what this visitor can do. */
