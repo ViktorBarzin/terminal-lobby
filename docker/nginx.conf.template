@@ -113,6 +113,36 @@ server {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_pass http://tmux_api/link/redeem;
   }
+  # An ended link's conversation and its pictures (ADR-0040): the same
+  # exact-match rule as redeem, authorized by the view cookie redeem sets.
+  location = /s/api/link/transcript {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_pass http://tmux_api/link/transcript;
+  }
+  location = /s/api/link/result {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_pass http://tmux_api/link/result;
+  }
+  location = /s/api/link/image {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_pass http://tmux_api/link/image;
+  }
+  location = /s/api/link/picture {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_pass http://tmux_api/link/picture;
+  }
   location /s/assets/ {
     auth_basic off;
     proxy_set_header __AUTH_HEADER__ "";

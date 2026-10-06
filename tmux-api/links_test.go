@@ -490,9 +490,11 @@ func TestSameClient(t *testing.T) {
 }
 
 func TestParseLiveSessions(t *testing.T) {
-	out := "$1\t1000\tdeploy\t120\t32\tDeploy\tthe thing\n$2\t1001\tbare\t80\t24\t\ngarbage\n$x\t1\tbad\t1\t1\t\n"
+	out := "$1\t1000\tdeploy\t120\t32\t/home/w/.claude/projects/p/u.jsonl\tDeploy\tthe thing\n" +
+		"$2\t1001\tbare\t80\t24\t\t\ngarbage\n$x\t1\tbad\t1\t1\t\t\n"
 	got := parseLiveSessions([]byte(out))
-	want := liveSession{ID: "$1", Created: 1000, Name: "deploy", Title: "Deploy\tthe thing", Cols: 120, Rows: 32}
+	want := liveSession{ID: "$1", Created: 1000, Name: "deploy", Title: "Deploy\tthe thing", Cols: 120, Rows: 32,
+		Transcript: "/home/w/.claude/projects/p/u.jsonl"}
 	if len(got) != 2 || got[0] != want || got[1].Name != "bare" || got[1].Cols != 80 {
 		t.Fatalf("parsed %+v", got)
 	}

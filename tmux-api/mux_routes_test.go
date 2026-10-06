@@ -289,6 +289,7 @@ func TestEveryHandlerFuncHasARoute(t *testing.T) {
 		"resolveRealOSUser": "identity helper; the same, ignoring ?as=",
 		"setNetworkHeader":  "stamps a header on a response another handler is already writing",
 		"linkCaller":        "identity helper for /links; refuses a lens tab",
+		"viewedLink":        "view-cookie helper for the /link/ transcript routes",
 	}
 
 	fset := token.NewFileSet()

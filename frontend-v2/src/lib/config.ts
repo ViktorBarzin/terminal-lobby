@@ -206,11 +206,36 @@ export function resultUrl(session: string, toolId: string): string {
   );
 }
 
+/**
+ * Where a transcript's pictures are read from on the public-link page
+ * (docs/plans/2026-10-06-public-links-design.md, ADR-0040). The lobby's routes
+ * need sign-in and name a session; an ended link's transcript is read through
+ * the link's own routes instead, which the link page installs here once. Null
+ * everywhere else, so the lobby is unaffected.
+ */
+export interface LinkTranscriptRoutes {
+  toolImage(toolId: string, n: number): string;
+  promptImage(record: string, n: number): string;
+  picture(path: string): string;
+}
+
+let linkRoutes: LinkTranscriptRoutes | null = null;
+
+export function useLinkTranscriptRoutes(routes: LinkTranscriptRoutes): void {
+  linkRoutes = routes;
+}
+
+/** The link page's picture URL for `path`, or null outside the link page. */
+export function linkPictureUrl(path: string): string | null {
+  return linkRoutes ? linkRoutes.picture(path) : null;
+}
+
 /** GET target for one image block of a tool result, read back from the
  *  transcript (session-events). `n` counts the result's image blocks from 0.
  *  The route ends in the index, never in an extension: frontend/diag.js files
  *  any path ending in .png under "app", and these bytes are pictures. */
 export function toolImageUrl(session: string, toolId: string, n: number): string {
+  if (linkRoutes) return linkRoutes.toolImage(toolId, n);
   return withActAs(
     `${API_BASE}/result/${encodeURIComponent(session)}/${encodeURIComponent(toolId)}/image/${n}`,
   );
@@ -220,6 +245,7 @@ export function toolImageUrl(session: string, toolId: string, n: number): string
  *  transcript (session-events): a picture pasted into the terminal, which
  *  exists nowhere but in the transcript. `record` is the user record's uuid. */
 export function promptImageUrl(session: string, record: string, n: number): string {
+  if (linkRoutes) return linkRoutes.promptImage(record, n);
   return withActAs(
     `${API_BASE}/result/${encodeURIComponent(session)}/user/${encodeURIComponent(record)}/image/${n}`,
   );

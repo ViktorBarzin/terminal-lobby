@@ -44,6 +44,7 @@ import (
 	"unicode"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
@@ -62,6 +63,15 @@ type Link struct {
 	CreatedAt      int64  `json:"createdAt"`
 	// ExpiresAt is a unix second; 0 means until revoked (read-only links only).
 	ExpiresAt int64 `json:"expiresAt"`
+	// Transcripts are the Claude transcripts the session wrote while this link
+	// existed, oldest first, recorded by the sweep (links_transcript.go). What
+	// an ended link shows.
+	Transcripts []string `json:"transcripts,omitempty"`
+	// Title is the session's title as last seen, kept for after it ends.
+	Title string `json:"title,omitempty"`
+	// EndedAt is when the session ended, 0 while it runs. An ended link stays
+	// until it expires or is revoked, and shows its transcripts read-only.
+	EndedAt int64 `json:"endedAt,omitempty"`
 }
 
 // LinkSet is the whole link document.
@@ -243,6 +253,11 @@ func validateLinkSet(ls LinkSet) error {
 		if l.Mode != shareModeRO && l.Mode != shareModeRW {
 			return fmt.Errorf("invalid link mode %q", l.Mode)
 		}
+		for _, p := range l.Transcripts {
+			if !filepath.IsAbs(p) || filepath.Ext(p) != ".jsonl" {
+				return fmt.Errorf("invalid transcript path on link %s", l.ID)
+			}
+		}
 		if l.Mode == shareModeRW && l.ExpiresAt == 0 {
 			return fmt.Errorf("read-write link %s has no expiry", l.ID)
 		}
@@ -267,12 +282,15 @@ type liveSession struct {
 	// terminal is drawn at, since a watcher never sizes the window itself.
 	Cols int
 	Rows int
+	// Transcript is the session's @claude_transcript stamp: the transcript its
+	// Claude is writing now, "" for a plain shell.
+	Transcript string
 }
 
 // The title goes last: it is free text and the only field that could hold a
 // tab, so SplitN keeps it whole.
 const liveSessionFmt = "#{session_id}\t#{session_created}\t#{session_name}\t" +
-	"#{window_width}\t#{window_height}\t#{" + sessionTitleOption + "}"
+	"#{window_width}\t#{window_height}\t#{" + sessionio.OptionTranscript + "}\t#{" + sessionTitleOption + "}"
 
 // listLiveSessions reads one owner's sessions. A server that is not running
 // has no sessions, which is an answer (every link on it has ended); any other
@@ -292,7 +310,7 @@ var listLiveSessions = func(owner string) ([]liveSession, error) {
 func parseLiveSessions(out []byte) []liveSession {
 	ss := []liveSession{}
 	for _, line := range strings.Split(string(out), "\n") {
-		col := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 6)
+		col := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 7)
 		if len(col) < 3 || !sessionIDRe.MatchString(col[0]) {
 			continue
 		}
@@ -305,8 +323,9 @@ func parseLiveSessions(out []byte) []liveSession {
 			s.Cols, _ = strconv.Atoi(col[3])
 			s.Rows, _ = strconv.Atoi(col[4])
 		}
-		if len(col) == 6 {
-			s.Title = col[5]
+		if len(col) == 7 {
+			s.Transcript = col[5]
+			s.Title = col[6]
 		}
 		ss = append(ss, s)
 	}
@@ -663,6 +682,9 @@ type LinkView struct {
 	CreatedAt int64         `json:"createdAt"`
 	ExpiresAt int64         `json:"expiresAt"`
 	Visitors  []VisitorView `json:"visitors"`
+	// EndedAt is set once the session has ended and the link shows its
+	// transcript; the owner revokes such a link from Settings.
+	EndedAt int64 `json:"endedAt,omitempty"`
 }
 
 // VisitorView is one live visitor, as the owner sees it.
@@ -713,6 +735,7 @@ func listLinks(w http.ResponseWriter, osUser string) {
 		logAndFail(w, "link list for %s failed: %v", osUser, err)
 		return
 	}
+	noteLinkTranscripts(osUser, live)
 	pruneLinks(osUser, live)
 	ls, err := linkStoreInstance.load()
 	if err != nil {
@@ -722,6 +745,10 @@ func listLinks(w http.ResponseWriter, osUser string) {
 	out := []LinkView{}
 	for _, l := range ls.Links {
 		if l.Owner != osUser {
+			continue
+		}
+		if l.EndedAt != 0 {
+			out = append(out, viewOf(l, liveSession{Title: l.Title}))
 			continue
 		}
 		s, ok := findLiveByID(live, l.SessionID, l.SessionCreated)
@@ -740,7 +767,7 @@ func viewOf(l Link, s liveSession) LinkView {
 	v := LinkView{
 		ID: l.ID, Session: s.Name, SessionID: l.SessionID, Title: s.Title,
 		Mode: l.Mode, Note: l.Note, CreatedAt: l.CreatedAt, ExpiresAt: l.ExpiresAt,
-		Visitors: []VisitorView{},
+		Visitors: []VisitorView{}, EndedAt: l.EndedAt,
 	}
 	for _, vis := range visitors.forLink(l.ID) {
 		v.Visitors = append(v.Visitors, VisitorView{Guest: vis.Guest, Mode: vis.Mode, Since: vis.Since.Unix()})
@@ -792,8 +819,9 @@ func createLink(w http.ResponseWriter, r *http.Request, osUser string) {
 	l := Link{
 		ID: newLinkID(), TokenHash: hashToken(token), Owner: osUser,
 		SessionID: s.ID, SessionCreated: s.Created, Mode: mode,
-		Note: cleanNote(body.Note), CreatedAt: now.Unix(),
+		Note: cleanNote(body.Note), CreatedAt: now.Unix(), Title: titleOrName(s),
 	}
+	l.appendTranscript(s.Transcript)
 	if d := linkTTLs[ttl]; d > 0 {
 		l.ExpiresAt = now.Add(d).Unix()
 	}
@@ -917,6 +945,7 @@ func revokeLinks(match func(Link) bool) (int, error) {
 	for _, l := range gone {
 		tickets.dropLink(l.ID)
 		grants.dropLink(l.ID)
+		views.dropLink(l.ID)
 		if vs := visitors.removeLink(l.ID); len(vs) > 0 {
 			go detachWithRetries(vs)
 		}
@@ -929,17 +958,54 @@ func revokeLinks(match func(Link) bool) (int, error) {
 // longer running. live must be a successful reading.
 func pruneLinks(owner string, live []liveSession) {
 	now := linkNow()
+	gone := func(l Link) bool {
+		_, ok := findLiveByID(live, l.SessionID, l.SessionCreated)
+		return l.EndedAt == 0 && !ok
+	}
+	// Expired links go, and so do links whose session ended with nothing to
+	// show (a plain shell). A link whose session wrote a transcript stays,
+	// ended, and shows it read-only (ADR-0040).
 	if _, err := revokeLinks(func(l Link) bool {
 		if l.Owner != owner {
 			return false
 		}
-		if l.expired(now) {
-			return true
-		}
-		_, ok := findLiveByID(live, l.SessionID, l.SessionCreated)
-		return !ok
+		return l.expired(now) || (gone(l) && len(l.Transcripts) == 0)
 	}); err != nil {
 		log.Printf("link prune for %s failed: %v", owner, err)
+	}
+	endLinks(func(l Link) bool { return l.Owner == owner && gone(l) && len(l.Transcripts) > 0 })
+}
+
+// endLinks marks the links match selects as ended: their session is gone, so
+// visitors still attached are detached and outstanding tickets and grants
+// dropped, and from here on the link answers with its transcript.
+func endLinks(match func(Link) bool) {
+	var ended []Link
+	err := linkStoreInstance.update(func(ls *LinkSet) error {
+		for i := range ls.Links {
+			if ls.Links[i].EndedAt == 0 && match(ls.Links[i]) {
+				ls.Links[i].EndedAt = linkNow().Unix()
+				ended = append(ended, ls.Links[i])
+			}
+		}
+		if len(ended) == 0 {
+			return errNoLinkChange
+		}
+		return nil
+	})
+	if err != nil {
+		if !errors.Is(err, errNoLinkChange) {
+			log.Printf("link: ending links failed: %v", err)
+		}
+		return
+	}
+	for _, l := range ended {
+		tickets.dropLink(l.ID)
+		grants.dropLink(l.ID)
+		if vs := visitors.removeLink(l.ID); len(vs) > 0 {
+			go detachWithRetries(vs)
+		}
+		log.Printf("link: %s link %s to %s now shows its transcript", l.Owner, l.ID, l.SessionID)
 	}
 }
 
@@ -976,6 +1042,7 @@ func sweepLinksOnce() {
 		if err != nil {
 			continue // unknown is not ended: keep everything until a clean read
 		}
+		noteLinkTranscripts(owner, live)
 		pruneLinks(owner, live)
 		stampLegacySharesFor(owner, live)
 		pruneShares(owner, live)
@@ -1019,6 +1086,10 @@ func handleLinkRedeem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "link not found", http.StatusNotFound)
 		return
 	}
+	if l.EndedAt != 0 {
+		redeemEnded(w, l, body.Peek)
+		return
+	}
 	t := ""
 	if !body.Peek {
 		var err error
@@ -1036,6 +1107,29 @@ func handleLinkRedeem(w http.ResponseWriter, r *http.Request) {
 		Cols      int    `json:"cols"`
 		Rows      int    `json:"rows"`
 	}{t, l.Mode, titleOrName(s), l.ExpiresAt, s.Cols, s.Rows})
+}
+
+// redeemEnded answers for a link whose session has ended: no ticket, since
+// there is no terminal, and on a real redeem a view cookie for the transcript
+// routes. A peek says only that the link is now a transcript, which is how a
+// visitor still watching learns to switch.
+func redeemEnded(w http.ResponseWriter, l Link, peek bool) {
+	if !peek {
+		key, err := views.mint(l.ID, linkNow())
+		if err != nil {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		setViewCookie(w, l.ID, key)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Mode      string `json:"mode"`
+		Link      string `json:"link"`
+		Title     string `json:"title"`
+		ExpiresAt int64  `json:"expiresAt"`
+		EndedAt   int64  `json:"endedAt"`
+	}{"transcript", l.ID, l.Title, l.ExpiresAt, l.EndedAt})
 }
 
 func titleOrName(s liveSession) string {
@@ -1068,6 +1162,11 @@ func resolveLink(match func(Link) bool) (Link, liveSession, bool) {
 		_, _ = revokeLinks(func(c Link) bool { return c.ID == l.ID })
 		return Link{}, liveSession{}, false
 	}
+	// An ended link resolves with no live session. Callers that attach a
+	// terminal refuse it; the transcript routes need exactly this.
+	if l.EndedAt != 0 {
+		return l, liveSession{}, true
+	}
 	live, err := listLiveSessions(l.Owner)
 	if err != nil {
 		log.Printf("link %s: %v", l.ID, err)
@@ -1075,7 +1174,19 @@ func resolveLink(match func(Link) bool) (Link, liveSession, bool) {
 	}
 	s, ok := findLiveByID(live, l.SessionID, l.SessionCreated)
 	if !ok {
-		_, _ = revokeLinks(func(c Link) bool { return c.ID == l.ID })
+		// The session went between sweeps. Same rule as the sweep: a link
+		// with a transcript ends and shows it, one without goes.
+		noteLinkTranscripts(l.Owner, live)
+		pruneLinks(l.Owner, live)
+		ls, err := linkStoreInstance.load()
+		if err != nil {
+			return Link{}, liveSession{}, false
+		}
+		for _, c := range ls.Links {
+			if c.ID == l.ID && c.EndedAt != 0 {
+				return c, liveSession{}, true
+			}
+		}
 		return Link{}, liveSession{}, false
 	}
 	return l, s, true
@@ -1247,7 +1358,7 @@ func handleInternalLinkAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l, _, ok := resolveLink(func(l Link) bool { return l.ID == linkID })
-	if !ok {
+	if !ok || l.EndedAt != 0 {
 		http.Error(w, "link ended", http.StatusForbidden)
 		return
 	}
@@ -1302,7 +1413,7 @@ func handleInternalLinkJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l, s, ok := resolveLink(func(l Link) bool { return l.ID == g.linkID })
-	if !ok || l.SessionID != g.target || l.Mode != g.mode {
+	if !ok || l.EndedAt != 0 || l.SessionID != g.target || l.Mode != g.mode {
 		http.Error(w, "link ended", http.StatusForbidden)
 		return
 	}

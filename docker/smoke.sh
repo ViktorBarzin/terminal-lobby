@@ -89,6 +89,8 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{"token":"AAAAAAAAAAAA
 [[ "$code" == "404" ]] || fail "redeeming an unknown link got $code, want 404"
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/s/api/sessions")
 [[ "$code" != "200" ]] || fail "/s/api/sessions answered 200; the link carve-out reaches more of tmux-api than redeem"
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/s/api/link/transcript?l=0123456789abcdef")
+[[ "$code" == "404" ]] || fail "an ended link's transcript without its view cookie got $code, want 404"
 ok "public links: the page is served, redeem answers, nothing else of tmux-api is"
 
 # A client cannot choose who it is: nginx sets the identity header itself, so a

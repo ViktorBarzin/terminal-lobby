@@ -1,6 +1,6 @@
 # Public links: share a session with someone who is not signed in
 
-**Status:** shipped 2026-10-06 (terminal-lobby 0.109), verified live · **Scope:** `tmux-api/links.go`,
+**Status:** shipped 2026-10-06 (terminal-lobby 0.109), verified live; ended-link transcripts (ADR-0040) building · **Scope:** `tmux-api/links.go`,
 `devvm/tmux-link-attach.sh`, `devvm/tmux-link-join`, `devvm/ttyd-link-{ro,rw}.service`,
 `frontend-v2/link.html` and `src/link/`, the Share dialog and Settings,
 `docker/`, `infra/stacks/terminal/public_links.tf`, `infra/playbooks/devvm.yml` ·
@@ -25,7 +25,7 @@ design that follows from them.
 | 4 | Visitor identity | Anonymous. The lobby shows "guest 1", "guest 2". |
 | 5 | Visitor page | A bare terminal with the session title and a watching/driving badge. No sidebar, gallery, files, uploads or text view. |
 | 6 | Several links | Allowed, each revocable on its own, each with an optional private note. |
-| 7 | Session ends | The link ends with it. A rename keeps it working; a kill, crash or reboot ends it, and a restored session needs a new link. |
+| 7 | Session ends | ~~The link ends with it.~~ Amended the same day (ADR-0040): the link outlives the session and shows its conversation read-only until it expires or is revoked. A rename keeps it working; a plain shell's link still ends with its session. See "After the session ends". |
 | 8 | Where links live | `terminal.viktorbarzin.me/s/#<token>`, an unauthenticated path on the lobby's own host. |
 | 9 | Token in logs | The token travels in the URL fragment, which browsers never send. The page exchanges it for a single-use ticket that lives 30 seconds, and only the ticket appears in a request URL. |
 | 10 | Telling the owner | A live visitor count in the session bar with a one-click stop, and a push notification when a read-write visitor connects. Every visit is journalled and emitted as telemetry. |
@@ -188,6 +188,41 @@ already makes.
   when the visitor did, because ttys are reused.
 - A lens tab cannot list, create or revoke links.
 - The QA harness refuses to create or revoke links.
+
+## After the session ends
+
+Viktor, later on 2026-10-06: *"Once I kill the session, the link should still
+point to a read-only transcript of the session unless I've explicitly revoked
+the link. This would be helpful so that I can share it with others without
+having it to clutter my sessions list."* Settled in a second grilling round
+and recorded in [ADR-0040](../adr/0040-an-ended-link-shows-its-transcript.md).
+
+| # | Question | Decision |
+|---|---|---|
+| A1 | What switches it | The session ending, by kill or otherwise |
+| A2 | While the session runs | The live terminal, unchanged |
+| A3 | Lifetime after | The link's original expiry; "until revoked" until revoked |
+| A4 | Content | Everything the Text view shows, tool calls and results included |
+| A5 | Which conversations | Every one the session ran while the link existed, oldest first, a divider at each `/clear` |
+| A6 | Plain shells | The link ends with the session |
+| A7 | Pictures | Served through the link, limited to those the transcript references |
+| A8 | A restored session | Does not revive the link |
+
+```mermaid
+flowchart TD
+  live["Session running: sweep, owner list and kill path<br/>append @claude_transcript to link.transcripts"] --> gone{"Session gone?"}
+  gone -- "no transcripts (plain shell)" --> del["Link deleted, as before"]
+  gone -- "transcripts recorded" --> ended["link.endedAt set; visitors detached"]
+  ended --> redeem["Redeem answers mode transcript<br/>and sets a view cookie on /s/api/link/"]
+  redeem --> read["GET /link/transcript, /result, /image, /picture<br/>read as the owner via session-events -privop"]
+```
+
+The view key is in a cookie rather than the URL because pictures are `<img>`
+GETs and a URL is what access logs keep; it is bound to the link, lasts six
+hours, and goes when the link is revoked or expires. A visitor still watching
+when the session is killed is moved to the transcript by the page's peek,
+which already polls every five seconds. Pictures a transcript names outside the
+owner's clipboard store are not served.
 
 ## Open questions
 

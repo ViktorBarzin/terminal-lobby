@@ -1,11 +1,12 @@
 /* @refresh reload */
 // The public-link visitor page (docs/plans/2026-10-06-public-links-design.md).
 // Served at /s/ by the two link servers to people who are not signed in, so it
-// carries none of the lobby: no sidebar, no API besides redeem, no settings. A
-// session title, a badge and a terminal.
+// carries none of the lobby: no sidebar, no API besides the link's own, no
+// settings. A session title, a badge and a terminal, and once the session has
+// ended its conversation, read-only (ADR-0040).
 import "../lib/baseline-polyfills";
 import { render } from "solid-js/web";
-import { createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
+import { createSignal, lazy, onCleanup, onMount, Show, Suspense, type Component } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -56,7 +57,23 @@ function scrubAddressBar(): void {
   }
 }
 
-type Phase = "connecting" | "open" | "ended" | "nolink";
+type Phase = "connecting" | "open" | "ended" | "nolink" | "transcript";
+
+// The transcript view pulls in the markdown renderer, so it loads only when a
+// link turns out to be an ended session.
+const Transcript = lazy(() => import("./Transcript"));
+
+async function redeem(token: string, peek: boolean): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(REDEEM_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(peek ? { token, peek: true } : { token }),
+    // same-origin, not omit: for an ended link the answer sets the view
+    // cookie the transcript routes read, and an omit fetch drops Set-Cookie.
+    credentials: "same-origin",
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
 
 const LinkPage: Component = () => {
   const token = pickToken(location.hash, readStored());
@@ -66,7 +83,23 @@ const LinkPage: Component = () => {
   const [title, setTitle] = createSignal("");
   const [mode, setMode] = createSignal<LinkMode | null>(null);
   const [phase, setPhase] = createSignal<Phase>(token ? "connecting" : "nolink");
+  const [ended, setEnded] = createSignal("");
   let host!: HTMLDivElement;
+  let stopTerminal = (): void => {};
+
+  /** The session has ended: stop the terminal, make sure this browser holds
+   *  the link's view cookie, and show the conversation. */
+  const showTranscript = async (link: string, title: string): Promise<void> => {
+    if (phase() === "transcript") return;
+    stopTerminal();
+    setTitle(title);
+    document.title = title ? `${title} · shared conversation` : "Shared conversation";
+    const { status, body } = await redeem(token, false);
+    const out = readRedeem(status, body);
+    if (out.kind !== "transcript") return void setPhase("ended");
+    setEnded(link);
+    setPhase("transcript");
+  };
 
   onMount(() => {
     if (!token) return;
@@ -90,6 +123,12 @@ const LinkPage: Component = () => {
     let grid = { cols: 0, rows: 0 };
     const watching = (): boolean => mode() !== "rw";
 
+    stopTerminal = () => {
+      window.clearInterval(poll);
+      attachment?.dispose();
+      attachment = null;
+    };
+
     const end = (): void => {
       setPhase("ended");
       try {
@@ -104,14 +143,12 @@ const LinkPage: Component = () => {
     // on, so a reconnect needs a new one. A 404 means the link has ended for
     // good, and the page stops trying rather than retrying forever.
     const prepare = async (): Promise<void> => {
-      const res = await fetch(REDEEM_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-        credentials: "omit",
-      });
-      const body = await res.json().catch(() => null);
-      const out = readRedeem(res.status, body);
+      const { status, body } = await redeem(token, false);
+      const out = readRedeem(status, body);
+      if (out.kind === "transcript") {
+        queueMicrotask(() => void showTranscript(out.value.link, out.value.title));
+        throw new Error("the session has ended");
+      }
       if (out.kind === "ended") {
         end();
         throw new Error("link ended");
@@ -186,18 +223,17 @@ const LinkPage: Component = () => {
     // A watcher's window moves when the owner resizes, and nothing on the
     // socket says so. A peek mints no ticket, so polling costs one small
     // request; it also notices a link that ended while its socket stayed up.
+    //
+    // A driver polls too, for the second reason: when the session is killed
+    // the page should move to the transcript rather than sit on a dead socket.
     const poll = window.setInterval(async () => {
-      if (phase() === "ended" || !watching()) return;
+      if (phase() === "ended" || phase() === "transcript") return;
       try {
-        const res = await fetch(REDEEM_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, peek: true }),
-          credentials: "omit",
-        });
-        const out = readRedeem(res.status, await res.json().catch(() => null), true);
+        const { status, body } = await redeem(token, true);
+        const out = readRedeem(status, body, true);
         if (out.kind === "ended") return end();
-        if (out.kind !== "ok") return;
+        if (out.kind === "transcript") return void showTranscript(out.value.link, out.value.title);
+        if (out.kind !== "ok" || !watching()) return;
         grid = { cols: out.value.cols, rows: out.value.rows };
         refit();
       } catch {
@@ -206,43 +242,52 @@ const LinkPage: Component = () => {
     }, 5000);
 
     onCleanup(() => {
-      window.clearInterval(poll);
+      stopTerminal();
       ro.disconnect();
-      attachment?.dispose();
       term.dispose();
     });
   });
 
   return (
-    <div class="tl-link">
-      <header class="tl-link-bar">
-        <span class="tl-link-title">{title() || "Shared terminal"}</span>
-        <Show when={phase() !== "ended" && mode()}>
+    <div class="tl-visit">
+      <header class="tl-visit-bar">
+        <span class="tl-visit-title">{title() || "Shared terminal"}</span>
+        <Show when={phase() !== "ended" && phase() !== "transcript" && mode()}>
           {(m) => (
-            <span class="tl-link-badge" classList={{ "tl-link-badge-rw": m() === "rw" }}>
+            <span class="tl-visit-badge" classList={{ "tl-visit-badge-rw": m() === "rw" }}>
               {badgeFor(m())}
             </span>
           )}
         </Show>
+        <Show when={phase() === "transcript"}>
+          <span class="tl-visit-badge">Read-only</span>
+        </Show>
         <Show when={phase() === "connecting" && token}>
-          <span class="tl-link-status">Connecting…</span>
+          <span class="tl-visit-status">Connecting…</span>
         </Show>
       </header>
       <Show when={phase() === "ended" || phase() === "nolink"}>
-        <div class="tl-link-ended" role="status">
+        <div class="tl-visit-ended" role="status">
           <Show
             when={phase() === "ended"}
             fallback={<p>This page needs the full link you were sent.</p>}
           >
             <p>This link has ended. It expired, was revoked, or its session finished.</p>
           </Show>
-          <p class="tl-link-hint">Ask whoever shared it for a new one.</p>
+          <p class="tl-visit-hint">Ask whoever shared it for a new one.</p>
         </div>
       </Show>
+      <Show when={phase() === "transcript" && ended()}>
+        {(link) => (
+          <Suspense fallback={<p class="tl-visit-note">Loading the conversation…</p>}>
+            <Transcript link={link()} onGone={() => setPhase("ended")} />
+          </Suspense>
+        )}
+      </Show>
       <div
-        class="tl-link-term"
+        class="tl-visit-term"
         ref={host}
-        classList={{ "tl-link-term-gone": phase() === "ended" }}
+        classList={{ "tl-visit-term-gone": phase() === "ended" || phase() === "transcript" }}
       />
     </div>
   );

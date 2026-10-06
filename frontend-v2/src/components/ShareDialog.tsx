@@ -116,6 +116,9 @@ export const LinkRow: Component<{
           </Show>
           <span class="tl-link-expiry">{expiryLabel(props.link.expiresAt, props.now)}</span>
         </div>
+        <Show when={props.link.endedAt}>
+          <div class="tl-link-visitors">Session ended, shows its conversation read-only</div>
+        </Show>
         <Show when={props.link.note}>
           <div class="tl-link-note">{props.link.note}</div>
         </Show>
