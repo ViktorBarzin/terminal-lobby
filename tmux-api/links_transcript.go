@@ -355,6 +355,13 @@ func completeLines(blob []byte) []string {
 // conversation through its own normalizer, a divider between conversations,
 // and ids renumbered so two conversations never share one. A file that cannot
 // be read is skipped with a row saying so rather than failing the page.
+//
+// Turn ids are renumbered too. Every normalizer counts turns from t1, and the
+// timeline groups a turn's events by its id, so two conversations' first turns
+// drew as one: measured live on 2026-10-06, the second conversation's prompt
+// replaced the first's, picture and all. And a conversation that stopped
+// mid-turn (the session was killed while Claude worked) is closed here, or the
+// timeline would show it working forever.
 func linkEvents(r transcriptReader, l Link) []sessionio.Event {
 	var out []sessionio.Event
 	var seq int64
@@ -374,10 +381,19 @@ func linkEvents(r transcriptReader, l Link) []sessionio.Event {
 			continue
 		}
 		n := sessionio.NewNormalizer(l.ID)
+		prefix := "c" + strconv.Itoa(i+1) + "-"
+		var last sessionio.Event
 		for _, line := range lines {
 			for _, e := range n.Line([]byte(line)) {
+				if e.TurnID != "" {
+					e.TurnID = prefix + e.TurnID
+				}
 				push(e)
+				last = e
 			}
+		}
+		if last.TurnID != "" && last.Kind != sessionio.KindTurnEnd {
+			push(sessionio.Event{Kind: sessionio.KindTurnEnd, TurnID: last.TurnID, At: last.At})
 		}
 	}
 	if len(out) > maxTranscriptEvents {

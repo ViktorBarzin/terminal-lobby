@@ -206,6 +206,21 @@ func TestTheTranscriptIsEveryConversationInOrder(t *testing.T) {
 		}
 		ids[e.ID] = true
 	}
+	// Each conversation's turns are its own, and each is closed.
+	turns := map[string]bool{}
+	var lastKind sessionio.Kind
+	for _, e := range got.Events {
+		if e.TurnID != "" {
+			turns[e.TurnID] = true
+		}
+		lastKind = e.Kind
+	}
+	if !turns["c1-t1"] || !turns["c2-t1"] {
+		t.Fatalf("turn ids not kept apart per conversation: %v", turns)
+	}
+	if lastKind != sessionio.KindTurnEnd {
+		t.Fatalf("the last conversation was left open: ends on %q", lastKind)
+	}
 	joined := strings.Join(bodies, " | ")
 	a, div, b := strings.Index(joined, "first question"), strings.Index(joined, "(/clear)"), strings.Index(joined, "after clear")
 	if got.Title != "Deploy the thing" || a < 0 || div < a || b < div {
