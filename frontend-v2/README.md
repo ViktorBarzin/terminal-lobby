@@ -284,6 +284,9 @@ src/
                          reply is what the session reports afterwards rather
                          than an echo, because an effort change can be refused
                          without anything failing
+    links-api.ts         tmux-api's public-links routes: list, create (the
+                         token comes back once), revoke one, and the session
+                         bar's Stop, which revokes every link on a session
     mode-api.ts          Putting a session in a permission mode from the model
                          sheet: the same POST /model route with a `mode` in the
                          body, since a new prefix would need the IngressRoute
@@ -381,6 +384,14 @@ src/
     probes.ts            The five probes themselves. All read-only — /health and
                          GET /push-subscriptions are the only server calls, and
                          nothing is ever sent to a device
+  link/                  The public-link visitor page (link.html, built by
+                         vite.link.config.ts with base /s/), served by the two
+                         link servers to people who are not signed in
+    main.tsx             Entry: redeems the link for a ticket before every
+                         connect, a title, a Watching/Driving badge, a terminal
+    link.logic.ts        PURE token-from-fragment, which server a mode uses,
+                         what a redeem answer means
+    link.css             The page's own styles (theme tokens only)
   terminal/              The terminal's own logic, lifted out of the
                          frontend/term.html page the iframe used to frame. Every
                          module here is PURE — no DOM, no xterm import, no fetch,
@@ -567,6 +578,9 @@ src/
                          60 s TTL, desktop and own-sessions only. The attach
                          carries tmux's ignore-size flag so it cannot move the
                          window, and a click promotes it (ADR-0026)
+    share-dialog.ts      Which session the Share dialog is open for. Held
+                         outside the card, which remounts on a rename and would
+                         take a once-only link URL with it
     watchmode.ts         Per-session/per-device Watch mode (attach read-only).
                          A lens (acting as another user) defaults to watching
                          and keeps its choices under the target's own keys, so
@@ -971,6 +985,13 @@ src/
     ShortcutsHelp.tsx    Keyboard-shortcuts help overlay
     RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
                          would recreate, choose which rows to bring back
+    ShareDialog.tsx      Share… on your own session's ⋯ menu: its public links
+                         (mode, expiry, note, live visitors, Revoke) and a form
+                         for a new one, whose URL is shown once. Its link rows
+                         and poll are shared with Settings → Public links
+    links.logic.ts       PURE public-link rules: who is offered Share…, which
+                         lifetimes a mode allows, expiry and visitor wording,
+                         the /s/#token URL
     SettingsPanel.tsx    Settings overlay: the shell only — the category
                          rail, which page is showing, and the dialog contract
                          (aria-modal, a wrapping Tab trap, Escape, focus back
@@ -1017,6 +1038,9 @@ src/
                               plan and credits, and the session rows under each.
                               A section is drawn only when the server sent it
         ActAsPage.tsx         The admin act-as picker; renders for an admin only
+        LinksPage.tsx         Every live public link you own across sessions,
+                              with expiry, visitor count and Revoke. Absent in a
+                              lens tab
         SkillsPage.tsx        The Skills surface (docs/adr/0011), a rail page
                               since 2026-08-30: a tab per list — this account's
                               skills, each other account's with a same/differs

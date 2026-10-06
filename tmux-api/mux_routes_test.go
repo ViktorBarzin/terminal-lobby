@@ -288,6 +288,7 @@ func TestEveryHandlerFuncHasARoute(t *testing.T) {
 		"resolveOSUser":     "identity helper; writes the 401/403 for the handler that called it",
 		"resolveRealOSUser": "identity helper; the same, ignoring ?as=",
 		"setNetworkHeader":  "stamps a header on a response another handler is already writing",
+		"linkCaller":        "identity helper for /links; refuses a lens tab",
 	}
 
 	fset := token.NewFileSet()

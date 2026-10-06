@@ -18,7 +18,7 @@
   // plugin, so a src export whose only importer is a test counts as used.
   // Leaving 231 test files out is where the noise would come from.
 
-  "entry": ["public/sw.js"],
+  "entry": ["public/sw.js", "src/link/main.tsx"],
   "project": ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}", "public/*.js"],
   "exclude": ["types", "nsTypes", "enumMembers", "classMembers"],
 

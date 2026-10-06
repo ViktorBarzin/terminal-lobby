@@ -9,7 +9,8 @@
  *
  * Three tiers, separated by a rule each:
  *   - preferences, the eight pages everyone has;
- *   - Skills, which is a thing you manage rather than a preference;
+ *   - Skills and Public links, which are things you manage rather than
+ *     preferences;
  *   - Act as user, which only renders for a caller who administers the box.
  */
 
@@ -23,6 +24,7 @@ export type PageId =
   | "privacy"
   | "spend"
   | "skills"
+  | "links"
   | "actas";
 
 export interface RailEntry {
@@ -49,12 +51,17 @@ const PREFERENCES: readonly RailEntry[] = [
  * The rail for one caller. `admin` is the same signal that decides whether the
  * act-as control is offered at all — absent for everyone else, so the entry is
  * not merely disabled, it is not there.
+ *
+ * `links` adds Public links beside Skills, in the tier of things you manage.
+ * Every caller has it except a lens tab, whose links would be somebody else's
+ * and which the server refuses; absent means no entry, like `admin`.
  */
-export const railFor = (opts: { admin: boolean }): RailEntry[] => {
+export const railFor = (opts: { admin: boolean; links?: boolean }): RailEntry[] => {
   const entries: RailEntry[] = [
     ...PREFERENCES,
     { id: "skills", label: "Skills", startsGroup: true },
   ];
+  if (opts.links) entries.push({ id: "links", label: "Public links" });
   if (opts.admin) entries.push({ id: "actas", label: "Act as user", startsGroup: true });
   return entries;
 };

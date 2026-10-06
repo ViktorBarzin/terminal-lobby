@@ -5721,6 +5721,106 @@ body.tl-kb-up {
   cursor: default;
 }
 
+/* ---- Public links (2026-10-06) ------------------------------------------ */
+/* The Share dialog reuses the palette backdrop and the shortcuts-help card,
+   and its form is drawn with the Settings rows. A link row is shared with the
+   Settings page's list. */
+.tl-share {
+  width: min(520px, 100%);
+}
+.tl-link-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+.tl-link-row:first-of-type {
+  border-top: 0;
+}
+.tl-link-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-link-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.tl-link-badge {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.tl-link-badge[data-mode="rw"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.tl-link-session {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.tl-link-expiry {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+.tl-link-note,
+.tl-link-visitors {
+  margin-top: 2px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.tl-link-visitors {
+  color: var(--accent);
+}
+.tl-share-warn {
+  margin: 2px 0 4px;
+  padding: 6px 9px;
+  border: 1px solid var(--danger);
+  border-radius: calc(var(--radius) - 3px);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--danger);
+}
+.tl-share-note-field,
+.tl-share-url-field {
+  font: inherit;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  padding: 5px 8px;
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.tl-share-note-field {
+  width: 220px;
+  max-width: 100%;
+}
+.tl-share-url {
+  display: flex;
+  gap: 6px;
+}
+.tl-share-url-field {
+  flex: 1 1 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.tl-share-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
 /* ---- Text view: canonical item rows (2026-08-16) ------------------------- */
 /* The visual grammar follows T3's chat timeline: prose reads at full width and
    full contrast, and everything the agent DID is quieter, monospaced and one

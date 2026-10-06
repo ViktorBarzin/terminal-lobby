@@ -36,7 +36,7 @@ fi
 # The five services and ttyd hold these on loopback. nginx taking one of them
 # fails at bind time with a message about an address in use, which does not say
 # what to change; say it here instead.
-for taken in 7683 7684 7685 7686 7688 7690; do
+for taken in 7683 7684 7685 7686 7688 7690 7692 7693; do
   if [ "$TL_PORT" = "$taken" ]; then
     echo "entrypoint: TL_PORT $TL_PORT is used by a service inside the container" >&2
     exit 64
@@ -104,6 +104,19 @@ start ttyd /usr/local/bin/ttyd -W -a -H "$TL_AUTH_HEADER" -P 30 \
   -I /usr/local/share/ttyd/index.html \
   -p 7690 -i 127.0.0.1 \
   /usr/local/bin/tmux-attach.sh
+
+# Public links (ADR-0039): the two terminal servers a visitor with no account
+# reaches at /s/. No -H, since a visitor has no identity; the ticket in the URL
+# is what authorizes an attach. The read-only one has no -W, so no keystroke
+# reaches tmux at all. On the devvm they run as tl-link and reach the owner
+# through sudo; here there is one user, so tmux-link-attach.sh runs the second
+# half directly.
+start ttyd-link-ro /usr/local/bin/ttyd -a -O -m 64 -P 30 -b /s \
+  -I /usr/local/share/ttyd/link.html -p 7692 -i 127.0.0.1 \
+  /usr/local/bin/tmux-link-attach.sh ro
+start ttyd-link-rw /usr/local/bin/ttyd -W -a -O -m 64 -P 30 -b /s/rw \
+  -I /usr/local/share/ttyd/link.html -p 7693 -i 127.0.0.1 \
+  /usr/local/bin/tmux-link-attach.sh rw
 
 # Any of them dying takes the container down with it.
 for p in $pids; do

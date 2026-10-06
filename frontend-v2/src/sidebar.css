@@ -1296,6 +1296,38 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Public-link visitors: a pill in the accent colour, since someone without an
+   account is on this session, with its Stop inside. Driving visitors are in
+   the danger colour: they can type as you. */
+.tl-bar-visitors {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.tl-bar-visitors-driving {
+  color: var(--danger);
+}
+.tl-bar-visitors-stop {
+  font: inherit;
+  font-size: 11px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+.tl-bar-visitors-stop:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
 /* The session's state, as the prototype's `.sd`: done green at rest, the
    running colour pulsing while Claude works, amber while it waits for you. */
 .tl-bar-state {

@@ -6,7 +6,7 @@
   "description": "terminal-lobby v2 frontend — SolidJS + TypeScript two-view (text-mode + terminal) app. Pillar #2 foundation.",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && vite build -c vite.link.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint src test public",

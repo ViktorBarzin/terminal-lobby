@@ -25,12 +25,21 @@ import (
 // per-(owner,name,guest) grant. Mode is "ro" (tmux attach -r, watch) or "rw"
 // (drive = full shell as owner). ClientTty is captured server-side when the
 // guest actually attaches, so a revoke can detach exactly their tmux client.
+//
+// SessionID and SessionCreated pin the grant to ONE session, the way a public
+// link is pinned (links.go). Name alone is not an identity: a name is freed
+// when its session dies and the next session titled the same takes it, and a
+// grant keyed by name used to pass to that session. A row whose session has
+// ended is dropped (pruneShares), and an attach is refused when the session
+// now holding the name is not the one the grant was made for.
 type Share struct {
-	Owner     string `json:"owner"`
-	Name      string `json:"name"`
-	Guest     string `json:"guest"`
-	Mode      string `json:"mode"`
-	ClientTty string `json:"clientTty,omitempty"`
+	Owner          string `json:"owner"`
+	Name           string `json:"name"`
+	Guest          string `json:"guest"`
+	Mode           string `json:"mode"`
+	ClientTty      string `json:"clientTty,omitempty"`
+	SessionID      string `json:"sessionId,omitempty"`
+	SessionCreated int64  `json:"sessionCreated,omitempty"`
 }
 
 // ShareSet is the whole global share document.
@@ -204,15 +213,31 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 		http.Error(w, "invalid mode", http.StatusBadRequest)
 		return
 	}
+	// A grant is to a running session, recorded by identity. Sharing a name
+	// that is not running would have nothing to pin to.
+	target, ok, lerr := liveByName(osUser, name)
+	if lerr != nil {
+		logAndFail(w, "create share for %s failed: %v", osUser, lerr)
+		return
+	}
+	if !ok {
+		http.Error(w, "no such running session", http.StatusNotFound)
+		return
+	}
 	err := shareStoreInstance.update(func(ss *ShareSet) error {
 		for i := range ss.Shares {
 			if ss.Shares[i].Owner == osUser && ss.Shares[i].Name == name && ss.Shares[i].Guest == guest {
 				ss.Shares[i].Mode = mode
 				ss.Shares[i].ClientTty = "" // mode changed; stale live client no longer authoritative
+				ss.Shares[i].SessionID = target.ID
+				ss.Shares[i].SessionCreated = target.Created
 				return nil
 			}
 		}
-		ss.Shares = append(ss.Shares, Share{Owner: osUser, Name: name, Guest: guest, Mode: mode})
+		ss.Shares = append(ss.Shares, Share{
+			Owner: osUser, Name: name, Guest: guest, Mode: mode,
+			SessionID: target.ID, SessionCreated: target.Created,
+		})
 		return nil
 	})
 	if err != nil {
@@ -433,11 +458,21 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 		mode = shareModeRW
 		actAs = true
 	default:
+		// The grant must be for the session that holds this name NOW. Read
+		// before taking the store lock: it forks tmux.
+		current, isLive, lerr := liveByName(body.Owner, body.Name)
+		if lerr != nil {
+			isLive = false
+		}
 		err := shareStoreInstance.update(func(ss *ShareSet) error {
 			for i := range ss.Shares {
-				if ss.Shares[i].Owner == body.Owner && ss.Shares[i].Name == body.Name && ss.Shares[i].Guest == body.Guest {
+				sh := ss.Shares[i]
+				if sh.Owner == body.Owner && sh.Name == body.Name && sh.Guest == body.Guest {
+					if !isLive || sh.SessionID != current.ID || sh.SessionCreated != current.Created {
+						return errShareNotFound
+					}
 					ss.Shares[i].ClientTty = body.Tty
-					mode = ss.Shares[i].Mode
+					mode = sh.Mode
 					return nil
 				}
 			}
@@ -525,3 +560,69 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 }
 
 var errShareNotFound = errors.New("share not found")
+
+// pruneShares drops this owner's share rows whose session has ended. live must
+// be a successful reading of the owner's sessions (runLinkSweep).
+func pruneShares(owner string, live []liveSession) {
+	err := shareStoreInstance.update(func(ss *ShareSet) error {
+		out := ss.Shares[:0]
+		dropped := 0
+		for _, sh := range ss.Shares {
+			if sh.Owner == owner {
+				if _, ok := findLiveByID(live, sh.SessionID, sh.SessionCreated); !ok {
+					dropped++
+					continue
+				}
+			}
+			out = append(out, sh)
+		}
+		if dropped == 0 {
+			return errNoShareChange
+		}
+		ss.Shares = out
+		log.Printf("shares: dropped %d grant(s) on %s whose session ended", dropped, owner)
+		return nil
+	})
+	if err != nil && !errors.Is(err, errNoShareChange) {
+		log.Printf("share prune for %s failed: %v", owner, err)
+	}
+}
+
+// stampLegacySharesFor gives this owner's rows written before shares carried a
+// session id the id of the session holding their name now, which is the grant
+// they already expressed. Run by the sweep before pruneShares, so a row is
+// stamped on the first clean reading rather than dropped for lacking an id.
+// A row whose name is not running stays unstamped and the prune drops it.
+func stampLegacySharesFor(owner string, live []liveSession) {
+	err := shareStoreInstance.update(func(ss *ShareSet) error {
+		changed := false
+		for i := range ss.Shares {
+			sh := &ss.Shares[i]
+			if sh.Owner != owner || sh.SessionID != "" {
+				continue
+			}
+			if s, ok := findLiveByName(live, sh.Name); ok {
+				sh.SessionID, sh.SessionCreated = s.ID, s.Created
+				changed = true
+			}
+		}
+		if !changed {
+			return errNoShareChange
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errNoShareChange) {
+		log.Printf("share stamp for %s failed: %v", owner, err)
+	}
+}
+
+// liveByName is the session holding name in owner's tmux server now. A seam,
+// so the share tests can say which session a name belongs to.
+var liveByName = func(owner, name string) (liveSession, bool, error) {
+	live, err := listLiveSessions(owner)
+	if err != nil {
+		return liveSession{}, false, err
+	}
+	s, ok := findLiveByName(live, name)
+	return s, ok, nil
+}

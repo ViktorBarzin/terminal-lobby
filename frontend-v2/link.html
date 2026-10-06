@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- A shared terminal is nobody's business to index, and the URL holds no
+         token by the time anything could read it (the page moves it off the
+         address bar), but say so anyway. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <!-- The page never sends a Referer: nothing it loads is off-site, and a
+         visitor clicking out of it should not tell the next site where they
+         came from. -->
+    <meta name="referrer" content="no-referrer" />
+    <title>Shared terminal</title>
+  </head>
+  <body class="theme-slate">
+    <div id="root"></div>
+    <script type="module" src="/src/link/main.tsx"></script>
+  </body>
+</html>

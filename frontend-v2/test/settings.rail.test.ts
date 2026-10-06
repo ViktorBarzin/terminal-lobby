@@ -62,6 +62,18 @@ describe("railFor", () => {
     expect(railFor({ admin: false })[0]?.startsGroup).toBeFalsy();
   });
 
+  it("puts Public links beside Skills when offered, and nowhere when not", () => {
+    // A lens tab gets no entry: the links would be somebody else's.
+    const withLinks = railFor({ admin: false, links: true }).map((e) => e.id);
+    expect(withLinks).toEqual([...ids(false), "links"]);
+    expect(ids(false)).not.toContain("links");
+    const admin = railFor({ admin: true, links: true });
+    expect(admin.map((e) => e.id).slice(-3)).toEqual(["skills", "links", "actas"]);
+    // Same tier as Skills: no rule of its own.
+    expect(admin.find((e) => e.id === "links")?.startsGroup).toBeFalsy();
+    expect(admin.find((e) => e.id === "links")?.label).toBe("Public links");
+  });
+
   it("gives every entry a label", () => {
     for (const e of railFor({ admin: true })) expect(e.label).toBeTruthy();
   });

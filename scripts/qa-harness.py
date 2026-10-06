@@ -624,6 +624,13 @@ class Guard:
             return ("refusing to mutate shares — a share grants another OS user "
                     "access to a real session")
 
+        # A public link is a URL that opens a real session to ANYONE holding it,
+        # read-write included (ADR-0039). A QA agent minting one would publish a
+        # shell; revoking one could cut off a person mid-session.
+        if (tail == "links" or tail.startswith("links/") or tail.startswith("links?")) and method != "GET":
+            return ("refusing to create or revoke public links — a link opens a "
+                    "real session to anyone who holds the URL")
+
         if tail == "projects" and method == "POST":
             try:
                 name = str(json.loads(body or b"{}").get("name", "")).strip()

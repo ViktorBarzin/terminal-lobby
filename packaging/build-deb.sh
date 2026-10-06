@@ -167,6 +167,23 @@ for ref in $(grep -oE '(src|href)="/assets/[^"]+"' "$STAGE/share/index.html" | s
 done
 [ "$missing" -eq 0 ] || exit 1
 
+# The public-link visitor page (ADR-0039).
+# Not stamped: it carries no diagnostics core and no self-update identity, since
+# a visitor's tab is not a lobby that updates itself. It gets the same two
+# guards anyway, against its own chunk prefix: it is served under /s/, so it
+# references /s/assets/<name>, which the ingress maps onto the same payload.
+LINK_PAGE="$STAGE/share/link.html"
+cp frontend-v2/dist/link.html "$LINK_PAGE"
+if grep -qE '__TL_[A-Z_]*__' "$LINK_PAGE"; then
+  echo "build: $LINK_PAGE carries a placeholder" >&2
+  exit 1
+fi
+for ref in $(grep -oE '(src|href)="/s/assets/[^"]+"' "$LINK_PAGE" | sed -E 's/.*"\/s\/assets\/([^"]+)"/\1/' | sort -u); do
+  [ -f "$CHUNKS/$ref" ] || { echo "build: link.html references /s/assets/$ref, which is not in the payload" >&2; missing=1; }
+done
+[ "$missing" -eq 0 ] || exit 1
+grep -q 'src="/s/assets/' "$LINK_PAGE" || { echo "build: link.html loads no script from /s/assets/" >&2; exit 1; }
+
 # The baseline-engine gate, run on the exact bytes about to ship. It has caught
 # two separate blank-lobby incidents on iPadOS 15.8.
 #

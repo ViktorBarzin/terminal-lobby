@@ -198,6 +198,55 @@ export interface Session {
    *  every session no Caller made, and from a server that predates the field,
    *  where such a session stays in System as it always did. */
   caller?: string;
+  /** People watching or driving this session through a public link, counted
+   *  by tmux-api from the live tmux clients (tmux-api/links.go
+   *  `annotateVisitors`). Absent while nobody is attached through a link,
+   *  which is the ordinary case, and on every session that is not yours. */
+  visitors?: VisitorCount;
+}
+
+/** A session's live link visitors, as GET /sessions carries them. */
+export interface VisitorCount {
+  total: number;
+  /** How many of `total` came in on a read-write link. */
+  driving: number;
+}
+
+/**
+ * Public links (docs/plans/2026-10-06-public-links-design.md): a URL to one of
+ * your own sessions for somebody who is not signed in. `ro` watches, `rw`
+ * drives, as you.
+ */
+export type LinkMode = "ro" | "rw";
+
+/** The lifetimes POST /links accepts. `never` lasts until revoked; a
+ *  read-write link is capped at 24h by the server. */
+export type LinkTTL = "1h" | "24h" | "7d" | "never";
+
+/** One visitor attached through a link, as the owner sees them. Anonymous by
+ *  design: `guest` is a number the server hands out per link. */
+export interface LinkVisitor {
+  guest: number;
+  mode: LinkMode;
+  /** Unix seconds the visitor attached. */
+  since: number;
+}
+
+/** GET /links, one row (tmux-api/links.go `LinkView`). */
+export interface LinkView {
+  id: string;
+  /** The session's tmux name NOW, which a rename moves. */
+  session: string;
+  /** tmux's session id ($12), which the link is bound to. */
+  sessionId: string;
+  title?: string;
+  mode: LinkMode;
+  /** The owner's private note. Visitors never see it. */
+  note?: string;
+  createdAt: number;
+  /** Unix seconds; 0 means until revoked. */
+  expiresAt: number;
+  visitors: LinkVisitor[];
 }
 
 /** What a pi session stamped about itself, as the session list carries it. */

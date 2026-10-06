@@ -80,6 +80,17 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/manifest.w
 [[ "$code" == "200" ]] || fail "the PWA manifest got $code, want 200"
 ok "the PWA shell is served"
 
+# Public links (ADR-0039) are reachable without signing in, and the redeem
+# route is the only piece of tmux-api that is: an unknown token is a 404 from
+# tmux-api, not a sign-in challenge, and /s/api/ is not a way into the rest.
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/s/")
+[[ "$code" == "200" ]] || fail "the visitor page at /s/ got $code, want 200"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{"token":"AAAAAAAAAAAAAAAAAAAAAA"}' "http://127.0.0.1:17681/s/api/link/redeem")
+[[ "$code" == "404" ]] || fail "redeeming an unknown link got $code, want 404"
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/s/api/sessions")
+[[ "$code" != "200" ]] || fail "/s/api/sessions answered 200; the link carve-out reaches more of tmux-api than redeem"
+ok "public links: the page is served, redeem answers, nothing else of tmux-api is"
+
 # A client cannot choose who it is: nginx sets the identity header itself, so a
 # request that arrives carrying one must not be believed.
 spoof=$(curl -s -H 'X-Forwarded-User: someone.else' "http://127.0.0.1:17681/api/sessions/whoami")

@@ -67,7 +67,9 @@ import type {
   ClaudeState,
   PiStamp,
   SessionTool,
+  VisitorCount,
 } from "../types/lobby";
+import { visitorSummary } from "./links.logic";
 import { modelHarness, piLevels, type ModelState, type PiOffer } from "../lib/models";
 import { setSessionModel } from "../lib/model-api";
 import { setSessionMode } from "../lib/mode-api";
@@ -254,6 +256,11 @@ export const SessionView: Component<{
   /** How the caller may attach someone else's session, from the session list.
    *  A ro share only watches its browser; empty or absent for your own. */
   access?: () => AttachAccess | "" | undefined;
+  /** People on this session through a public link, from the session list.
+   *  Absent while nobody is, and on a session that is not yours. */
+  visitors?: () => VisitorCount | undefined;
+  /** The visitor badge's Stop: revoke every public link on this session. */
+  onStopLinks?: () => void;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** The model and effort a NEWLY-CREATED session launches on, as flags on the
@@ -328,6 +335,8 @@ export const SessionView: Component<{
    * connect uses the new name.
    */
   const session = createMemo(() => props.session);
+  /** The bar's "2 via link (1 driving)", empty while nobody is on a link. */
+  const linkVisitors = createMemo(() => visitorSummary(props.visitors?.()));
   const store = createSessionStore(session, {
     notify: props.notify,
     autoStart: false,
@@ -1650,6 +1659,30 @@ export const SessionView: Component<{
                 </Show>
               </div>
             </div>
+            {/* Public-link visitors (design 2026-10-06, "What the owner
+              sees"): who is on this session without signing in, and one
+              click to end every link on it. No confirmation, the same as a
+              kill: the person reaching for Stop has just seen someone they
+              did not expect. */}
+            <Show when={linkVisitors().text}>
+              <span class="tl-bar-visitors" role="status">
+                <span class="tl-bar-visitors-text">
+                  {linkVisitors().text}
+                  <Show when={linkVisitors().driving}>
+                    {" "}
+                    <span class="tl-bar-visitors-driving">{linkVisitors().driving}</span>
+                  </Show>
+                </span>
+                <button
+                  type="button"
+                  class="tl-bar-visitors-stop"
+                  title="Revoke every public link on this session"
+                  onClick={() => props.onStopLinks?.()}
+                >
+                  Stop
+                </button>
+              </span>
+            </Show>
             {/* Terminal controls, in the order the vanilla page's floating
               cluster uses them: size, then the two things you put INTO the
               session. Hidden on a coarse pointer, where a two-finger pinch sets

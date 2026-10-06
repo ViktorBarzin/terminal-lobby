@@ -226,6 +226,11 @@ func (g *Gate) checkSecret(r *http.Request) error {
 	return nil
 }
 
+// CheckProxySecret is checkSecret for a route that serves no identity, such as
+// tmux-api's public link redeem: the request must still have come through the
+// proxy, but nobody is named in it.
+func (g *Gate) CheckProxySecret(r *http.Request) error { return g.checkSecret(r) }
+
 // IsLoopback reports whether the request came from this host.
 //
 // A route meant for the box's own tools uses it. Those callers have no proxy in

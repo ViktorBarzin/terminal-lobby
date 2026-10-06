@@ -41,6 +41,8 @@ import { showToast } from "../store/toast";
 import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
 import { ACT_AS } from "../lib/config";
+import { canShare } from "./links.logic";
+import { openShare } from "../store/share-dialog";
 
 /**
  * The hover seam, as little of `store/preload.ts` as a card needs.
@@ -573,6 +575,17 @@ export const SessionCard: Component<{
       return;
     await props.store.restart(s().name);
   };
+  /**
+   * Share…: public links to this session (docs/plans/2026-10-06-public-links-
+   * design.md). Only on your own session and never in a lens tab — see
+   * `canShare`. The dialog lives in App, not here, because this row remounts
+   * on a rename and the URL a new link shows cannot be shown twice.
+   */
+  const shareable = () => canShare(s(), props.store.me(), lens());
+  const share = () => {
+    menu.close();
+    openShare({ id: s().id, name: s().name });
+  };
   const moveTo = async (group: string) => {
     menu.close();
     await props.store.move(s().name, group);
@@ -1080,6 +1093,11 @@ export const SessionCard: Component<{
           <Show when={restartable()}>
             <button class="tl-menu-item" role="menuitem" onClick={() => void restart()}>
               Restart
+            </button>
+          </Show>
+          <Show when={shareable()}>
+            <button class="tl-menu-item" role="menuitem" onClick={share}>
+              Share…
             </button>
           </Show>
           {/* Status. The dot is stamped by hooks and has a history of reading

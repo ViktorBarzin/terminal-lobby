@@ -173,6 +173,14 @@ var knownEvents = map[string]bool{
 	// -- sharing ------------------------------------------------------------
 	"share.granted": true, // (tl.kind = ro|rw)
 	"share.revoked": true,
+	// Public links (tmux-api/links.go, ADR-0039): a bearer URL to one session
+	// for someone with no account. Emitted under the OWNER, since a visitor has
+	// no identity. created carries tl.mode and the lifetime in tl.kind;
+	// revoked's tl.kind says one link or a whole session (the Stop button);
+	// visit is one attach through a link, tl.mode ro|rw.
+	"link.created": true,
+	"link.revoked": true,
+	"link.visit":   true,
 	// The other side of a share: which way a member chose to JOIN a session
 	// they can reach, read-only or read-write (tl.to = ro|rw, tl.session).
 	// tl.as is set when the joiner is acting as another user, which makes

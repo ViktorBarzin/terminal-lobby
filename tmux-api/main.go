@@ -445,6 +445,12 @@ func main() {
 	// into a panic on this goroutine.
 	go runHealthSampler(make(chan struct{}))
 
+	// Ends public links that expired or whose session ended, detaching their
+	// visitors, and drops share rows whose session ended (links.go). One
+	// list-sessions per owner with a link or a share, every 15 s.
+	visitors.loadVisitors()
+	go runLinkSweep(make(chan struct{}))
+
 	// TMUX_API_ADDR: scratch-build override for the dev harness
 	// (dev-harness.py --tmux-api-port documents testing a local build,
 	// which can't bind 7684 while the production service holds it).
@@ -530,6 +536,14 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/shares", handleShares)
 	mux.HandleFunc("/shares/", handleShareByPath)
 	mux.HandleFunc("/internal/attach", handleInternalAttach)
+	// Public links (links.go). /links is the owner's; /link/redeem is the one
+	// route in this service that serves a caller with no identity, and the
+	// ingress sends exactly that path, and nothing else, from /s/api/.
+	mux.HandleFunc("/links", handleLinks)
+	mux.HandleFunc("/links/", handleLinkByID)
+	mux.HandleFunc("/link/redeem", handleLinkRedeem)
+	mux.HandleFunc("/internal/link-attach", handleInternalLinkAttach)
+	mux.HandleFunc("/internal/link-join", handleInternalLinkJoin)
 	mux.HandleFunc("/users", handleUsers)
 	mux.HandleFunc("/dirs", handleDirs)
 	mux.HandleFunc("/prefs", handlePrefs)

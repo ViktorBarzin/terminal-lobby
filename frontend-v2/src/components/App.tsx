@@ -123,6 +123,9 @@ import {
 import { isCoarsePointer } from "../mobile/pointer";
 import { actAsUrl, lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
+import { ShareDialog } from "./ShareDialog";
+import { closeShare, shareTarget } from "../store/share-dialog";
+import { revokeSessionLinks } from "../lib/links-api";
 import { availableCommands, getWorkspaces, listUsers, putWorkspaces } from "../lib/lobby-api";
 import {
   effectiveCommand,
@@ -1200,6 +1203,22 @@ export const App: Component = () => {
   // remembered under (lib/act-as.ts). Same derivation the sidebar's cards make
   // from the same /whoami, so the two surfaces cannot disagree.
   const lens = createMemo(() => lensTarget(store.whoami(), ACT_AS));
+  /**
+   * The session bar's Stop: revoke every public link on the session, which
+   * detaches everyone who came in on one. No question asked, like a kill —
+   * a link is a few clicks to make again, and a visitor you did not expect is
+   * the case where a dialog in the way costs the most. The refresh brings the
+   * bar's count down now rather than on the next poll.
+   */
+  const stopLinks = async (name: string): Promise<void> => {
+    try {
+      const n = await revokeSessionLinks(name);
+      notify(n === 1 ? "Stopped 1 link" : `Stopped ${n} links`, "info");
+    } catch (e) {
+      notify(`Could not stop the links: ${(e as Error).message}`, "error");
+    }
+    await store.refresh();
+  };
   const [actAsUsers, setActAsUsers] = createSignal<string[]>([]);
   createEffect(() => {
     if (!isAdmin() || actAsUsers().length > 0) return;
@@ -2956,6 +2975,13 @@ export const App: Component = () => {
                       // reason that lookup exists.
                       browser={() => tileSession()?.browser}
                       access={() => tileSession()?.access}
+                      // Who is on this session through a public link, and the
+                      // bar's Stop that ends every link on it. Your own
+                      // sessions only: tmux-api counts visitors for the
+                      // caller's sessions alone, and a foreign tile has no
+                      // links of yours to stop.
+                      visitors={() => (k.owner ? undefined : tileSession()?.visitors)}
+                      onStopLinks={() => void stopLinks(name())}
                       // THE SESSION'S OWN WINDOW SIZE, for a tile that is
                       // WATCHING: it never claims the Grid, so this is the only
                       // thing that can tell its terminal how big the session it
@@ -3235,7 +3261,15 @@ export const App: Component = () => {
           skills={skills}
           skillSessions={skillSessions}
           sessionTitles={sessionTitles}
+          // Public links are yours alone, so a lens tab has no page for them.
+          publicLinks={!lens()}
         />
+      </Show>
+
+      {/* The Share dialog, once for the app rather than inside the card that
+          opens it: see store/share-dialog.ts. */}
+      <Show when={shareTarget()}>
+        {(t) => <ShareDialog target={t()} sessions={() => store.sessions} onClose={closeShare} />}
       </Show>
 
       <Show when={palette.isOpen()}>

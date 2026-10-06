@@ -82,6 +82,7 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	if raw, cerr := tmuxCmd(osUser, "list-clients", "-F", clientsListFmt).Output(); cerr == nil {
 		clients := parseClients(raw)
 		markDriven(sessions, clients)
+		annotateVisitors(osUser, sessions, clients)
 		activity = latestActivity(clients)
 		// Driven is what "last driven" is derived from, so the stamp is written
 		// here, while the client list is in hand. A read-only client reaches

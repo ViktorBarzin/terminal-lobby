@@ -18,6 +18,8 @@ upstream clipboard_upload { server 127.0.0.1:7683; }
 upstream session_events   { server 127.0.0.1:7685; }
 upstream file_api         { server 127.0.0.1:7686; }
 upstream skills_api       { server 127.0.0.1:7688; }
+upstream ttyd_link_ro     { server 127.0.0.1:7692; }
+upstream ttyd_link_rw     { server 127.0.0.1:7693; }
 
 map $http_upgrade $connection_upgrade {
   default upgrade;
@@ -97,6 +99,42 @@ server {
 
   location /files/ { proxy_pass http://file_api; }
   location /skills { proxy_pass http://skills_api; }
+
+  # Public links (ADR-0039), for a visitor who is not signed in. No auth, and
+  # the identity header is set EMPTY (nginx then drops it) rather than to
+  # $tl_user: nothing on these routes may arrive as anybody. A location that
+  # sets any proxy_set_header inherits none from the server block, so Host and
+  # the upgrade pair are restated. The redeem route is an exact match on
+  # purpose: a prefix here would be all of tmux-api without sign-in.
+  location = /s/api/link/redeem {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_pass http://tmux_api/link/redeem;
+  }
+  location /s/assets/ {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_pass http://clipboard_upload/assets/;
+  }
+  location /s/rw/ {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass http://ttyd_link_rw;
+  }
+  location /s/ {
+    auth_basic off;
+    proxy_set_header __AUTH_HEADER__ "";
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass http://ttyd_link_ro;
+  }
 
   # Everything else, including / and the terminal's WebSocket, is ttyd's.
   location / { proxy_pass http://ttyd; }

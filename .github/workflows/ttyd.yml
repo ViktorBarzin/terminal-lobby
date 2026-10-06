@@ -96,6 +96,9 @@ jobs:
             printf 'set -e\n'
             printf '[ "$1" = "configure" ] || exit 0\n'
             printf 'systemctl is-active --quiet ttyd && systemctl restart ttyd || true\n'
+            # The public-link servers run the same binary (ADR-0039).
+            printf 'systemctl is-active --quiet ttyd-link-ro && systemctl restart ttyd-link-ro || true\n'
+            printf 'systemctl is-active --quiet ttyd-link-rw && systemctl restart ttyd-link-rw || true\n'
           } > "$TREE/DEBIAN/postinst"
           chmod 0755 "$TREE/DEBIAN/postinst"
           dpkg-deb --root-owner-group --build "$TREE" "out/ttyd-devvm_${VERSION}_amd64.deb"

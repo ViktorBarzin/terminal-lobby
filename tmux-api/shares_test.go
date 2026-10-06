@@ -12,6 +12,18 @@ func swapShareStore(t *testing.T) {
 	old := shareStoreInstance
 	shareStoreInstance = newShareStore(t.TempDir() + "/shares.json")
 	t.Cleanup(func() { shareStoreInstance = old })
+	// Every name is a running session, and the same one throughout, unless a
+	// test says otherwise with stubLiveByName.
+	stubLiveByName(t, func(owner, name string) (liveSession, bool, error) {
+		return liveSession{ID: "$1", Created: 1000, Name: name}, true, nil
+	})
+}
+
+func stubLiveByName(t *testing.T, f func(owner, name string) (liveSession, bool, error)) {
+	t.Helper()
+	old := liveByName
+	liveByName = f
+	t.Cleanup(func() { liveByName = old })
 }
 
 func withInternalToken(t *testing.T, tok string) {

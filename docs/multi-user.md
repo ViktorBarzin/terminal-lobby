@@ -14,12 +14,21 @@ Projects and sessions can be **shared with other users on the same machine**
   Governance is co-equal — any member may rename, re-dir, add/remove members, or
   delete it (delete only dissolves the grouping, never kills sessions). Members
   see each other's sessions in the shared project.
-- **Share a single session** from its `⋯` menu → **Share…**, read-only or
-  read-write. A shared session is attached *as its owner*: read-only (`tmux
+- **Share a single session with an account** through `POST /shares`, read-only
+  or read-write. A shared session is attached *as its owner*: read-only (`tmux
   attach -r`) lets a guest **watch**; read-write is a **full interactive shell
-  as the owner** — so it is gated behind an extra confirm and is a deliberate
-  trust grant. Revoking (or the guest leaving) detaches their live client
-  immediately.
+  as the owner**, a deliberate trust grant. Revoking (or the guest leaving)
+  detaches their live client immediately. A grant is pinned to the session it
+  was made for and ends with it. The vanilla lobby had a dialog for this; the
+  current lobby does not yet, so it is an API call.
+- **Share a single session with anyone** from its `⋯` menu → **Share…**, which
+  makes a public link: a URL that works with no account, read-only or
+  read-write, for 1 hour, 24 hours, 7 days or until revoked (read-write at most
+  24 hours). The URL is shown once. The session bar shows how many visitors are
+  attached and has a Stop button; Settings → Public links lists every live
+  link. A read-write link is a shell as you for whoever holds the URL, and your
+  devices get a notification when someone drives through one. Design and
+  security model: `docs/plans/2026-10-06-public-links-design.md`, ADR-0039.
 - **Filesystem co-ownership.** Enabling co-ownership on a project with a
   directory grants every member POSIX-ACL `rwX` on that tree (via an audited,
   root-run `setfacl` wrapper), so members can work on the shared files from

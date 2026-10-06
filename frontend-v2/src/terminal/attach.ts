@@ -86,6 +86,16 @@ export interface AttachDeps {
    * the pair above still agree.
    */
   args: string;
+  /**
+   * Run before EVERY connect attempt, ahead of the one reading of `args`.
+   *
+   * The public-link page needs it (docs/plans/2026-10-06-public-links-
+   * design.md): its `args` carry a single-use ticket, so each attempt has to
+   * redeem the link for a fresh one before the socket opens, and redeeming is a
+   * request. A rejection fails the attempt the way an unreadable `/token` does,
+   * so the ladder takes its next rung. The lobby passes nothing.
+   */
+  prepare?: () => Promise<void>;
   /** Where the page is, for ws: vs wss:. Injected so tests need no location. */
   page?: { protocol: string; host: string };
   /** Write server output into the terminal. */
@@ -435,6 +445,15 @@ export function attach(deps: AttachDeps): Attachment {
   async function openSocket(gen: number): Promise<void> {
     detach();
     liveGen = gen;
+    if (deps.prepare) {
+      try {
+        await deps.prepare();
+      } catch {
+        if (gen === liveGen) dispatch({ type: "attempt-failed", gen, at: "token" });
+        return;
+      }
+      if (disposed || gen !== liveGen) return;
+    }
     // ONE READING PER ATTEMPT. `deps.args` is a live getter at its one real
     // caller (TerminalNative), because the attach mode changes under a mount:
     // a hover attaches with `pre` and the click that promotes it drops that,

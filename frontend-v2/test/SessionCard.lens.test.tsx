@@ -101,6 +101,12 @@ describe("<SessionCard> in a tab acting as another user", () => {
     expect(container.querySelector(".tl-card-watch")).toBeNull();
   });
 
+  it("offers no Share…: a public link here would be a bearer URL to bob's shell", () => {
+    const { container } = card(session({ owner: "bob" }));
+    openMenu(container);
+    expect(menuItem(container, "Share")).toBeUndefined();
+  });
+
   it("reads back a stored lens choice rather than your own", () => {
     localStorage.setItem(WATCH_KEY_PREFIX + "main", "ro"); // your own: watch
     localStorage.setItem(WATCH_KEY_PREFIX + "as:bob:main", "rw"); // bob's: drive

@@ -29,6 +29,7 @@ import { PrivacyPage } from "./settings/pages/PrivacyPage";
 import { AgentSpendPage } from "./settings/pages/AgentSpendPage";
 import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
+import { LinksPage } from "./settings/pages/LinksPage";
 import { lsGet, lsSet } from "../lib/storage";
 import { dismissOnPress } from "./overlay";
 
@@ -76,6 +77,9 @@ export const SettingsPanel: Component<{
   /** the admin act-as picker. Supplied only when the CALLER administers this
    *  box; absent for everyone else, so the page does not render at all. */
   actAs?: ActAsControl;
+  /** Offer the Public links page. App passes it for every tab but a lens,
+   *  whose links would be somebody else's; absent, the rail has no entry. */
+  publicLinks?: boolean;
   /** the skills inventory behind the Skills page. */
   skills?: SkillsStore;
   /** the caller's live sessions, for the Skills page's Sessions tab. `tool`
@@ -93,9 +97,10 @@ export const SettingsPanel: Component<{
   let railEl: HTMLDivElement | undefined;
   let pageEl: HTMLDivElement | undefined;
 
-  const rail = createMemo<RailEntry[]>(() => railFor({ admin: !!props.actAs }));
+  const railOpts = () => ({ admin: !!props.actAs, links: !!props.publicLinks });
+  const rail = createMemo<RailEntry[]>(() => railFor(railOpts()));
   const [page, setPage] = createSignal<PageId>(
-    resolvePage(railFor({ admin: !!props.actAs }), props.initialPage ?? lsGet(LAST_PAGE_KEY)),
+    resolvePage(railFor(railOpts()), props.initialPage ?? lsGet(LAST_PAGE_KEY)),
   );
   // The rail can lose an entry under a live panel — an act-as switch drops the
   // admin control — so the shown page is filtered through the rail rather than
@@ -299,6 +304,9 @@ export const SettingsPanel: Component<{
                     />
                   )}
                 </Show>
+              </Match>
+              <Match when={current() === "links"}>
+                <LinksPage />
               </Match>
               <Match when={current() === "actas"}>
                 <Show when={props.actAs}>{(ctl) => <ActAsPage actAs={ctl()} />}</Show>

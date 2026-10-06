@@ -157,6 +157,22 @@ _Avoid_: job, request, outbound task
 A grant letting a named non-owner attach a specific session, read-only
 (`tmux attach -r`, watch) or read-write (drive — which runs as the owner).
 Server state in the share store; the owner grants, the owner or guest removes.
+Pinned to one session by its `session_id` and `session_created`, so a grant
+ends with its session rather than passing to the next session that takes the
+same name (2026-10-06). The lobby has no screen for named shares since the
+vanilla lobby went; they are made through `POST /shares`.
+
+**Link** (public link):
+A URL, `/s/#<token>`, that opens one session to whoever holds it, with no
+account and no sign-in: read-only (watch) or read-write (drive, as the owner).
+Made by the session's owner from **Share…** on the session's ⋯ menu, listed in
+Settings → Public links, and ended by revoking it, by its expiry (1h, 24h, 7d
+or until revoked; read-write at most 24h), or by its session ending. Each
+connect trades the token for a single-use **ticket**, and the attach scripts
+trade the ticket for a single-use **grant** (ADR-0039). Anyone attached through
+one is a **visitor**, numbered "guest 1", "guest 2" for the owner.
+_Avoid_: public share, share link (a **Share** names an account; a Link names
+nobody), invite
 
 **Attach mode**:
 How a viewer may attach a session that isn't theirs: **ro** (watch) or **rw**
