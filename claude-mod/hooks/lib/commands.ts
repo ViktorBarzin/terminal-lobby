@@ -1,7 +1,7 @@
 // The commands session-events hands the mod through the poll, and their acks.
 // Everything outside is injected, as in link.ts.
 
-import { slashCall, type SlashCall } from './command.ts';
+import { asProse, slashCall, type SlashCall } from './command.ts';
 import type { Command } from './dialogs.ts';
 import type { SeenCommands } from './seen.ts';
 import { capStrings } from './shape.ts';
@@ -110,7 +110,7 @@ async function prompt(deps: CommandDeps, id: string, text: string): Promise<void
   // The first prompt of a fresh conversation is the one to title it by; a
   // resumed one already has a title. Never in the prompt's way.
   const fresh = (await deps.turns().catch(() => -1)) === 0;
-  const submitted = deps.submit(text);
+  const submitted = deps.submit(asProse(text));
   ack(deps, id, true);
   submitted.then(
     (r) => {

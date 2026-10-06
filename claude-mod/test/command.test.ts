@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { slashCall } from '../hooks/lib/command.ts';
+import { asProse, slashCall } from '../hooks/lib/command.ts';
 
 // A prompt from the lobby that names a slash command runs it, the way the
 // typed `/name args` does. $.prompt.submit hands any text to the model as a
@@ -40,5 +40,27 @@ for (const text of [
 ]) {
   test(`stays a prompt: ${JSON.stringify(text)}`, () => {
     assert.equal(slashCall(text, names), null);
+  });
+}
+
+// $.prompt.submit refuses a text that starts with a slash once leading
+// whitespace is trimmed (CLI 2.1.290: "a text beginning with / would run a
+// command as the user"). A prompt opening with a pasted image starts with its
+// path, so it went nowhere (2026-10-06).
+for (const [name, text, sent] of [
+  ['a pasted image first', '/var/lib/clipboard-store/u/s/pasted-1.png what is this?', '\u200b/var/lib/clipboard-store/u/s/pasted-1.png what is this?'],
+  ['a path first', '/usr/bin is missing jq', '\u200b/usr/bin is missing jq'],
+  ['a path after leading whitespace', '\n  /tmp/a.png', '\u200b/tmp/a.png'],
+  ['an unknown name', '/nosuchskill do it', '\u200b/nosuchskill do it'],
+] as const) {
+  test(`prose with ${name} goes in behind a zero-width space`, () => {
+    assert.equal(asProse(text), sent);
+    assert.ok(!asProse(text).trimStart().startsWith('/'));
+  });
+}
+
+for (const text of ['hello', 'see /tmp/a.png', '  indented prose']) {
+  test(`prose that does not start with a slash is untouched: ${JSON.stringify(text)}`, () => {
+    assert.equal(asProse(text), text);
   });
 }
