@@ -1,6 +1,6 @@
 # Public links: share a session with someone who is not signed in
 
-**Status:** approved 2026-10-06, building · **Scope:** `tmux-api/links.go`,
+**Status:** shipped 2026-10-06 (terminal-lobby 0.109), verified live · **Scope:** `tmux-api/links.go`,
 `devvm/tmux-link-attach.sh`, `devvm/tmux-link-join`, `devvm/ttyd-link-{ro,rw}.service`,
 `frontend-v2/link.html` and `src/link/`, the Share dialog and Settings,
 `docker/`, `infra/stacks/terminal/public_links.tf`, `infra/playbooks/devvm.yml` ·

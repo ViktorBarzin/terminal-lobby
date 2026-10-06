@@ -217,7 +217,7 @@ const LinkPage: Component = () => {
     <div class="tl-link">
       <header class="tl-link-bar">
         <span class="tl-link-title">{title() || "Shared terminal"}</span>
-        <Show when={mode()}>
+        <Show when={phase() !== "ended" && mode()}>
           {(m) => (
             <span class="tl-link-badge" classList={{ "tl-link-badge-rw": m() === "rw" }}>
               {badgeFor(m())}
