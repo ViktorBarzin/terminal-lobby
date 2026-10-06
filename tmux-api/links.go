@@ -1128,13 +1128,18 @@ func (l *rateLimiter) allow(key string, now time.Time) bool {
 // and the grant are each a single-use capability already.
 
 // grant is what a spent ticket becomes: permission for the owner's wrapper to
-// attach one target from one tty, once, within grantTTL.
+// attach one target, once, within grantTTL.
+//
+// It is NOT bound to a tty. The two halves do not share one: sudo on this box
+// runs with use_pty, so tmux-link-join gets a fresh pty and reports a
+// different tty from the one tmux-link-attach.sh saw (measured 2026-10-06,
+// /dev/pts/47 then /dev/pts/51). The join side's tty is the one the tmux
+// client attaches from, so that is the one the visitor is recorded under.
 type grant struct {
 	linkID  string
 	owner   string
 	target  string
 	mode    string
-	tty     string
 	expires time.Time
 }
 
@@ -1231,7 +1236,7 @@ func handleInternalLinkAttach(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "wrong instance for this link", http.StatusForbidden)
 		return
 	}
-	g, err := grants.mint(grant{linkID: l.ID, owner: l.Owner, target: l.SessionID, mode: l.Mode, tty: body.Tty}, now)
+	g, err := grants.mint(grant{linkID: l.ID, owner: l.Owner, target: l.SessionID, mode: l.Mode}, now)
 	if err != nil {
 		http.Error(w, "busy", http.StatusServiceUnavailable)
 		return
@@ -1266,13 +1271,13 @@ func handleInternalLinkJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if !ticketRe.MatchString(body.Grant) {
-		http.Error(w, "invalid grant", http.StatusBadRequest)
+	if !ticketRe.MatchString(body.Grant) || !ttyRe.MatchString(body.Tty) {
+		http.Error(w, "invalid grant or tty", http.StatusBadRequest)
 		return
 	}
 	now := linkNow()
 	g, ok := grants.spend(body.Grant, now)
-	if !ok || g.owner != body.User || g.tty != body.Tty {
+	if !ok || g.owner != body.User {
 		http.Error(w, "no such grant", http.StatusForbidden)
 		return
 	}
@@ -1282,7 +1287,7 @@ func handleInternalLinkJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := visitors.add(visitor{LinkID: l.ID, Owner: l.Owner, SessionID: l.SessionID, Tty: g.tty, Mode: l.Mode, Since: now})
+	v := visitors.add(visitor{LinkID: l.ID, Owner: l.Owner, SessionID: l.SessionID, Tty: body.Tty, Mode: l.Mode, Since: now})
 	if l.Mode == shareModeRO {
 		// Same as a read-only share: the owner's size stays theirs.
 		if err := pinGrid(l.Owner, s.Name); err != nil {

@@ -233,19 +233,29 @@ func TestAVisitWalksTicketGrantJoin(t *testing.T) {
 	}
 }
 
-func TestAGrantIsBoundToItsOwnerAndTty(t *testing.T) {
+func TestAGrantIsBoundToItsOwner(t *testing.T) {
 	w := newLinkWorld(t)
 	_, token, _ := w.create(`{"name":"deploy","mode":"ro","ttl":"1h"}`)
-	for _, tc := range []struct{ user, tty string }{{"someone-else", "/dev/pts/9"}, {"", "/dev/pts/8"}} {
-		_, red := w.redeem(token)
-		_, att := w.attach(red["ticket"].(string), "/dev/pts/9", "ro")
-		user := tc.user
-		if user == "" {
-			user = w.me
-		}
-		if code, _ := w.join(att["grant"], user, tc.tty); code != http.StatusForbidden {
-			t.Errorf("user=%s tty=%s: got %d, want 403", user, tc.tty, code)
-		}
+	_, red := w.redeem(token)
+	_, att := w.attach(red["ticket"].(string), "/dev/pts/9", "ro")
+	if code, _ := w.join(att["grant"], "someone-else", "/dev/pts/9"); code != http.StatusForbidden {
+		t.Fatalf("a grant spent from another account: %d, want 403", code)
+	}
+}
+
+// sudo runs with use_pty here, so the owner's half sees a different tty from
+// tl-link's half. The visitor is recorded under the join side's tty, which is
+// the one its tmux client attaches from and the one a revoke has to detach.
+func TestTheVisitorIsRecordedUnderTheJoinSidesTty(t *testing.T) {
+	w := newLinkWorld(t)
+	_, token, _ := w.create(`{"name":"deploy","mode":"ro","ttl":"1h"}`)
+	_, red := w.redeem(token)
+	_, att := w.attach(red["ticket"].(string), "/dev/pts/47", "ro")
+	if code, _ := w.join(att["grant"], w.me, "/dev/pts/51"); code != http.StatusOK {
+		t.Fatalf("join from sudo's own pty: %d, want 200", code)
+	}
+	if vs := visitors.v; len(vs) != 1 || vs[0].Tty != "/dev/pts/51" {
+		t.Fatalf("visitor recorded as %+v, want /dev/pts/51", vs)
 	}
 }
 
