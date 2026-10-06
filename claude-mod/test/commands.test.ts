@@ -43,6 +43,14 @@ test('a prompt is acked at once, then reported as submitted', async () => {
   assert.deepEqual(h.calls, ['submit hello']);
 });
 
+test('a prompt that opens with a path is submitted without the leading slash', async () => {
+  const h = harness();
+  await runCommand(h.deps, { id: 'c1', op: 'prompt', text: '/tmp/pasted-1.png what is this?' });
+  await settle();
+  assert.deepEqual(types(h.sent), ['ack true', 'prompt']);
+  assert.deepEqual(h.calls, ['submit \u200b/tmp/pasted-1.png what is this?']);
+});
+
 // D-F3/T-F5: the server drops a second ack, so a prompt that fails after the
 // first is reported as a command_failed event the Text view can show.
 const failures: [string, Partial<CommandDeps>, string][] = [

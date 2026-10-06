@@ -18,3 +18,14 @@ export function slashCall(text: string, names: readonly string[]): SlashCall | n
   if (command === undefined || !names.includes(command)) return null;
   return { command, args };
 }
+
+// The text to hand $.prompt.submit for a prompt that is not a command. The
+// engine refuses any text that starts with a slash once leading whitespace is
+// trimmed (CLI 2.1.290), since its queue would read it as a command, so a
+// prompt opening with a pasted image's path, or with `/usr/bin is missing jq`,
+// went nowhere. A zero-width space in front is not whitespace to trimStart:
+// the engine and the queue see no slash, and the model reads the same text.
+export function asProse(text: string): string {
+  const start = text.trimStart();
+  return start.startsWith('/') ? `​${start}` : text;
+}

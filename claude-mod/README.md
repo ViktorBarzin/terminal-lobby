@@ -53,7 +53,7 @@ What it does, in short:
 | `hooks/lib/pending.ts` | dialogs waiting on a web answer |
 | `hooks/lib/stamp.ts` | whether session-events has been told where the transcript is |
 | `hooks/lib/summary.ts` | the title request for a lobby-started conversation, and reading the reply |
-| `hooks/lib/command.ts` | whether a lobby prompt is a slash command to run rather than text to submit |
+| `hooks/lib/command.ts` | whether a lobby prompt is a slash command to run rather than text to submit, and how text that starts with a path gets past the engine's slash check |
 | `test/*.test.ts` | unit tests for `hooks/lib`; `test/wire.test.ts` checks the events against `testdata/mod-wire/` |
 
 ## Loading it for a dev session
