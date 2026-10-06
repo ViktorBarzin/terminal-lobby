@@ -392,6 +392,8 @@ src/
     link.logic.ts        PURE token-from-fragment, which server a mode uses,
                          what a redeem answer means
     link.css             The page's own styles (theme tokens only)
+    Transcript.tsx       An ended link's conversation, read-only: the lobby's own
+                         timeline over a fixed event list, loaded on demand
   terminal/              The terminal's own logic, lifted out of the
                          frontend/term.html page the iframe used to frame. Every
                          module here is PURE — no DOM, no xterm import, no fetch,

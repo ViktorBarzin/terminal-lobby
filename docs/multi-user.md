@@ -25,10 +25,14 @@ Projects and sessions can be **shared with other users on the same machine**
   makes a public link: a URL that works with no account, read-only or
   read-write, for 1 hour, 24 hours, 7 days or until revoked (read-write at most
   24 hours). The URL is shown once. The session bar shows how many visitors are
-  attached and has a Stop button; Settings → Public links lists every live
-  link. A read-write link is a shell as you for whoever holds the URL, and your
-  devices get a notification when someone drives through one. Design and
-  security model: `docs/plans/2026-10-06-public-links-design.md`, ADR-0039.
+  attached and has a Stop button; Settings → Public links lists every link. A
+  read-write link is a shell as you for whoever holds the URL, and your
+  devices get a notification when someone drives through one. Kill the
+  session and the link keeps working as a read-only copy of the conversation,
+  tool output included, until it expires or you revoke it, so a shared
+  conversation does not have to stay in your sidebar (a plain shell's link
+  ends with it). Design and security model:
+  `docs/plans/2026-10-06-public-links-design.md`, ADR-0039 and ADR-0040.
 - **Filesystem co-ownership.** Enabling co-ownership on a project with a
   directory grants every member POSIX-ACL `rwX` on that tree (via an audited,
   root-run `setfacl` wrapper), so members can work on the shared files from

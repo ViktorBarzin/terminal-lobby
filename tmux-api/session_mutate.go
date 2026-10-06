@@ -147,6 +147,10 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// resurrectRecordFor (snapshots.go) for why a kill snapshots in the first
 	// place.
 	resurrect := resurrectRecordFor(osUser, name)
+	// The transcript stamp is a tmux option and dies with the session, so a
+	// link to it records the conversation now, while it can still be read
+	// (links_transcript.go).
+	noteLinkTranscriptsBeforeKill(osUser)
 	out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
 	if err != nil {
 		msg := string(out)

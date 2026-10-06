@@ -64,12 +64,37 @@ export interface Redeemed {
  * `retry` is everything else that is not a ticket, which the reconnect ladder
  * should keep trying.
  */
-export type RedeemOutcome = { kind: "ok"; value: Redeemed } | { kind: "ended" } | { kind: "retry" };
+export type RedeemOutcome =
+  | { kind: "ok"; value: Redeemed }
+  | { kind: "transcript"; value: EndedLink }
+  | { kind: "ended" }
+  | { kind: "retry" };
+
+/** A link whose session has ended: it shows the conversation read-only. */
+export interface EndedLink {
+  /** The link's id, which the transcript routes take as `l`. Not a secret. */
+  link: string;
+  title: string;
+  expiresAt: number;
+}
+
+const LINK_ID_RE = /^[0-9a-f]{16}$/;
 
 export function readRedeem(status: number, body: unknown, peek = false): RedeemOutcome {
   if (status === 404) return { kind: "ended" };
   if (status !== 200 || typeof body !== "object" || body === null) return { kind: "retry" };
   const b = body as Record<string, unknown>;
+  if (b.mode === "transcript") {
+    if (typeof b.link !== "string" || !LINK_ID_RE.test(b.link)) return { kind: "retry" };
+    return {
+      kind: "transcript",
+      value: {
+        link: b.link,
+        title: typeof b.title === "string" ? b.title : "",
+        expiresAt: typeof b.expiresAt === "number" ? b.expiresAt : 0,
+      },
+    };
+  }
   const mode = b.mode === "rw" ? "rw" : b.mode === "ro" ? "ro" : null;
   const ticket = typeof b.ticket === "string" ? b.ticket : "";
   // A peek carries no ticket by design; a redeem without a well-formed one is
@@ -110,4 +135,19 @@ export function fontToFit(width: number, cols: number, cellRatio: number): numbe
 /** The badge: what this visitor can do. */
 export function badgeFor(mode: LinkMode): string {
   return mode === "rw" ? "Driving" : "Watching";
+}
+
+/** The routes an ended link's transcript is read through. `l` is the link id;
+ *  the view key rides in a cookie the redeem set, never in the URL. */
+export function transcriptRoutes(link: string) {
+  const q = "l=" + encodeURIComponent(link);
+  return {
+    transcript: `/s/api/link/transcript?${q}`,
+    result: (toolId: string) => `/s/api/link/result?${q}&tool=${encodeURIComponent(toolId)}`,
+    toolImage: (toolId: string, n: number) =>
+      `/s/api/link/image?${q}&tool=${encodeURIComponent(toolId)}&n=${n}`,
+    promptImage: (record: string, n: number) =>
+      `/s/api/link/image?${q}&record=${encodeURIComponent(record)}&n=${n}`,
+    picture: (path: string) => `/s/api/link/picture?${q}&p=${encodeURIComponent(path)}`,
+  };
 }

@@ -542,6 +542,12 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/links", handleLinks)
 	mux.HandleFunc("/links/", handleLinkByID)
 	mux.HandleFunc("/link/redeem", handleLinkRedeem)
+	// An ended link's transcript and its pictures (links_transcript.go), each
+	// an exact path the ingress routes from /s/api/link/.
+	mux.HandleFunc("/link/transcript", handleLinkTranscript)
+	mux.HandleFunc("/link/result", handleLinkResult)
+	mux.HandleFunc("/link/image", handleLinkImage)
+	mux.HandleFunc("/link/picture", handleLinkPicture)
 	mux.HandleFunc("/internal/link-attach", handleInternalLinkAttach)
 	mux.HandleFunc("/internal/link-join", handleInternalLinkJoin)
 	mux.HandleFunc("/users", handleUsers)

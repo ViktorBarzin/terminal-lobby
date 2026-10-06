@@ -9,6 +9,7 @@ import {
   fontToFit,
   pickToken,
   readRedeem,
+  transcriptRoutes,
   tokenFromHash,
 } from "../src/link/link.logic";
 
@@ -98,5 +99,36 @@ describe("fitting a watcher's window across the screen", () => {
   it("falls back to the default size when it cannot measure", () => {
     expect(fontToFit(400, 0, 0.6)).toBe(14);
     expect(fontToFit(0, 80, 0.6)).toBe(14);
+  });
+});
+
+describe("an ended link", () => {
+  it("redeems to a transcript, carrying the link id the routes take", () => {
+    const out = readRedeem(200, {
+      mode: "transcript",
+      link: "0123456789abcdef",
+      title: "Deploy",
+      expiresAt: 9,
+    });
+    expect(out).toEqual({
+      kind: "transcript",
+      value: { link: "0123456789abcdef", title: "Deploy", expiresAt: 9 },
+    });
+  });
+
+  it("is retried when the link id is not one tmux-api mints", () => {
+    expect(readRedeem(200, { mode: "transcript", link: "../x" })).toEqual({ kind: "retry" });
+  });
+
+  it("reads through routes that carry the link id and never a secret", () => {
+    const r = transcriptRoutes("0123456789abcdef");
+    expect(r.transcript).toBe("/s/api/link/transcript?l=0123456789abcdef");
+    expect(r.toolImage("toolu_1", 2)).toBe("/s/api/link/image?l=0123456789abcdef&tool=toolu_1&n=2");
+    expect(r.promptImage("abc-123", 0)).toBe(
+      "/s/api/link/image?l=0123456789abcdef&record=abc-123&n=0",
+    );
+    expect(r.picture("/var/lib/clipboard-store/w/s/a b.png")).toBe(
+      "/s/api/link/picture?l=0123456789abcdef&p=%2Fvar%2Flib%2Fclipboard-store%2Fw%2Fs%2Fa%20b.png",
+    );
   });
 });

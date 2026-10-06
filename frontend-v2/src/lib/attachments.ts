@@ -1,4 +1,10 @@
-import { clipboardFileUrl, clipboardImgUrl, fileReadUrl, pictureUrl } from "./config";
+import {
+  clipboardFileUrl,
+  clipboardImgUrl,
+  fileReadUrl,
+  linkPictureUrl,
+  pictureUrl,
+} from "./config";
 import { extOf, IMAGE_EXT } from "../store/preview.logic";
 import { NAME_RE } from "../types/lobby";
 import type { ImageRef } from "../types/events";
@@ -185,6 +191,8 @@ export function isPicturePath(ref: string): boolean {
  * that check for the timeline, which asks whether to draw anything at all.
  */
 export function pictureUrlFor(path: string): string | null {
+  const viaLink = linkPictureUrl(path);
+  if (viaLink) return viaLink;
   if (!parseStorePath(path) && PICTURE_EXT.has(extOf(path))) return pictureUrl(path);
   return previewContentUrl(path);
 }
@@ -209,6 +217,9 @@ export function pictureUrlFor(path: string): string | null {
  *     and answers 403 outside it
  */
 export function contentUrlFor(path: string, me: string): string | null {
+  // On the public-link page there is no `me`: the link's own route decides.
+  const viaLink = linkPictureUrl(path);
+  if (viaLink) return viaLink;
   const store = parseStorePath(path);
   if (store && (!me || store.owner !== me)) return null;
   return pictureUrlFor(path);

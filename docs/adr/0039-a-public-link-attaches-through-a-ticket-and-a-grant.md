@@ -1,5 +1,8 @@
 # A public link attaches through a ticket and a grant
 
+> Amended by [ADR-0040](0040-an-ended-link-shows-its-transcript.md): a link
+> no longer ends with its session; it shows the conversation read-only.
+
 Viktor, 2026-10-06: *"i want to create public urls which i can share to users
 that are not signed in. we can share in both read only or read write mode."*
 

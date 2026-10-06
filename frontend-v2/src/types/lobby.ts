@@ -247,6 +247,9 @@ export interface LinkView {
   /** Unix seconds; 0 means until revoked. */
   expiresAt: number;
   visitors: LinkVisitor[];
+  /** Set once the session has ended: the link now shows its conversation
+   *  read-only until it expires or is revoked (ADR-0040). */
+  endedAt?: number;
 }
 
 /** What a pi session stamped about itself, as the session list carries it. */
@@ -329,7 +332,9 @@ export const NEW_SESSION_LABEL = "New session";
  * `title` as the poll lands (store/prompt-line.ts), so every surface that shows
  * a title shows it, and this stays a pure function of the wire shape.
  */
-export function sessionLabel(s: Pick<Session, "name" | "title"> & Partial<Pick<Session, "cwd">>): string {
+export function sessionLabel(
+  s: Pick<Session, "name" | "title"> & Partial<Pick<Session, "cwd">>,
+): string {
   if (s.title && s.title.length > 0) return s.title;
   if (!isSessionId(s.name)) return s.name;
   // An id says nothing, so with no title the directory the session runs in

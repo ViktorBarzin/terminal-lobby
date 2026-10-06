@@ -12,14 +12,14 @@ body {
   height: 100%;
 }
 
-.tl-link {
+.tl-visit {
   display: flex;
   flex-direction: column;
   height: 100%;
   height: 100dvh;
 }
 
-.tl-link-bar {
+.tl-visit-bar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -29,7 +29,7 @@ body {
   min-width: 0;
 }
 
-.tl-link-title {
+.tl-visit-title {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -37,7 +37,7 @@ body {
   min-width: 0;
 }
 
-.tl-link-badge {
+.tl-visit-badge {
   flex: none;
   font-size: 12px;
   padding: 2px 8px;
@@ -46,19 +46,19 @@ body {
   color: var(--text-muted, #7d8590);
 }
 
-.tl-link-badge-rw {
+.tl-visit-badge-rw {
   color: var(--danger, #f47067);
   border-color: currentColor;
 }
 
-.tl-link-status {
+.tl-visit-status {
   flex: none;
   margin-left: auto;
   font-size: 12px;
   color: var(--text-muted, #7d8590);
 }
 
-.tl-link-term {
+.tl-visit-term {
   flex: 1;
   min-height: 0;
   /* A watcher is drawn at the session's window size, which can be taller
@@ -68,17 +68,33 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-.tl-link-term-gone {
+.tl-visit-term-gone {
   display: none;
 }
 
-.tl-link-ended {
+.tl-visit-ended {
   margin: auto;
   padding: 24px 16px;
   max-width: 420px;
   text-align: center;
 }
 
-.tl-link-hint {
+.tl-visit-hint {
   color: var(--text-muted, #7d8590);
+}
+
+/* An ended link's conversation. The timeline brings its own styles (app.css);
+   this only gives it the page's scroll area and a readable measure. */
+.tl-visit-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 16px 24px;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+.tl-visit-note {
+  color: var(--text-muted, #7d8590);
+  font-size: 13px;
+  margin: 4px 0 12px;
 }

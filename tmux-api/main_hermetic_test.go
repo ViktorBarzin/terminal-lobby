@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"terminal-lobby/authuser"
 )
@@ -32,6 +33,10 @@ func TestMain(m *testing.M) {
 		Config:     authuser.Config{MultiUser: "on"},
 	}
 	mapPath = actAsGate.MapPath
+	// The public-link stores, so no test reads or writes the box's real
+	// links.json or visitor records.
+	linkStoreInstance = newLinkStore(filepath.Join(dir, "links.json"))
+	visitors = &visitorBook{lastPush: map[string]time.Time{}, path: filepath.Join(dir, "link-visitors.json")}
 	// tmux-user-attach posts each claim to session-events (POST /hooks/claimed).
 	// The suite runs the real script, and on a deployed box localhost:7685 is
 	// the LIVE service, so the post goes to a port nothing listens on instead.
