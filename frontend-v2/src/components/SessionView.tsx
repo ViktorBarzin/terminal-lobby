@@ -261,6 +261,10 @@ export const SessionView: Component<{
   visitors?: () => VisitorCount | undefined;
   /** The visitor badge's Stop: revoke every public link on this session. */
   onStopLinks?: () => void;
+  /** Whether this caller may make public links to this session (your own,
+   *  never in a lens), and the bar menu's Share… that opens the dialog. */
+  shareable?: () => boolean;
+  onShare?: () => void;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** The model and effort a NEWLY-CREATED session launches on, as flags on the
@@ -1863,6 +1867,18 @@ export const SessionView: Component<{
                     >
                       Files
                     </button>
+                    <Show when={props.shareable?.()}>
+                      <button
+                        class="tl-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          barMenu.close();
+                          props.onShare?.();
+                        }}
+                      >
+                        Share…
+                      </button>
+                    </Show>
                     {/* Watch mode. Reachable from the TEXT view, because the
                       Terminal view's first show is what triggers the attach,
                       and an attach that has already happened read-write has

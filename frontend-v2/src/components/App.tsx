@@ -124,7 +124,8 @@ import { isCoarsePointer } from "../mobile/pointer";
 import { actAsUrl, lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
 import { ShareDialog } from "./ShareDialog";
-import { closeShare, shareTarget } from "../store/share-dialog";
+import { closeShare, openShare, shareTarget } from "../store/share-dialog";
+import { canShare } from "./links.logic";
 import { revokeSessionLinks } from "../lib/links-api";
 import { availableCommands, getWorkspaces, listUsers, putWorkspaces } from "../lib/lobby-api";
 import {
@@ -2982,6 +2983,17 @@ export const App: Component = () => {
                       // links of yours to stop.
                       visitors={() => (k.owner ? undefined : tileSession()?.visitors)}
                       onStopLinks={() => void stopLinks(name())}
+                      // Share… in the bar's own menu, beside the card's: on a
+                      // phone the sidebar is a separate screen, so the bar is
+                      // where the session's actions reach a thumb.
+                      shareable={() => {
+                        const t = tileSession();
+                        return !!t && canShare(t, store.me(), lens());
+                      }}
+                      onShare={() => {
+                        const t = tileSession();
+                        if (t) openShare({ id: t.id, name: t.name });
+                      }}
                       // THE SESSION'S OWN WINDOW SIZE, for a tile that is
                       // WATCHING: it never claims the Grid, so this is the only
                       // thing that can tell its terminal how big the session it
