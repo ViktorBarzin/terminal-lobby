@@ -7,8 +7,8 @@ import type { LobbyStore } from "../src/store/lobby";
 
 /**
  * Share… on the sidebar card's ⋯ menu, in an ordinary tab: offered on your own
- * session, not on one somebody shared with you, and it opens the app-wide
- * dialog for the session by tmux's id. The lens case is in
+ * session running Claude, not on one somebody shared with you or a plain
+ * shell, and it opens the app-wide dialog for the session by tmux's id. The lens case is in
  * SessionCard.lens.test.tsx, which mocks `?as=`.
  */
 
@@ -18,6 +18,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   attached: 0,
   lastActivity: 0,
   created: 0,
+  tool: "claude",
   ...over,
 });
 
@@ -70,6 +71,12 @@ describe("<SessionCard> Share…", () => {
     const { container } = card(session({ owner: "emo", access: "rw" }));
     const actions = container.querySelector<HTMLButtonElement>("button.tl-card-actions");
     if (actions) fireEvent.click(actions);
+    expect(shareItem(container)).toBeUndefined();
+  });
+
+  it("is not offered on a plain shell, which has no conversation to share", () => {
+    const { container } = card(session({ owner: "wizard", tool: "shell" }));
+    openMenu(container);
     expect(shareItem(container)).toBeUndefined();
   });
 });

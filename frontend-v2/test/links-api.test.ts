@@ -35,27 +35,26 @@ describe("links-api", () => {
     expect(calls[0]?.init?.method).toBeUndefined();
   });
 
-  it("creates with name, mode and ttl, and hands back the token", async () => {
+  it("creates with name and ttl, and hands back the token", async () => {
     const calls = stubFetch(
       201,
-      JSON.stringify({ link: { id: "L1", session: "s", mode: "ro" }, token: "tok" }),
+      JSON.stringify({ link: { id: "L1", session: "s" }, token: "tok" }),
     );
-    const got = await createLink({ name: "s", mode: "ro", ttl: "7d", note: "for Ana" });
+    const got = await createLink({ name: "s", ttl: "7d", note: "for Ana" });
     expect(got.token).toBe("tok");
     expect(calls[0]?.url).toBe("/api/sessions/links");
     expect(calls[0]?.init?.method).toBe("POST");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
       name: "s",
-      mode: "ro",
       ttl: "7d",
       note: "for Ana",
     });
   });
 
   it("carries the server's refusal text into the error", async () => {
-    stubFetch(400, "invalid lifetime: 1h, 24h, 7d or never; a read-write link lasts at most 24h\n");
-    await expect(createLink({ name: "s", mode: "rw", ttl: "never" })).rejects.toThrow(
-      /a read-write link lasts at most 24h/,
+    stubFetch(409, "this session is not running Claude, so it has no conversation to share\n");
+    await expect(createLink({ name: "s", ttl: "never" })).rejects.toThrow(
+      /no conversation to share/,
     );
   });
 

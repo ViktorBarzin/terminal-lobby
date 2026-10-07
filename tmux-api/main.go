@@ -445,10 +445,9 @@ func main() {
 	// into a panic on this goroutine.
 	go runHealthSampler(make(chan struct{}))
 
-	// Ends public links that expired or whose session ended, detaching their
-	// visitors, and drops share rows whose session ended (links.go). One
-	// list-sessions per owner with a link or a share, every 15 s.
-	visitors.loadVisitors()
+	// Records each linked session's transcripts, ends expired links, marks
+	// links whose session ended, and drops share rows whose session ended
+	// (links.go). One list-sessions per owner with a link or a share, every 15 s.
 	go runLinkSweep(make(chan struct{}))
 
 	// TMUX_API_ADDR: scratch-build override for the dev harness
@@ -536,20 +535,18 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/shares", handleShares)
 	mux.HandleFunc("/shares/", handleShareByPath)
 	mux.HandleFunc("/internal/attach", handleInternalAttach)
-	// Public links (links.go). /links is the owner's; /link/redeem is the one
-	// route in this service that serves a caller with no identity, and the
-	// ingress sends exactly that path, and nothing else, from /s/api/.
+	// Public links (links.go). /links is the owner's. The five /link/ routes
+	// are the only ones in this service that serve a caller with no identity;
+	// the ingress sends exactly these paths, and nothing else, from /s/api/:
+	// redeem sets a link's view cookie, and the other four read the
+	// conversation and its pictures with it (links_transcript.go).
 	mux.HandleFunc("/links", handleLinks)
 	mux.HandleFunc("/links/", handleLinkByID)
 	mux.HandleFunc("/link/redeem", handleLinkRedeem)
-	// An ended link's transcript and its pictures (links_transcript.go), each
-	// an exact path the ingress routes from /s/api/link/.
 	mux.HandleFunc("/link/transcript", handleLinkTranscript)
 	mux.HandleFunc("/link/result", handleLinkResult)
 	mux.HandleFunc("/link/image", handleLinkImage)
 	mux.HandleFunc("/link/picture", handleLinkPicture)
-	mux.HandleFunc("/internal/link-attach", handleInternalLinkAttach)
-	mux.HandleFunc("/internal/link-join", handleInternalLinkJoin)
 	mux.HandleFunc("/users", handleUsers)
 	mux.HandleFunc("/dirs", handleDirs)
 	mux.HandleFunc("/prefs", handlePrefs)

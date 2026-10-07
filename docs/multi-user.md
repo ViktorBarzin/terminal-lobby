@@ -21,18 +21,17 @@ Projects and sessions can be **shared with other users on the same machine**
   detaches their live client immediately. A grant is pinned to the session it
   was made for and ends with it. The vanilla lobby had a dialog for this; the
   current lobby does not yet, so it is an API call.
-- **Share a single session with anyone** from its `⋯` menu → **Share…**, which
-  makes a public link: a URL that works with no account, read-only or
-  read-write, for 1 hour, 24 hours, 7 days or until revoked (read-write at most
-  24 hours). The URL is shown once. The session bar shows how many visitors are
-  attached and has a Stop button; Settings → Public links lists every link. A
-  read-write link is a shell as you for whoever holds the URL, and your
-  devices get a notification when someone drives through one. Kill the
-  session and the link keeps working as a read-only copy of the conversation,
-  tool output included, until it expires or you revoke it, so a shared
-  conversation does not have to stay in your sidebar (a plain shell's link
-  ends with it). Design and security model:
-  `docs/plans/2026-10-06-public-links-design.md`, ADR-0039 and ADR-0040.
+- **Share a session's conversation with anyone** from its `⋯` menu →
+  **Share…**, which makes a public link: a URL that works with no account,
+  for 1 hour, 24 hours, 7 days or until revoked. Whoever holds it reads the
+  conversation as the Text view shows it, tool output included, live while the
+  session runs; nobody can type through it. The URL is shown once. The session
+  bar shows how many are viewing and has a Stop button; Settings → Public links
+  lists every link. Kill the session and the link keeps showing the finished
+  conversation until it expires or you revoke it, so a shared conversation does
+  not have to stay in your sidebar. Only sessions running Claude can be shared.
+  Design and security model: `docs/plans/2026-10-06-public-links-design.md`,
+  ADR-0039 to ADR-0041.
 - **Filesystem co-ownership.** Enabling co-ownership on a project with a
   directory grants every member POSIX-ACL `rwX` on that tree (via an audited,
   root-run `setfacl` wrapper), so members can work on the shared files from

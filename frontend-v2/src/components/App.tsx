@@ -2976,12 +2976,12 @@ export const App: Component = () => {
                       // reason that lookup exists.
                       browser={() => tileSession()?.browser}
                       access={() => tileSession()?.access}
-                      // Who is on this session through a public link, and the
-                      // bar's Stop that ends every link on it. Your own
-                      // sessions only: tmux-api counts visitors for the
-                      // caller's sessions alone, and a foreign tile has no
+                      // How many are reading this session through a public
+                      // link, and the bar's Stop that ends every link on it.
+                      // Your own sessions only: tmux-api counts readers for
+                      // the caller's sessions alone, and a foreign tile has no
                       // links of yours to stop.
-                      visitors={() => (k.owner ? undefined : tileSession()?.visitors)}
+                      viewers={() => (k.owner ? undefined : tileSession()?.viewers)}
                       onStopLinks={() => void stopLinks(name())}
                       // Share… in the bar's own menu, beside the card's: on a
                       // phone the sidebar is a separate screen, so the bar is

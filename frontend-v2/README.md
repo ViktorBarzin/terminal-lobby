@@ -385,15 +385,15 @@ src/
                          GET /push-subscriptions are the only server calls, and
                          nothing is ever sent to a device
   link/                  The public-link visitor page (link.html, built by
-                         vite.link.config.ts with base /s/), served by the two
-                         link servers to people who are not signed in
-    main.tsx             Entry: redeems the link for a ticket before every
-                         connect, a title, a Watching/Driving badge, a terminal
-    link.logic.ts        PURE token-from-fragment, which server a mode uses,
-                         what a redeem answer means
+                         vite.link.config.ts with base /s/), served by
+                         clipboard-upload to people who are not signed in
+    main.tsx             Entry: redeems the link, a title, a Live/Ended badge,
+                         the conversation. No terminal (ADR-0041)
+    link.logic.ts        PURE token-from-fragment, what a redeem answer means,
+                         the read routes, folding a live read into what is held
     link.css             The page's own styles (theme tokens only)
-    Transcript.tsx       An ended link's conversation, read-only: the lobby's own
-                         timeline over a fixed event list, loaded on demand
+    Transcript.tsx       The shared conversation, read-only: the lobby's own
+                         timeline, re-read every few seconds while it is live
   terminal/              The terminal's own logic, lifted out of the
                          frontend/term.html page the iframe used to frame. Every
                          module here is PURE — no DOM, no xterm import, no fetch,

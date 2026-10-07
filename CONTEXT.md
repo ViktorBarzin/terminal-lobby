@@ -163,17 +163,14 @@ same name (2026-10-06). The lobby has no screen for named shares since the
 vanilla lobby went; they are made through `POST /shares`.
 
 **Link** (public link):
-A URL, `/s/#<token>`, that opens one session to whoever holds it, with no
-account and no sign-in: read-only (watch) or read-write (drive, as the owner).
-Made by the session's owner from **Share…** on the session's ⋯ menu, listed in
-Settings → Public links, and ended by revoking it or by its expiry (1h, 24h,
-7d or until revoked; read-write at most 24h). When its session ends the link
-does not: it shows the session's conversation read-only, every conversation
-the session ran while the link existed (ADR-0040). A plain shell's link ends
-with the session, having nothing to show. While the session runs, each
-connect trades the token for a single-use **ticket**, and the attach scripts
-trade the ticket for a single-use **grant** (ADR-0039). Anyone attached through
-one is a **visitor**, numbered "guest 1", "guest 2" for the owner.
+A URL, `/s/#<token>`, that shows one session's Claude conversation to
+whoever holds it, read-only, with no account and no sign-in (ADR-0041): live
+while the session runs, and the finished conversation after it ends (ADR-0040).
+Made by the session's owner from **Share…** on the ⋯ menu of a session running
+Claude, listed in Settings → Public links, and ended by revoking it or by its
+expiry (1h, 24h, 7d or until revoked). Redeeming the token sets a per-link
+**view cookie** the read routes take. A plain shell has no conversation and
+cannot be linked. The owner sees how many are reading as "N viewing".
 _Avoid_: public share, share link (a **Share** names an account; a Link names
 nobody), invite
 

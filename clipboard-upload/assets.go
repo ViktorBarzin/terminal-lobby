@@ -171,6 +171,10 @@ func withPublicAssets(next http.Handler) http.Handler {
 			handleTermPageRedirect(w, r)
 			return
 		}
+		if p == linkPagePath || p == "/s" {
+			handleLinkPage(w, r)
+			return
+		}
 		if _, listed := publicAssets[p]; listed ||
 			strings.HasPrefix(p, "/fonts/") ||
 			strings.HasPrefix(p, "/icon-") ||
@@ -295,4 +299,43 @@ func handleAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", spec.contentType)
 	w.Header().Set("Cache-Control", spec.cacheControl)
 	http.ServeContent(w, r, "", info.ModTime(), f)
+}
+
+// --- The public-link visitor page --------------------------------------------
+//
+// /s/ is where a public link opens (docs/plans/2026-10-06-public-links-design.md,
+// ADR-0041): the page a visitor with no account loads, which reads the shared
+// conversation through tmux-api's /s/api/link/ routes. It used to be served by
+// the link ttyds, which went when links stopped carrying a terminal; this is
+// the service that already answers the page's chunks under /assets/, so it
+// answers the page too. The ingress sends /s and /s/ here with no sign-in.
+
+const linkPagePath = "/s/"
+
+func handleLinkPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path == "/s" {
+		http.Redirect(w, r, linkPagePath, http.StatusMovedPermanently)
+		return
+	}
+	body, err := os.ReadFile(filepath.Join(assetDir(), "link.html"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	// no-cache, not no-store: revalidated on every load, so a deploy reaches
+	// the next visit, while a back-navigation can still reuse it.
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(body)
 }

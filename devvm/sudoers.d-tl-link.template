@@ -1,9 +1,0 @@
-# Public links (ADR-0039). tl-link runs ttyd-link-ro and ttyd-link-rw, the two
-# terminal servers that take connections from anyone, and may run exactly one
-# program as another account: tmux-link-join, which attaches nothing without a
-# single-use grant tmux-api issued for that account and that tty.
-#
-# Static, unlike the ttyd-users grant: it names no person, so the package can
-# ship it. postinst checks it with visudo before installing it as
-# /etc/sudoers.d/tl-link.
-tl-link ALL=(ALL, !root) NOPASSWD: /usr/local/bin/tmux-link-join

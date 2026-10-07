@@ -1,26 +1,28 @@
 package main
 
-// Public links (docs/plans/2026-10-06-public-links-design.md, ADR-0039).
+// Public links (docs/plans/2026-10-06-public-links-design.md, ADR-0039 as
+// amended by ADR-0040 and ADR-0041).
 //
-// A Link is a bearer URL to one session: whoever holds it can watch (ro) or
-// drive (rw) that session as its owner, with no account and no sign-in. That
-// makes this file the only place in the service where a request with no
-// identity reaches a session, so each step is narrow on purpose:
+// A Link is a bearer URL to one session's CONVERSATION: whoever holds it reads
+// the session's Claude transcript, read-only, with no account and no sign-in.
+// While the session runs the page follows the conversation as it grows; once
+// the session ends the link keeps showing it until it expires or is revoked.
+// There is no terminal behind a link (ADR-0041): an earlier version attached a
+// tmux client through two ttyd instances, and Viktor found the conversation was
+// the useful half.
+//
+// This file is the only place in the service where a request with no identity
+// reaches a session, so each step is narrow:
 //
 //   - The token is 128 random bits, shown to the owner once and stored only as
 //     a SHA-256. It never travels in a URL: the visitor page holds it in the
 //     fragment and POSTs it to /link/redeem.
-//   - Redeeming mints a TICKET: single use, 30 seconds, held in memory. Only
-//     the ticket appears in a request URL (the ttyd-link /token and /ws query),
-//     so an access log holds nothing that can be replayed.
-//   - The ttyd-link attach script spends the ticket at /internal/link-attach,
-//     loopback and internal-token gated like /internal/attach, and gets back
-//     the owner, tmux's session id and the mode. It attaches exactly that.
+//   - Redeeming sets a VIEW cookie bound to the link (links_transcript.go),
+//     which the read routes take, so nothing in a request line can be replayed.
 //
 // A link is pinned to tmux's #{session_id} AND #{session_created}. The id alone
 // is reused from $0 after a server restart, so it could name a different
-// session after a reboot; the pair cannot. A link whose session has ended is
-// dropped, which is decision 7: a link dies with its session.
+// session after a reboot; the pair cannot.
 
 import (
 	"crypto/rand"
@@ -43,34 +45,30 @@ import (
 	"time"
 	"unicode"
 
-	"terminal-lobby/authuser"
 	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
 // Link is one public link, as stored.
 type Link struct {
-	// ID names the link to its owner (list, revoke). It is not a secret and
-	// cannot be redeemed: only the token can.
+	// ID names the link to its owner (list, revoke) and to the read routes. It
+	// is not a secret and cannot be redeemed: only the token can.
 	ID string `json:"id"`
 	// TokenHash is hex SHA-256 of the token. The token itself is never stored.
 	TokenHash      string `json:"tokenHash"`
 	Owner          string `json:"owner"`
 	SessionID      string `json:"sessionId"`
 	SessionCreated int64  `json:"sessionCreated"`
-	Mode           string `json:"mode"`
 	Note           string `json:"note,omitempty"`
 	CreatedAt      int64  `json:"createdAt"`
-	// ExpiresAt is a unix second; 0 means until revoked (read-only links only).
+	// ExpiresAt is a unix second; 0 means until revoked.
 	ExpiresAt int64 `json:"expiresAt"`
 	// Transcripts are the Claude transcripts the session wrote while this link
-	// existed, oldest first, recorded by the sweep (links_transcript.go). What
-	// an ended link shows.
+	// existed, oldest first (links_transcript.go). What the link shows.
 	Transcripts []string `json:"transcripts,omitempty"`
 	// Title is the session's title as last seen, kept for after it ends.
 	Title string `json:"title,omitempty"`
-	// EndedAt is when the session ended, 0 while it runs. An ended link stays
-	// until it expires or is revoked, and shows its transcripts read-only.
+	// EndedAt is when the session ended, 0 while it runs.
 	EndedAt int64 `json:"endedAt,omitempty"`
 }
 
@@ -84,28 +82,16 @@ const (
 	linksVersion = 1
 	linksPath    = "/var/lib/tmux-api/links.json"
 
-	// ticketTTL is how long a minted ticket may wait to be spent. The visitor
-	// page spends it within a second of minting it; 30 s covers a slow phone.
-	ticketTTL = 30 * time.Second
-	// maxTickets bounds the in-memory book, so a flood of redeems cannot grow
-	// it without limit. Past it, a redeem answers 503 until tickets expire.
-	maxTickets = 2000
+	// maxViews bounds the in-memory view-key book, so a flood of redeems
+	// cannot grow it without limit. Past it, a redeem answers 503.
+	maxViews = 2000
 	// maxLinksPerOwner keeps one account's store small enough to read whole.
 	maxLinksPerOwner = 100
 	// maxNoteRunes bounds the owner's private note.
 	maxNoteRunes = 80
-	// linkPushEvery throttles the read-write visitor push per link, so a
-	// visitor on a flaky connection does not notify on every reconnect.
-	linkPushEvery = 10 * time.Minute
-	// visitorSettle is how long a freshly recorded visitor is kept even when
-	// tmux does not list its client yet: the attach script records the tty and
-	// THEN execs tmux, so the first poll can land in between.
-	visitorSettle = 15 * time.Second
-	kindLink      = "link"
 )
 
-// linkTTLs are the lifetimes the owner may pick (decision 3). "never" is
-// read-only only; a read-write link is capped at 24h.
+// linkTTLs are the lifetimes the owner may pick (decision 3).
 var linkTTLs = map[string]time.Duration{
 	"1h":    time.Hour,
 	"24h":   24 * time.Hour,
@@ -113,31 +99,19 @@ var linkTTLs = map[string]time.Duration{
 	"never": 0,
 }
 
-func linkTTLAllowed(mode, ttl string) bool {
-	d, ok := linkTTLs[ttl]
-	if !ok {
-		return false
-	}
-	if mode == shareModeRW && (d == 0 || d > 24*time.Hour) {
-		return false
-	}
-	return true
-}
-
 var (
 	linkIDRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 	// linkTokenRe is 16 random bytes, base64url without padding: 22 chars.
 	linkTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
-	// ticketRe is 24 random bytes, base64url without padding: 32 chars. The
-	// attach script applies the same pattern before it ever reaches here.
-	ticketRe = regexp.MustCompile(`^[A-Za-z0-9_-]{32}$`)
+	// viewKeyRe is 24 random bytes, base64url without padding: 32 chars.
+	viewKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]{32}$`)
 )
 
 func randomToken(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		// Same stance as newMintedName: a predictable token is worse than a
-		// crash, because it would be a working credential to someone's shell.
+		// crash, because it would be a working credential to a conversation.
 		panic("randomToken: " + err.Error())
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
@@ -250,16 +224,10 @@ func validateLinkSet(ls LinkSet) error {
 		if !sessionNameRe.MatchString(l.Owner) || !sessionIDRe.MatchString(l.SessionID) {
 			return fmt.Errorf("invalid link ref on %s", l.ID)
 		}
-		if l.Mode != shareModeRO && l.Mode != shareModeRW {
-			return fmt.Errorf("invalid link mode %q", l.Mode)
-		}
 		for _, p := range l.Transcripts {
 			if !filepath.IsAbs(p) || filepath.Ext(p) != ".jsonl" {
 				return fmt.Errorf("invalid transcript path on link %s", l.ID)
 			}
-		}
-		if l.Mode == shareModeRW && l.ExpiresAt == 0 {
-			return fmt.Errorf("read-write link %s has no expiry", l.ID)
 		}
 	}
 	return nil
@@ -271,17 +239,13 @@ func (l Link) expired(now time.Time) bool {
 
 // --- live session identity ---
 
-// liveSession is the slice of a session a link needs: who it is (id + created)
-// and what to call it.
+// liveSession is the slice of a session a link needs: who it is (id + created),
+// what to call it, and the transcript its Claude is writing.
 type liveSession struct {
 	ID      string
 	Created int64
 	Name    string
 	Title   string
-	// Cols and Rows are the session's window: what a read-only visitor's
-	// terminal is drawn at, since a watcher never sizes the window itself.
-	Cols int
-	Rows int
 	// Transcript is the session's @claude_transcript stamp: the transcript its
 	// Claude is writing now, "" for a plain shell.
 	Transcript string
@@ -290,7 +254,7 @@ type liveSession struct {
 // The title goes last: it is free text and the only field that could hold a
 // tab, so SplitN keeps it whole.
 const liveSessionFmt = "#{session_id}\t#{session_created}\t#{session_name}\t" +
-	"#{window_width}\t#{window_height}\t#{" + sessionio.OptionTranscript + "}\t#{" + sessionTitleOption + "}"
+	"#{" + sessionio.OptionTranscript + "}\t#{" + sessionTitleOption + "}"
 
 // listLiveSessions reads one owner's sessions. A server that is not running
 // has no sessions, which is an answer (every link on it has ended); any other
@@ -310,7 +274,7 @@ var listLiveSessions = func(owner string) ([]liveSession, error) {
 func parseLiveSessions(out []byte) []liveSession {
 	ss := []liveSession{}
 	for _, line := range strings.Split(string(out), "\n") {
-		col := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 7)
+		col := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 5)
 		if len(col) < 3 || !sessionIDRe.MatchString(col[0]) {
 			continue
 		}
@@ -319,13 +283,9 @@ func parseLiveSessions(out []byte) []liveSession {
 			continue
 		}
 		s := liveSession{ID: col[0], Created: created, Name: col[2]}
-		if len(col) >= 5 {
-			s.Cols, _ = strconv.Atoi(col[3])
-			s.Rows, _ = strconv.Atoi(col[4])
-		}
-		if len(col) == 7 {
-			s.Transcript = col[5]
-			s.Title = col[6]
+		if len(col) == 5 {
+			s.Transcript = col[3]
+			s.Title = col[4]
 		}
 		ss = append(ss, s)
 	}
@@ -350,355 +310,37 @@ func findLiveByName(ss []liveSession, name string) (liveSession, bool) {
 	return liveSession{}, false
 }
 
-// --- tickets ---
-
-type ticket struct {
-	linkID  string
-	expires time.Time
-}
-
-type ticketBook struct {
-	mu sync.Mutex
-	m  map[string]ticket // keyed by hashToken(ticket)
-}
-
-var tickets = &ticketBook{m: map[string]ticket{}}
-
-var errTicketBookFull = errors.New("ticket book full")
-
-func (b *ticketBook) mint(linkID string, now time.Time) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.sweepLocked(now)
-	if len(b.m) >= maxTickets {
-		return "", errTicketBookFull
+func titleOrName(s liveSession) string {
+	if strings.TrimSpace(s.Title) != "" {
+		return s.Title
 	}
-	t := randomToken(24)
-	b.m[hashToken(t)] = ticket{linkID: linkID, expires: now.Add(ticketTTL)}
-	return t, nil
-}
-
-// spend consumes a ticket. It answers the link id once, and never again.
-func (b *ticketBook) spend(t string, now time.Time) (string, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	k := hashToken(t)
-	tk, ok := b.m[k]
-	if !ok {
-		return "", false
-	}
-	delete(b.m, k)
-	if !now.Before(tk.expires) {
-		return "", false
-	}
-	return tk.linkID, true
-}
-
-func (b *ticketBook) sweepLocked(now time.Time) {
-	for k, tk := range b.m {
-		if !now.Before(tk.expires) {
-			delete(b.m, k)
-		}
-	}
-}
-
-// dropLink forgets every outstanding ticket for a revoked link, so a ticket
-// minted a second before the revoke cannot be spent after it.
-func (b *ticketBook) dropLink(linkID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for k, tk := range b.m {
-		if tk.linkID == linkID {
-			delete(b.m, k)
-		}
-	}
-}
-
-// --- visitors ---
-
-// visitor is one live link attach: the tmux client a ttyd-link connection
-// became, recorded by tty so a revoke or an expiry can detach exactly it.
-type visitor struct {
-	LinkID    string    `json:"linkId"`
-	Owner     string    `json:"owner"`
-	SessionID string    `json:"sessionId"`
-	Tty       string    `json:"tty"`
-	Mode      string    `json:"mode"`
-	Guest     int       `json:"guest"`
-	Since     time.Time `json:"since"`
-}
-
-type visitorBook struct {
-	mu sync.Mutex
-	v  []visitor
-	// lastPush is per link, for linkPushEvery.
-	lastPush map[string]time.Time
-	path     string
-}
-
-var visitors = &visitorBook{lastPush: map[string]time.Time{}, path: linkVisitorsPath}
-
-// linkVisitorsPath keeps the visitor records across a tmux-api restart. The
-// visitors' tmux clients belong to ttyd-link and outlive this process, so
-// without the file a revoke after a deploy would have nothing to detach.
-const linkVisitorsPath = "/var/lib/tmux-api/link-visitors.json"
-
-// saveLocked writes the records. Best effort: a failed write costs only the
-// ability to detach after a restart, and is logged.
-func (b *visitorBook) saveLocked() {
-	if b.path == "" {
-		return
-	}
-	v := b.v
-	if v == nil {
-		v = []visitor{}
-	}
-	if err := writeAtomicJSON(filepath.Dir(b.path), "link-visitors.*.tmp", b.path, v); err != nil {
-		log.Printf("link: saving visitors: %v", err)
-	}
-}
-
-// loadVisitors reads the records written before a restart. Called once at
-// startup; the first session poll then drops any whose client has gone.
-func (b *visitorBook) loadVisitors() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	raw, err := os.ReadFile(b.path)
-	if err != nil {
-		return
-	}
-	var v []visitor
-	if json.Unmarshal(raw, &v) == nil {
-		b.v = v
-	}
-}
-
-// add records a visitor and numbers it: the lowest guest number not held by
-// another live visitor of the same session, so the owner reads "guest 1",
-// "guest 2" rather than a number that climbs forever.
-func (b *visitorBook) add(v visitor) visitor {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	used := map[int]bool{}
-	out := b.v[:0]
-	for _, o := range b.v {
-		if o.Owner == v.Owner && o.Tty == v.Tty {
-			continue // the pty was reused; the old record is stale
-		}
-		out = append(out, o)
-		if o.Owner == v.Owner && o.SessionID == v.SessionID {
-			used[o.Guest] = true
-		}
-	}
-	b.v = out
-	n := 1
-	for used[n] {
-		n++
-	}
-	v.Guest = n
-	b.v = append(b.v, v)
-	b.saveLocked()
-	return v
-}
-
-func (b *visitorBook) forLink(linkID string) []visitor {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var out []visitor
-	for _, v := range b.v {
-		if v.LinkID == linkID {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-func (b *visitorBook) removeLink(linkID string) []visitor {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var gone []visitor
-	out := b.v[:0]
-	for _, v := range b.v {
-		if v.LinkID == linkID {
-			gone = append(gone, v)
-			continue
-		}
-		out = append(out, v)
-	}
-	b.v = out
-	delete(b.lastPush, linkID)
-	if len(gone) > 0 {
-		b.saveLocked()
-	}
-	return gone
-}
-
-// shouldPush reports whether a read-write visit to this link should notify the
-// owner now, and records that it did.
-func (b *visitorBook) shouldPush(linkID string, now time.Time) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if last, ok := b.lastPush[linkID]; ok && now.Sub(last) < linkPushEvery {
-		return false
-	}
-	b.lastPush[linkID] = now
-	return true
-}
-
-// reconcile drops visitors whose client tmux no longer lists for this owner,
-// past the settle window, and returns per-session counts for those remaining.
-// clients is the owner's whole list-clients reading.
-func (b *visitorBook) reconcile(owner string, clients []client, now time.Time) map[string]VisitorCount {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	attached := map[string]client{}
-	for _, c := range clients {
-		if c.Name != "" {
-			attached[c.Name] = c
-		}
-	}
-	counts := map[string]VisitorCount{}
-	before := len(b.v)
-	out := b.v[:0]
-	for _, v := range b.v {
-		if v.Owner != owner {
-			out = append(out, v)
-			continue
-		}
-		c, ok := attached[v.Tty]
-		if !ok && now.Sub(v.Since) < visitorSettle {
-			out = append(out, v)
-			continue
-		}
-		if !ok {
-			continue
-		}
-		out = append(out, v)
-		vc := counts[v.SessionID]
-		vc.Total++
-		if !isReadOnly(c.Flags) {
-			vc.Driving++
-		}
-		counts[v.SessionID] = vc
-	}
-	b.v = out
-	if len(b.v) != before {
-		b.saveLocked()
-	}
-	return counts
-}
-
-// VisitorCount is what GET /sessions carries for a session with live link
-// visitors: how many, and how many of them can type.
-type VisitorCount struct {
-	Total   int `json:"total"`
-	Driving int `json:"driving"`
-}
-
-// annotateVisitors stamps each session with its live link visitors, from the
-// client list the session poll already read. No extra tmux call.
-func annotateVisitors(owner string, sessions []Session, clients []client) {
-	counts := visitors.reconcile(owner, clients, time.Now())
-	if len(counts) == 0 {
-		return
-	}
-	for i := range sessions {
-		if vc, ok := counts[sessions[i].ID]; ok && vc.Total > 0 {
-			c := vc
-			sessions[i].Visitors = &c
-		}
-	}
-}
-
-// --- detaching ---
-
-const linkClientFmt = "#{client_name}\t#{client_created}"
-
-// detachVisitor kicks one visitor's tmux client, after checking the client on
-// that tty is still the one we recorded. ttys are reused: once a visitor has
-// gone, the same /dev/pts/N can belong to the owner's own next attach, and
-// detaching that would be the wrong client. client_created pins it.
-var detachVisitor = func(v visitor) {
-	if !ttyRe.MatchString(v.Tty) {
-		return
-	}
-	out, err := tmuxCmd(v.Owner, "list-clients", "-F", linkClientFmt).Output()
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		col := strings.Split(line, "\t")
-		if len(col) != 2 || col[0] != v.Tty {
-			continue
-		}
-		created, err := strconv.ParseInt(col[1], 10, 64)
-		if err != nil || !sameClient(created, v.Since) {
-			log.Printf("link: not detaching %s on %s: the client there is not the visitor recorded", v.Tty, v.Owner)
-			return
-		}
-		if out, err := tmuxCmd(v.Owner, "detach-client", "-t", v.Tty).CombinedOutput(); err != nil {
-			log.Printf("link: detach %s on %s: %v: %s", v.Tty, v.Owner, err, strings.TrimSpace(string(out)))
-		}
-		return
-	}
-}
-
-// detachRetries are when a revoked visitor is detached, measured from the
-// revoke. More than once because of the attach window: the visitor is recorded
-// at /internal/link-join and tmux attaches a moment later, so a revoke landing
-// in between finds no client yet. The later passes catch it once it is there.
-var detachRetries = []time.Duration{0, time.Second, 3 * time.Second, 10 * time.Second}
-
-var linkSleep = time.Sleep
-
-func detachWithRetries(vs []visitor) {
-	var waited time.Duration
-	for _, d := range detachRetries {
-		linkSleep(d - waited)
-		waited = d
-		for _, v := range vs {
-			detachVisitor(v)
-		}
-	}
-}
-
-// sameClient: the client attached within a few seconds of the record. The
-// record is written just before tmux attaches, so the client is a little newer.
-func sameClient(clientCreated int64, recorded time.Time) bool {
-	d := clientCreated - recorded.Unix()
-	return d >= -2 && d <= 30
+	return s.Name
 }
 
 // --- owner API: /links ---
 
 // LinkView is a link as its owner sees it.
 type LinkView struct {
-	ID        string        `json:"id"`
-	Session   string        `json:"session"`
-	SessionID string        `json:"sessionId"`
-	Title     string        `json:"title,omitempty"`
-	Mode      string        `json:"mode"`
-	Note      string        `json:"note,omitempty"`
-	CreatedAt int64         `json:"createdAt"`
-	ExpiresAt int64         `json:"expiresAt"`
-	Visitors  []VisitorView `json:"visitors"`
-	// EndedAt is set once the session has ended and the link shows its
-	// transcript; the owner revokes such a link from Settings.
+	ID        string `json:"id"`
+	Session   string `json:"session"`
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title,omitempty"`
+	Note      string `json:"note,omitempty"`
+	CreatedAt int64  `json:"createdAt"`
+	ExpiresAt int64  `json:"expiresAt"`
+	// Viewers is how many browsers have read the link in the last
+	// viewerWindow (links_transcript.go).
+	Viewers int `json:"viewers"`
+	// EndedAt is set once the session has ended; the owner revokes such a link
+	// from Settings, since the session is gone from the sidebar.
 	EndedAt int64 `json:"endedAt,omitempty"`
-}
-
-// VisitorView is one live visitor, as the owner sees it.
-type VisitorView struct {
-	Guest int    `json:"guest"`
-	Mode  string `json:"mode"`
-	Since int64  `json:"since"`
 }
 
 var linkNow = time.Now
 
 // linkCaller resolves the signed-in caller for the owner API. A lens tab
-// (?as=) is refused: the lens watches, and minting a bearer URL to someone
-// else's shell is the opposite of watching.
+// (?as=) is refused: the lens watches, and handing out a bearer URL to
+// someone else's conversation is the opposite of watching.
 func linkCaller(w http.ResponseWriter, r *http.Request) string {
 	osUser := resolveRealOSUser(w, r)
 	if osUser == "" {
@@ -764,22 +406,16 @@ func listLinks(w http.ResponseWriter, osUser string) {
 }
 
 func viewOf(l Link, s liveSession) LinkView {
-	v := LinkView{
+	return LinkView{
 		ID: l.ID, Session: s.Name, SessionID: l.SessionID, Title: s.Title,
-		Mode: l.Mode, Note: l.Note, CreatedAt: l.CreatedAt, ExpiresAt: l.ExpiresAt,
-		Visitors: []VisitorView{}, EndedAt: l.EndedAt,
+		Note: l.Note, CreatedAt: l.CreatedAt, ExpiresAt: l.ExpiresAt,
+		Viewers: views.viewers(l.ID, linkNow()), EndedAt: l.EndedAt,
 	}
-	for _, vis := range visitors.forLink(l.ID) {
-		v.Visitors = append(v.Visitors, VisitorView{Guest: vis.Guest, Mode: vis.Mode, Since: vis.Since.Unix()})
-	}
-	sort.Slice(v.Visitors, func(i, j int) bool { return v.Visitors[i].Guest < v.Visitors[j].Guest })
-	return v
 }
 
 func createLink(w http.ResponseWriter, r *http.Request, osUser string) {
 	var body struct {
 		Name string `json:"name"`
-		Mode string `json:"mode"`
 		TTL  string `json:"ttl"`
 		Note string `json:"note"`
 	}
@@ -788,18 +424,14 @@ func createLink(w http.ResponseWriter, r *http.Request, osUser string) {
 		return
 	}
 	name := strings.TrimSpace(body.Name)
-	mode := strings.TrimSpace(body.Mode)
 	ttl := strings.TrimSpace(body.TTL)
 	if !sessionNameRe.MatchString(name) {
 		http.Error(w, "invalid session name", http.StatusBadRequest)
 		return
 	}
-	if mode != shareModeRO && mode != shareModeRW {
-		http.Error(w, "invalid mode", http.StatusBadRequest)
-		return
-	}
-	if !linkTTLAllowed(mode, ttl) {
-		http.Error(w, "invalid lifetime: 1h, 24h, 7d or never; a read-write link lasts at most 24h", http.StatusBadRequest)
+	d, ok := linkTTLs[ttl]
+	if !ok {
+		http.Error(w, "invalid lifetime: 1h, 24h, 7d or never", http.StatusBadRequest)
 		return
 	}
 	live, err := listLiveSessions(osUser)
@@ -814,15 +446,21 @@ func createLink(w http.ResponseWriter, r *http.Request, osUser string) {
 		http.Error(w, "no such running session", http.StatusNotFound)
 		return
 	}
+	// A link shares a conversation, so a session with none (a plain shell)
+	// has nothing to share (ADR-0041).
+	if s.Transcript == "" {
+		http.Error(w, "this session is not running Claude, so it has no conversation to share", http.StatusConflict)
+		return
+	}
 	now := linkNow()
 	token := randomToken(16)
 	l := Link{
 		ID: newLinkID(), TokenHash: hashToken(token), Owner: osUser,
-		SessionID: s.ID, SessionCreated: s.Created, Mode: mode,
+		SessionID: s.ID, SessionCreated: s.Created,
 		Note: cleanNote(body.Note), CreatedAt: now.Unix(), Title: titleOrName(s),
 	}
 	l.appendTranscript(s.Transcript)
-	if d := linkTTLs[ttl]; d > 0 {
+	if d > 0 {
 		l.ExpiresAt = now.Add(d).Unix()
 	}
 	err = linkStoreInstance.update(func(ls *LinkSet) error {
@@ -846,10 +484,8 @@ func createLink(w http.ResponseWriter, r *http.Request, osUser string) {
 		logAndFail(w, "link create for %s failed: %v", osUser, err)
 		return
 	}
-	log.Printf("link: %s created %s link %s to %s (%s), expires %d", osUser, mode, l.ID, s.Name, s.ID, l.ExpiresAt)
-	events.Emit("link.created", osUser, telemetry.Attrs{
-		"tl.session": s.Name, "tl.mode": mode, "tl.kind": ttl,
-	})
+	log.Printf("link: %s created link %s to %s (%s), expires %d", osUser, l.ID, s.Name, s.ID, l.ExpiresAt)
+	events.Emit("link.created", osUser, telemetry.Attrs{"tl.session": s.Name, "tl.kind": ttl})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(struct {
@@ -916,9 +552,8 @@ func revokeSessionLinks(w http.ResponseWriter, r *http.Request, osUser string) {
 	_ = json.NewEncoder(w).Encode(map[string]int{"revoked": n})
 }
 
-// revokeLinks removes every link match selects, then detaches their visitors.
-// The row goes FIRST, the same order a share revoke uses: a reconnect racing
-// the revoke then fails its redeem rather than slipping in after the kick.
+// revokeLinks removes every link match selects and drops their view keys, so
+// a page already open answers 404 on its next read.
 func revokeLinks(match func(Link) bool) (int, error) {
 	var gone []Link
 	err := linkStoreInstance.update(func(ls *LinkSet) error {
@@ -943,28 +578,22 @@ func revokeLinks(match func(Link) bool) (int, error) {
 		return 0, err
 	}
 	for _, l := range gone {
-		tickets.dropLink(l.ID)
-		grants.dropLink(l.ID)
 		views.dropLink(l.ID)
-		if vs := visitors.removeLink(l.ID); len(vs) > 0 {
-			go detachWithRetries(vs)
-		}
 		log.Printf("link: %s link %s to %s ended", l.Owner, l.ID, l.SessionID)
 	}
 	return len(gone), nil
 }
 
-// pruneLinks ends this owner's links that have expired or whose session is no
-// longer running. live must be a successful reading.
+// pruneLinks handles this owner's links whose time is up: an expired link
+// goes, a link whose session ended is marked ended and keeps showing its
+// conversation (ADR-0040), and a link that never recorded a transcript goes
+// with its session. live must be a successful reading.
 func pruneLinks(owner string, live []liveSession) {
 	now := linkNow()
 	gone := func(l Link) bool {
 		_, ok := findLiveByID(live, l.SessionID, l.SessionCreated)
 		return l.EndedAt == 0 && !ok
 	}
-	// Expired links go, and so do links whose session ended with nothing to
-	// show (a plain shell). A link whose session wrote a transcript stays,
-	// ended, and shows it read-only (ADR-0040).
 	if _, err := revokeLinks(func(l Link) bool {
 		if l.Owner != owner {
 			return false
@@ -973,45 +602,29 @@ func pruneLinks(owner string, live []liveSession) {
 	}); err != nil {
 		log.Printf("link prune for %s failed: %v", owner, err)
 	}
-	endLinks(func(l Link) bool { return l.Owner == owner && gone(l) && len(l.Transcripts) > 0 })
-}
-
-// endLinks marks the links match selects as ended: their session is gone, so
-// visitors still attached are detached and outstanding tickets and grants
-// dropped, and from here on the link answers with its transcript.
-func endLinks(match func(Link) bool) {
-	var ended []Link
 	err := linkStoreInstance.update(func(ls *LinkSet) error {
+		changed := false
 		for i := range ls.Links {
-			if ls.Links[i].EndedAt == 0 && match(ls.Links[i]) {
-				ls.Links[i].EndedAt = linkNow().Unix()
-				ended = append(ended, ls.Links[i])
+			l := &ls.Links[i]
+			if l.Owner == owner && gone(*l) && len(l.Transcripts) > 0 {
+				l.EndedAt = now.Unix()
+				changed = true
+				log.Printf("link: %s link %s to %s now shows its finished conversation", l.Owner, l.ID, l.SessionID)
 			}
 		}
-		if len(ended) == 0 {
+		if !changed {
 			return errNoLinkChange
 		}
 		return nil
 	})
-	if err != nil {
-		if !errors.Is(err, errNoLinkChange) {
-			log.Printf("link: ending links failed: %v", err)
-		}
-		return
-	}
-	for _, l := range ended {
-		tickets.dropLink(l.ID)
-		grants.dropLink(l.ID)
-		if vs := visitors.removeLink(l.ID); len(vs) > 0 {
-			go detachWithRetries(vs)
-		}
-		log.Printf("link: %s link %s to %s now shows its transcript", l.Owner, l.ID, l.SessionID)
+	if err != nil && !errors.Is(err, errNoLinkChange) {
+		log.Printf("link: ending links for %s failed: %v", owner, err)
 	}
 }
 
-// runLinkSweep ends expired links and links whose session has gone, and
-// detaches their visitors, without waiting for anyone to open the lobby. It
-// also drops share rows whose session has ended (shares.go).
+// runLinkSweep records transcripts, ends expired links and marks links whose
+// session has gone, without waiting for anyone to open the lobby. It also
+// drops share rows whose session has ended (shares.go).
 func runLinkSweep(stop <-chan struct{}) {
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
@@ -1051,10 +664,10 @@ func sweepLinksOnce() {
 
 // --- public API: /link/redeem ---
 
-// handleLinkRedeem trades a token for a ticket. It is the one route here that
-// carries no identity: the ingress sends /s/api/ to it with no forward-auth.
-// Every failure answers the same 404, so a caller learns nothing about whether
-// a token ever existed, expired, or outlived its session.
+// handleLinkRedeem trades a token for a view cookie and says what the link
+// shows. It carries no identity: the ingress sends it here with no
+// forward-auth. Every failure answers the same 404, so a caller learns nothing
+// about whether a token ever existed, expired, or was revoked.
 func handleLinkRedeem(w http.ResponseWriter, r *http.Request) {
 	if err := actAsGate.CheckProxySecret(r); err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -1072,89 +685,49 @@ func handleLinkRedeem(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
 		Token string `json:"token"`
-		// Peek asks about the link without minting a ticket: the visitor page
-		// polls it for the window size, which moves when the owner resizes,
-		// and to notice the link ending while its socket is still open.
-		Peek bool `json:"peek"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || !linkTokenRe.MatchString(body.Token) {
 		http.Error(w, "link not found", http.StatusNotFound)
 		return
 	}
-	l, s, ok := resolveLink(func(l Link) bool { return l.TokenHash == hashToken(body.Token) })
+	l, _, ok := resolveLink(func(l Link) bool { return l.TokenHash == hashToken(body.Token) })
 	if !ok {
 		http.Error(w, "link not found", http.StatusNotFound)
 		return
 	}
-	if l.EndedAt != 0 {
-		redeemEnded(w, l, body.Peek)
+	key, err := views.mint(l.ID, linkNow())
+	if err != nil {
+		http.Error(w, "busy", http.StatusServiceUnavailable)
 		return
 	}
-	t := ""
-	if !body.Peek {
-		var err error
-		if t, err = tickets.mint(l.ID, linkNow()); err != nil {
-			http.Error(w, "busy", http.StatusServiceUnavailable)
-			return
-		}
-	}
+	setViewCookie(w, l.ID, key)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
-		Ticket    string `json:"ticket,omitempty"`
-		Mode      string `json:"mode"`
-		Title     string `json:"title"`
-		ExpiresAt int64  `json:"expiresAt"`
-		Cols      int    `json:"cols"`
-		Rows      int    `json:"rows"`
-	}{t, l.Mode, titleOrName(s), l.ExpiresAt, s.Cols, s.Rows})
-}
-
-// redeemEnded answers for a link whose session has ended: no ticket, since
-// there is no terminal, and on a real redeem a view cookie for the transcript
-// routes. A peek says only that the link is now a transcript, which is how a
-// visitor still watching learns to switch.
-func redeemEnded(w http.ResponseWriter, l Link, peek bool) {
-	if !peek {
-		key, err := views.mint(l.ID, linkNow())
-		if err != nil {
-			http.Error(w, "busy", http.StatusServiceUnavailable)
-			return
-		}
-		setViewCookie(w, l.ID, key)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Mode      string `json:"mode"`
 		Link      string `json:"link"`
 		Title     string `json:"title"`
 		ExpiresAt int64  `json:"expiresAt"`
 		EndedAt   int64  `json:"endedAt"`
-	}{"transcript", l.ID, l.Title, l.ExpiresAt, l.EndedAt})
+	}{l.ID, l.Title, l.ExpiresAt, l.EndedAt})
 }
 
-func titleOrName(s liveSession) string {
-	if strings.TrimSpace(s.Title) != "" {
-		return s.Title
-	}
-	return s.Name
-}
-
-// resolveLink finds a live link by match: present, unexpired, its session
-// still running. A link that fails the last two is ended on the spot.
+// resolveLink finds a link by match that is still valid: present, unexpired,
+// and either ended or with its session running. A session that went between
+// sweeps is handled on the spot by the sweep's own rule.
 func resolveLink(match func(Link) bool) (Link, liveSession, bool) {
-	ls, err := linkStoreInstance.load()
-	if err != nil {
-		log.Printf("link load failed: %v", err)
-		return Link{}, liveSession{}, false
-	}
-	var l Link
-	found := false
-	for _, c := range ls.Links {
-		if match(c) {
-			l, found = c, true
-			break
+	find := func() (Link, bool) {
+		ls, err := linkStoreInstance.load()
+		if err != nil {
+			log.Printf("link load failed: %v", err)
+			return Link{}, false
 		}
+		for _, c := range ls.Links {
+			if match(c) {
+				return c, true
+			}
+		}
+		return Link{}, false
 	}
+	l, found := find()
 	if !found {
 		return Link{}, liveSession{}, false
 	}
@@ -1162,8 +735,6 @@ func resolveLink(match func(Link) bool) (Link, liveSession, bool) {
 		_, _ = revokeLinks(func(c Link) bool { return c.ID == l.ID })
 		return Link{}, liveSession{}, false
 	}
-	// An ended link resolves with no live session. Callers that attach a
-	// terminal refuse it; the transcript routes need exactly this.
 	if l.EndedAt != 0 {
 		return l, liveSession{}, true
 	}
@@ -1172,28 +743,19 @@ func resolveLink(match func(Link) bool) (Link, liveSession, bool) {
 		log.Printf("link %s: %v", l.ID, err)
 		return Link{}, liveSession{}, false
 	}
-	s, ok := findLiveByID(live, l.SessionID, l.SessionCreated)
-	if !ok {
-		// The session went between sweeps. Same rule as the sweep: a link
-		// with a transcript ends and shows it, one without goes.
-		noteLinkTranscripts(l.Owner, live)
-		pruneLinks(l.Owner, live)
-		ls, err := linkStoreInstance.load()
-		if err != nil {
-			return Link{}, liveSession{}, false
-		}
-		for _, c := range ls.Links {
-			if c.ID == l.ID && c.EndedAt != 0 {
-				return c, liveSession{}, true
-			}
-		}
-		return Link{}, liveSession{}, false
+	if s, ok := findLiveByID(live, l.SessionID, l.SessionCreated); ok {
+		return l, s, true
 	}
-	return l, s, true
+	noteLinkTranscripts(l.Owner, live)
+	pruneLinks(l.Owner, live)
+	if l, found = find(); found && l.EndedAt != 0 {
+		return l, liveSession{}, true
+	}
+	return Link{}, liveSession{}, false
 }
 
 // clientIP is the visitor's address as the proxy saw it. X-Real-Ip is set by
-// Traefik from the connection, overwriting anything a client sent; the peer
+// Traefik's real-ip middleware, overwriting anything a client sent; the peer
 // address is the fallback for a deployment without it.
 func clientIP(r *http.Request) string {
 	if ip := strings.TrimSpace(r.Header.Get("X-Real-Ip")); net.ParseIP(ip) != nil {
@@ -1208,7 +770,7 @@ func clientIP(r *http.Request) string {
 
 // rateLimiter is a fixed-window counter per key plus a global ceiling. The
 // token is 128 bits, so this is not what stops guessing; it keeps a flood of
-// redeems from filling the ticket book or the journal.
+// redeems from filling the view-key book or the journal.
 type rateLimiter struct {
 	mu        sync.Mutex
 	window    time.Duration
@@ -1235,246 +797,4 @@ func (l *rateLimiter) allow(key string, now time.Time) bool {
 	l.globalCnt++
 	l.counts[key]++
 	return true
-}
-
-// --- internal: /internal/link-attach and /internal/link-join ---
-//
-// Two steps, run by two different accounts, so that neither can attach a
-// session on its own:
-//
-//  1. devvm/tmux-link-attach.sh runs as tl-link, under ttyd-link-ro or
-//     ttyd-link-rw, which take connections from anyone. It spends the visitor's
-//     ticket here and gets back the owner and a GRANT.
-//  2. It then runs `sudo -u <owner> tmux-link-join <grant>`. tl-link's sudo
-//     grant is that one wrapper, as any user but root. The wrapper, now running
-//     as the owner, spends the grant at /internal/link-join and attaches the
-//     one target tmux-api names, read-only unless the link is read-write.
-//
-// So an attacker who takes over the tl-link account (a ttyd or libwebsockets
-// bug, say) holds no credential that attaches anything: every attach needs a
-// grant, every grant needs a ticket, and every ticket needs a live link token.
-//
-// Both routes are loopback only. Neither carries the internal token: tl-link
-// cannot read it (it sits in wizard's 0700 /var/lib/tmux-api), and the ticket
-// and the grant are each a single-use capability already.
-
-// grant is what a spent ticket becomes: permission for the owner's wrapper to
-// attach one target, once, within grantTTL.
-//
-// It is NOT bound to a tty. The two halves do not share one: sudo on this box
-// runs with use_pty, so tmux-link-join gets a fresh pty and reports a
-// different tty from the one tmux-link-attach.sh saw (measured 2026-10-06,
-// /dev/pts/47 then /dev/pts/51). The join side's tty is the one the tmux
-// client attaches from, so that is the one the visitor is recorded under.
-type grant struct {
-	linkID  string
-	owner   string
-	target  string
-	mode    string
-	expires time.Time
-}
-
-const grantTTL = 15 * time.Second
-
-type grantBook struct {
-	mu sync.Mutex
-	m  map[string]grant // keyed by hashToken(grant)
-}
-
-var grants = &grantBook{m: map[string]grant{}}
-
-func (b *grantBook) mint(g grant, now time.Time) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for k, o := range b.m {
-		if !now.Before(o.expires) {
-			delete(b.m, k)
-		}
-	}
-	if len(b.m) >= maxTickets {
-		return "", errTicketBookFull
-	}
-	t := randomToken(24)
-	g.expires = now.Add(grantTTL)
-	b.m[hashToken(t)] = g
-	return t, nil
-}
-
-func (b *grantBook) spend(t string, now time.Time) (grant, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	k := hashToken(t)
-	g, ok := b.m[k]
-	if !ok {
-		return grant{}, false
-	}
-	delete(b.m, k)
-	return g, now.Before(g.expires)
-}
-
-func (b *grantBook) dropLink(linkID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for k, g := range b.m {
-		if g.linkID == linkID {
-			delete(b.m, k)
-		}
-	}
-}
-
-// handleInternalLinkAttach is step 1: ticket in, {owner, grant} out. mode is
-// the ttyd instance the visitor reached: ttyd-link-ro takes no input at all
-// (no -W), so a read-only link is only ever served there, and a read-write one
-// only on ttyd-link-rw. A mismatch is refused rather than quietly downgraded,
-// because the visitor page picked the instance from the redeem answer and a
-// mismatch means something other than that page is calling.
-func handleInternalLinkAttach(w http.ResponseWriter, r *http.Request) {
-	if !isLoopbackPeer(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Ticket string `json:"ticket"`
-		Tty    string `json:"tty"`
-		Mode   string `json:"mode"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	if !ticketRe.MatchString(body.Ticket) || !ttyRe.MatchString(body.Tty) ||
-		(body.Mode != shareModeRO && body.Mode != shareModeRW) {
-		http.Error(w, "invalid ticket, tty or mode", http.StatusBadRequest)
-		return
-	}
-	now := linkNow()
-	linkID, ok := tickets.spend(body.Ticket, now)
-	if !ok {
-		http.Error(w, "no such ticket", http.StatusForbidden)
-		return
-	}
-	l, _, ok := resolveLink(func(l Link) bool { return l.ID == linkID })
-	if !ok || l.EndedAt != 0 {
-		http.Error(w, "link ended", http.StatusForbidden)
-		return
-	}
-	if l.Mode != body.Mode {
-		log.Printf("link: refused %s ticket for link %s on the %s instance", l.Mode, l.ID, body.Mode)
-		http.Error(w, "wrong instance for this link", http.StatusForbidden)
-		return
-	}
-	g, err := grants.mint(grant{linkID: l.ID, owner: l.Owner, target: l.SessionID, mode: l.Mode}, now)
-	if err != nil {
-		http.Error(w, "busy", http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Owner string `json:"owner"`
-		Grant string `json:"grant"`
-	}{l.Owner, g})
-}
-
-// handleInternalLinkJoin is step 2: grant in, {target, mode} out, for the
-// wrapper running as the owner. user is what the wrapper says `id -un` is,
-// and it must be the grant's owner, so a grant cannot be spent from another
-// account's wrapper. The link is checked once more here, because a revoke can
-// land between the two steps.
-func handleInternalLinkJoin(w http.ResponseWriter, r *http.Request) {
-	if !isLoopbackPeer(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Grant string `json:"grant"`
-		User  string `json:"user"`
-		Tty   string `json:"tty"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	if !ticketRe.MatchString(body.Grant) || !ttyRe.MatchString(body.Tty) {
-		http.Error(w, "invalid grant or tty", http.StatusBadRequest)
-		return
-	}
-	now := linkNow()
-	g, ok := grants.spend(body.Grant, now)
-	if !ok || g.owner != body.User {
-		http.Error(w, "no such grant", http.StatusForbidden)
-		return
-	}
-	l, s, ok := resolveLink(func(l Link) bool { return l.ID == g.linkID })
-	if !ok || l.EndedAt != 0 || l.SessionID != g.target || l.Mode != g.mode {
-		http.Error(w, "link ended", http.StatusForbidden)
-		return
-	}
-
-	v := visitors.add(visitor{LinkID: l.ID, Owner: l.Owner, SessionID: l.SessionID, Tty: body.Tty, Mode: l.Mode, Since: now})
-	if l.Mode == shareModeRO {
-		// Same as a read-only share: the owner's size stays theirs.
-		if err := pinGrid(l.Owner, s.Name); err != nil {
-			log.Printf("link: pin grid %s/%s: %v", l.Owner, s.Name, err)
-		}
-	}
-
-	what := "watching"
-	if l.Mode == shareModeRW {
-		what = "DRIVING (read-write)"
-	}
-	log.Printf("link attach: guest %d on %s/%s via link %s, %s", v.Guest, l.Owner, s.Name, l.ID, what)
-	events.Emit("link.visit", l.Owner, telemetry.Attrs{
-		"tl.session": s.Name, "tl.mode": l.Mode, "tl.client": "link",
-	})
-	if l.Mode == shareModeRW && visitors.shouldPush(l.ID, now) {
-		go notifyLinkDriver(l.Owner, s)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Target string `json:"target"`
-		Mode   string `json:"mode"`
-	}{l.SessionID, l.Mode})
-}
-
-// isLoopbackPeer is a seam over authuser.IsLoopback for tests.
-var isLoopbackPeer = authuser.IsLoopback
-
-// notifyLinkDriver tells the owner's devices that someone is driving a session
-// through a link (decision 10). Throttled per link by the caller.
-var notifyLinkDriver = func(owner string, s liveSession) {
-	sender := pushSenderInstance
-	if sender == nil {
-		return
-	}
-	title := titleOrName(s)
-	build := func(origin string) []byte {
-		p := pushPayload{
-			Title:   "Someone is driving " + title,
-			Body:    "A visitor opened a read-write link to this session.",
-			Tag:     "tl-link-" + s.Name,
-			Session: s.Name,
-		}
-		if origin != "" {
-			p.WebPush = declarativeWebPushVersion
-			p.Notification = &declarativeNotification{
-				Title:    p.Title,
-				Body:     p.Body,
-				Navigate: navigateURL(origin, s.Name),
-				Tag:      p.Tag,
-				Data:     &declarativeData{Session: s.Name},
-			}
-		}
-		b, _ := json.Marshal(p)
-		return b
-	}
-	sender.send(owner, "", build, kindLink)
 }
