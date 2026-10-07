@@ -56,7 +56,7 @@ import { QuestionCard, type QuestionCardState } from "./QuestionCard";
 import { heldCallsFromEvents } from "./question.logic";
 import { PlanCard } from "./PlanCard";
 import { PermissionCard, type OwnDraft } from "./PermissionCard";
-import { permissionPreview, permissionPromptKey } from "./permission.logic";
+import { isNoRow, permissionPreview, permissionPromptKey } from "./permission.logic";
 import {
   clearsContext,
   decidePlanDock,
@@ -185,6 +185,9 @@ const MODEL_HELD_ASLEEP = "The session is asleep. Send a message to wake it, the
  * what the transcript and the pane say.
  */
 const PLAN_SETTLE_MS = 20_000;
+
+/** The plan approval's "Keep planning", which Escape on the plan card sends. */
+const PLAN_KEEP_PLANNING: PlanAnswer = { option: 2, label: "Keep planning" };
 
 /** Every plan row in a fold of the transcript, folded away or not. */
 function findPlanRow(rows: TimelineRow[], toolId: string): PlanRow | undefined {
@@ -2100,10 +2103,53 @@ export const TextView: Component<{
   // this from the empty field, which the card now hides). Only from inside the
   // view: the rest of a sentence being typed when the card docked lands on the
   // page's body, and "fix the 2 tests" must not allow anything.
+  //
+  // Escape turns the dialog down, as Esc does on Claude's own: a permission
+  // prompt's No, a plan's "keep planning", a question's cancel. The permission
+  // prompt and the plan approval reach the pane as the mod's menu, where Esc
+  // only dismisses it and Claude then decides or redraws without the reader:
+  // measured 2026-10-07, a permission Esc let the command run in auto mode and
+  // a plan Esc left Claude's own approval up. So those two are answered
+  // through the mod, and only a question, which Claude draws itself, gets the
+  // Escape key. Once per card: a second Esc that reaches the idle prompt
+  // behind it is half of the double press that opens Claude's rewind menu,
+  // which this view cannot draw.
+  let escapedCard = false;
+  createEffect(
+    on([permission, asking, planDocked], () => {
+      escapedCard = false;
+    }),
+  );
+  const escapeCard = async (): Promise<void> => {
+    if (escapedCard) return;
+    let ok: boolean;
+    if (permissionUp()) {
+      const no = permission()?.options.find((o) => isNoRow(o.label));
+      if (!no || refuseWatching()) return;
+      escapedCard = true;
+      ok = await pickPermission(no.number);
+    } else if (planUp()) {
+      escapedCard = true;
+      // The mod's plan menu is Approve plan, Keep planning: option 2 with no
+      // words is "keep planning" (session-events moddialogs.go).
+      const resp = await answerPlan(PLAN_KEEP_PLANNING, { kind: "feedback" }, "feedback");
+      ok = resp?.applied === true;
+    } else {
+      if (!props.onKeys || refuseWatching()) return;
+      escapedCard = true;
+      ok = await props.onKeys(["Escape"]);
+    }
+    if (!ok) escapedCard = false;
+  };
   onMount(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       if (!keyInView(e.target)) return;
+      if (e.key === "Escape" && composerHidden() && cardKeysArmed()) {
+        e.preventDefault();
+        void escapeCard();
+        return;
+      }
       const digit = /^[1-9]$/.test(e.key);
       if (digit && permissionUp() && cardKeysArmed()) {
         if (pressPermissionRow?.(Number(e.key))) e.preventDefault();
