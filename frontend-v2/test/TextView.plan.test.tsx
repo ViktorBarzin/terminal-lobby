@@ -228,6 +228,29 @@ describe("when the plan card docks", () => {
     fireEvent.keyDown(v.field(), { key: "Tab", shiftKey: true });
     expect(keys).not.toHaveBeenCalledWith(["BTab"]);
   });
+
+  it("keeps Claude planning on Escape, through the mod rather than the Escape key", async () => {
+    // The plan approval on the pane is the mod's menu, where an Escape only
+    // dismisses it and Claude draws its own approval in its place (measured
+    // 2026-10-07). "Keep planning" is what Esc means on Claude's own.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const keys = vi.fn(async (_keys: string[]) => true);
+    const v = mount(
+      [prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)],
+      onAnswer,
+      undefined,
+      keys,
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    await waitFor(
+      () => expect(v.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(),
+      { timeout: 2000 },
+    );
+    fireEvent.keyDown(v.card()!, { key: "Escape" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ plan: { option: 2, label: "Keep planning" } });
+    expect(keys).not.toHaveBeenCalled();
+  });
 });
 
 describe("an option tap", () => {

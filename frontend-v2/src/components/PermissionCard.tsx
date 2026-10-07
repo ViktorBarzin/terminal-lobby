@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, createSignal, type Component } from "solid-js";
 import { CardDot, CardHead } from "./CardHead";
 import { OwnAnswer } from "./OwnAnswer";
-import type { PermissionPreview } from "./permission.logic";
+import { isNoRow, type PermissionPreview } from "./permission.logic";
 import type { PermissionReading } from "./timeline.logic";
 
 /** "Type your own answer" as the reader has it: open or not, and its words. */
@@ -13,10 +13,6 @@ export interface OwnDraft {
 /** A Bash prompt is titled "Bash command"; every other tool is titled by what
  *  it does ("Edit file"), which the head then names beside its words. */
 const isCommand = (title: string): boolean => /^bash\b/i.test(title.trim());
-
-/** The prompt's No row, as it reads at rest ("No") or with its field open
- *  ("No, and tell Claude what to do differently", "No, <words>"). */
-const isNoRow = (label: string): boolean => label === "No" || label.startsWith("No,");
 
 /**
  * How the pane marks a line of an Edit's diff: "4 +def mul(a, b):" put in,

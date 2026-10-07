@@ -81,6 +81,7 @@ function mount(
   initial: Event[],
   onAnswer: (req: AnswerRequest) => Promise<AnswerResponse | null> = async () => applied,
   onSend: (text: string) => Promise<boolean> = async () => true,
+  onKeys: (keys: string[]) => Promise<boolean> = async () => true,
 ) {
   const notify = vi.fn();
   const onOpenTerminal = vi.fn();
@@ -92,7 +93,7 @@ function mount(
       onSend={onSend}
       onStop={() => {}}
       onResolve={() => {}}
-      onKeys={async () => true}
+      onKeys={onKeys}
       onPane={async () => ({ pane: "", state: "done" })}
       onAnswer={onAnswer}
       onOpenTerminal={onOpenTerminal}
@@ -428,6 +429,17 @@ describe("a held call", () => {
       call: ["Pick a colour"],
       answers: { "Pick a colour": ["Blue"] },
     });
+  });
+
+  it("sends the pane an Escape for Escape, which cancels the question as the Terminal's does", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const onKeys = vi.fn(async (_k: string[]) => true);
+    const v = mount([held([colour])], onAnswer, undefined, onKeys);
+    await waitFor(() => expect(v.option("Blue")).toBeTruthy());
+    await armed(v.container);
+    fireEvent.keyDown(v.card()!, { key: "Escape" });
+    await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["Escape"]));
+    expect(onAnswer).not.toHaveBeenCalled();
   });
 
   it("leaves a digit typed outside the Text view alone", async () => {

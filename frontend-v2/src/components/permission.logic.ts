@@ -217,3 +217,7 @@ export function permissionPromptKey(r: PermissionReading): string {
   const squash = (t: string): string => t.replace(/\s+/g, "");
   return [r.title.trim(), squash(r.detail.join("")), squash(r.prompt)].join("\n");
 }
+
+/** The prompt's No row, as it reads at rest ("No") or with its field open
+ *  ("No, and tell Claude what to do differently", "No, <words>"). */
+export const isNoRow = (label: string): boolean => label === "No" || label.startsWith("No,");

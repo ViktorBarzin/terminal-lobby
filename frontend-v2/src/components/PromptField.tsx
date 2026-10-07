@@ -1003,6 +1003,18 @@ export const PromptField: Component<{
       }
     }
 
+    // Escape stops the turn, as it does in the Terminal: the round button's
+    // Stop, words in the field or not, and they stay. Not at an idle prompt,
+    // where a second Esc opens Claude's rewind menu, which this view cannot
+    // draw, and the next message's Enter would pick a rewind point from it.
+    if (e.key === "Escape" && !e.isComposing) {
+      if (!watching() && props.canStop === true && props.onStop && !stopping()) {
+        e.preventDefault();
+        props.onStop();
+      }
+      return;
+    }
+
     // Backspace or Delete against a chip takes the WHOLE chip. A token eaten
     // one character at a time stops being an attachment at the first keystroke
     // (`reconcile` drops the file) and leaves the rest of its text sitting in

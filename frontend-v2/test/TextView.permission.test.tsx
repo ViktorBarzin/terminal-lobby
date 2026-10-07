@@ -746,6 +746,97 @@ describe("the permission card", () => {
   });
 });
 
+/**
+ * Escape on the card turns the tool down, which is what Esc means on Claude's
+ * own permission prompt. It presses the No row rather than sending Escape: the
+ * prompt on the pane is the mod's menu, where Esc only dismisses it and Claude
+ * decides without asking (measured 2026-10-07 in auto mode: the command ran).
+ * Once per card, since a second Esc reaching an idle prompt is half of the
+ * double press that opens Claude's rewind menu.
+ */
+describe("Escape on a permission card", () => {
+  const docked = async () => {
+    const v = mount([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    return v;
+  };
+
+  it("presses the No row, once", async () => {
+    const { r, card, onKeys } = await docked();
+    await armed(r.container);
+    expect(fireEvent.keyDown(card()!, { key: "Escape" })).toBe(false);
+    await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["3"]));
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    expect(onKeys).toHaveBeenCalledTimes(1);
+    expect(onKeys).not.toHaveBeenCalledWith(["Escape"]);
+  });
+
+  it("presses it through the answer route, with the label the reader saw", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
+    const { r, card, onKeys } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onAnswer },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    await armed(r.container);
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ permission: { option: 3, label: "No" } });
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
+  it("presses nothing on a prompt with no No row", async () => {
+    const noNo = JSON.parse(READING) as { options: { number: number; label: string }[] };
+    noNo.options = noNo.options.slice(0, 2);
+    const { r, card, onKeys } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: JSON.stringify(noNo) }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    await armed(r.container);
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing before the card's keys arm", async () => {
+    const { r, card, onKeys } = await docked();
+    expect(r.container.querySelector('[data-card-keys="armed"]')).toBeNull();
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing from a watching device", async () => {
+    const onKeys = vi.fn(async (_k: string[]) => true);
+    const { r, card } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      onKeys,
+      undefined,
+      { inertReason: "Watching. Take control to answer." },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    await armed(r.container);
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
+  it("takes another Escape when the No did not land", async () => {
+    const onKeys = vi.fn(async (_k: string[]) => false);
+    const { r, card } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      onKeys,
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    await armed(r.container);
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    await waitFor(() => expect(onKeys).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    fireEvent.keyDown(card()!, { key: "Escape" });
+    await waitFor(() => expect(onKeys).toHaveBeenCalledTimes(2));
+  });
+});
+
 // Deployed review round 3 (2026-09-28): a prompt taller than the pane reads
 // with no title and no detail. The card showed "Claude wants to use a tool"
 // and nothing to approve; it now names the waiting call's command.

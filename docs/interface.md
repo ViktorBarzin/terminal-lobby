@@ -62,6 +62,15 @@ view is left alone instead, so the composer keeps the keyboard. Rename a
 session by **double-clicking** its card (single click just selects), or from
 the `⋯` menu.
 
+`Esc` in the **Text** view does what it does in the Terminal. In the
+composer it stops the turn Claude is running, the same Stop as the round
+button, and leaves what you typed in the field. On a card Claude is waiting
+on, it turns the card down: a permission prompt's No, a plan's "keep
+planning", a question's cancel. The card's keys arm a moment after it docks,
+as its digits do, so an `Esc` pressed as it appears does nothing. At an idle
+prompt `Esc` does nothing, because in the Terminal a second press there opens
+Claude's rewind menu, which the Text view cannot show.
+
 Renaming edits the session's **title**, which is the only thing anyone reads.
 The tmux **name** follows it, so `tmux ls` and the status bar read as words
 too (ADR-0022): `Deploy the thing` becomes `deploy-the-thing`. A session that
