@@ -1,21 +1,18 @@
 package main
 
-// Public links that outlive their session (ADR-0040).
+// What a public link shows: the session's conversation (ADR-0040, ADR-0041).
 //
-// A link used to end with its session. Viktor, 2026-10-06: once he kills a
-// session, a link to it should still show a read-only transcript until it
-// expires or he revokes it, so he can share a conversation without keeping
-// it in his sidebar. So a link now records, while its session runs, every
-// Claude transcript that session writes (a session can run several, one per
-// /clear), and when the session ends the link keeps that list instead of
-// being deleted. A session with no transcript (a plain shell) ends its links
-// as before.
+// While the session runs, the link records every Claude transcript it writes
+// (a session can run several, one per /clear). When the session ends the link
+// keeps that list and goes on showing it until it expires or is revoked, so a
+// shared conversation does not have to stay in the owner's sidebar.
 //
-// An ended link is read through four routes, all of them anonymous:
+// All of it is read through anonymous routes, authorized by a VIEW cookie
+// that POST /link/redeem sets, scoped to /s/api/link/ and to one link:
 //
-//   - POST /link/redeem answers {mode: "transcript", ...} for an ended link
-//     and sets a VIEW cookie, scoped to /s/api/link/ and to this link.
-//   - GET /link/transcript?l=<id>   every conversation, as Text-view events
+//   - GET /link/transcript?l=<id>[&after=<n>]  the conversations as Text-view
+//     events, only those after event n when asked, so a live page polls
+//     cheaply
 //   - GET /link/result?l=<id>&tool= one tool result in full
 //   - GET /link/image?l=<id>&...    one picture block from a transcript
 //   - GET /link/picture?l=<id>&p=   one picture from the clipboard store that
@@ -24,6 +21,8 @@ package main
 // The view key travels in a cookie rather than the URL because pictures are
 // <img> GETs, and a URL is what access logs record. It is random, bound to
 // one link, held in memory, and dropped when the link is revoked or expires.
+// Each read also marks the key as seen, which is how the owner's session bar
+// counts the people reading.
 
 import (
 	"bufio"
@@ -65,7 +64,14 @@ const (
 type view struct {
 	linkID  string
 	expires time.Time
+	// seen is the key's last read, for viewers().
+	seen time.Time
 }
+
+// viewerWindow is how recently a key must have read to count as someone
+// reading: the live page polls every few seconds, a finished one does not, so
+// a finished conversation's readers count while their page loads.
+const viewerWindow = 30 * time.Second
 
 type viewBook struct {
 	mu sync.Mutex
@@ -82,21 +88,67 @@ func (b *viewBook) mint(linkID string, now time.Time) (string, error) {
 			delete(b.m, k)
 		}
 	}
-	if len(b.m) >= maxTickets {
-		return "", errTicketBookFull
+	if len(b.m) >= maxViews {
+		return "", errViewBookFull
 	}
 	k := randomToken(24)
-	b.m[hashToken(k)] = view{linkID: linkID, expires: now.Add(viewTTL)}
+	b.m[hashToken(k)] = view{linkID: linkID, expires: now.Add(viewTTL), seen: now}
 	return k, nil
 }
 
-// check reports whether key is a live view of linkID. Unlike a ticket it is
-// not spent: one page load reads the transcript and every picture in it.
+var errViewBookFull = errors.New("view book full")
+
+// check reports whether key is a live view of linkID, and marks it seen. It
+// is not spent: one page load reads the transcript and every picture in it.
 func (b *viewBook) check(key, linkID string, now time.Time) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	v, ok := b.m[hashToken(key)]
-	return ok && v.linkID == linkID && now.Before(v.expires)
+	k := hashToken(key)
+	v, ok := b.m[k]
+	if !ok || v.linkID != linkID || !now.Before(v.expires) {
+		return false
+	}
+	v.seen = now
+	b.m[k] = v
+	return true
+}
+
+// viewers counts the keys of linkID that read within viewerWindow.
+func (b *viewBook) viewers(linkID string, now time.Time) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := 0
+	for _, v := range b.m {
+		if v.linkID == linkID && now.Sub(v.seen) < viewerWindow {
+			n++
+		}
+	}
+	return n
+}
+
+// annotateViewers stamps each of owner's sessions with how many people are
+// reading it through a link, for the session bar. Reads the link store and
+// the in-memory view book; no tmux call.
+func annotateViewers(owner string, sessions []Session) {
+	ls, err := linkStoreInstance.load()
+	if err != nil {
+		return
+	}
+	now := linkNow()
+	for _, l := range ls.Links {
+		if l.Owner != owner || l.EndedAt != 0 {
+			continue
+		}
+		n := views.viewers(l.ID, now)
+		if n == 0 {
+			continue
+		}
+		for i := range sessions {
+			if sessions[i].ID == l.SessionID && sessions[i].Created == l.SessionCreated {
+				sessions[i].Viewers += n
+			}
+		}
+	}
 }
 
 func (b *viewBook) dropLink(linkID string) {
@@ -113,7 +165,7 @@ func (b *viewBook) dropLink(linkID string) {
 // overwrite each other's key.
 func viewCookieName(linkID string) string { return "tl_lv_" + linkID }
 
-// setViewCookie hands the visitor's browser the key for an ended link. Path
+// setViewCookie hands the visitor's browser the key for a link. Path
 // keeps it off every route but the link reads, HttpOnly keeps it out of page
 // script, and SameSite=Strict keeps another site from riding it.
 func setViewCookie(w http.ResponseWriter, linkID, key string) {
@@ -361,8 +413,11 @@ func completeLines(blob []byte) []string {
 // drew as one: measured live on 2026-10-06, the second conversation's prompt
 // replaced the first's, picture and all. And a conversation that stopped
 // mid-turn (the session was killed while Claude worked) is closed here, or the
-// timeline would show it working forever.
+// timeline would show it working forever. Only an ENDED link's conversations
+// are closed: a live one's last turn may simply still be running, and a
+// made-up end would take the id the next real event needs.
 func linkEvents(r transcriptReader, l Link) []sessionio.Event {
+	ended := l.EndedAt != 0
 	var out []sessionio.Event
 	var seq int64
 	push := func(e sessionio.Event) {
@@ -392,7 +447,8 @@ func linkEvents(r transcriptReader, l Link) []sessionio.Event {
 				last = e
 			}
 		}
-		if last.TurnID != "" && last.Kind != sessionio.KindTurnEnd {
+		closed := !ended && i == len(l.Transcripts)-1
+		if !closed && last.TurnID != "" && last.Kind != sessionio.KindTurnEnd {
 			push(sessionio.Event{Kind: sessionio.KindTurnEnd, TurnID: last.TurnID, At: last.At})
 		}
 	}
@@ -405,8 +461,10 @@ func linkEvents(r transcriptReader, l Link) []sessionio.Event {
 
 // --- the anonymous read routes ---
 
-// viewedLink resolves ?l=<id> plus that link's view cookie to an ended link.
-// Every failure is the same 404, as with redeem.
+// viewedLink resolves ?l=<id> plus that link's view cookie to a valid link.
+// Every failure is the same 404, as with redeem. For a live link the
+// transcript the session is writing right now is added if the sweep has not
+// recorded it yet, so a conversation started by /clear shows at once.
 func viewedLink(w http.ResponseWriter, r *http.Request) (Link, bool) {
 	if err := actAsGate.CheckProxySecret(r); err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -419,14 +477,17 @@ func viewedLink(w http.ResponseWriter, r *http.Request) (Link, bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	id := r.URL.Query().Get("l")
 	c, err := r.Cookie(viewCookieName(id))
-	if !linkIDRe.MatchString(id) || err != nil || !ticketRe.MatchString(c.Value) || !views.check(c.Value, id, linkNow()) {
+	if !linkIDRe.MatchString(id) || err != nil || !viewKeyRe.MatchString(c.Value) || !views.check(c.Value, id, linkNow()) {
 		http.Error(w, "link not found", http.StatusNotFound)
 		return Link{}, false
 	}
-	l, _, ok := resolveLink(func(l Link) bool { return l.ID == id })
-	if !ok || l.EndedAt == 0 {
+	l, s, ok := resolveLink(func(l Link) bool { return l.ID == id })
+	if !ok {
 		http.Error(w, "link not found", http.StatusNotFound)
 		return Link{}, false
+	}
+	if l.EndedAt == 0 && l.appendTranscript(s.Transcript) {
+		noteLinkTranscripts(l.Owner, []liveSession{s})
 	}
 	return l, true
 }
@@ -443,13 +504,33 @@ func handleLinkTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rd.close()
 	events := linkEvents(rd, l)
+	// ?after=<n>: only what came after event n, which is how a live page
+	// polls without fetching the whole conversation every few seconds. Event
+	// ids are assigned in transcript order and a transcript only grows, so an
+	// event the page already holds never changes under it.
+	last := int64(0)
+	if len(events) > 0 {
+		last = events[len(events)-1].ID
+	}
+	if after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64); err == nil && after > 0 {
+		i := 0
+		for i < len(events) && events[i].ID <= after {
+			i++
+		}
+		events = events[i:]
+	}
+	if events == nil {
+		events = []sessionio.Event{}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
 		Title     string            `json:"title"`
+		Live      bool              `json:"live"`
 		EndedAt   int64             `json:"endedAt"`
 		ExpiresAt int64             `json:"expiresAt"`
+		Last      int64             `json:"last"`
 		Events    []sessionio.Event `json:"events"`
-	}{l.Title, l.EndedAt, l.ExpiresAt, events})
+	}{l.Title, l.EndedAt == 0, l.EndedAt, l.ExpiresAt, last, events})
 }
 
 func handleLinkResult(w http.ResponseWriter, r *http.Request) {

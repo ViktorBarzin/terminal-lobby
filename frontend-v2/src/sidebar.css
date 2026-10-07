@@ -1311,9 +1311,6 @@
   color: var(--accent);
   white-space: nowrap;
 }
-.tl-bar-visitors-driving {
-  color: var(--danger);
-}
 .tl-bar-visitors-stop {
   font: inherit;
   font-size: 11px;

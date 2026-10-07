@@ -5749,20 +5749,6 @@ body.tl-kb-up {
   gap: 8px;
   min-width: 0;
 }
-.tl-link-badge {
-  flex: 0 0 auto;
-  padding: 0 7px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  font-size: calc(10px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-.tl-link-badge[data-mode="rw"] {
-  border-color: var(--danger);
-  color: var(--danger);
-}
 .tl-link-session {
   min-width: 0;
   overflow: hidden;
@@ -5783,14 +5769,6 @@ body.tl-kb-up {
 }
 .tl-link-visitors {
   color: var(--accent);
-}
-.tl-share-warn {
-  margin: 2px 0 4px;
-  padding: 6px 9px;
-  border: 1px solid var(--danger);
-  border-radius: calc(var(--radius) - 3px);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  color: var(--danger);
 }
 .tl-share-note-field,
 .tl-share-url-field {

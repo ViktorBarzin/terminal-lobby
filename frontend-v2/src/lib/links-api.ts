@@ -13,7 +13,7 @@
  */
 import { apiUrl } from "./config";
 import { fetchWithDeadline } from "./http";
-import type { LinkMode, LinkTTL, LinkView } from "../types/lobby";
+import type { LinkTTL, LinkView } from "../types/lobby";
 
 async function fail(res: Response, what: string): Promise<never> {
   let text = "";
@@ -36,7 +36,6 @@ export async function listLinks(): Promise<LinkView[]> {
 export interface CreateLinkRequest {
   /** The session's tmux name now. */
   name: string;
-  mode: LinkMode;
   ttl: LinkTTL;
   note?: string;
 }

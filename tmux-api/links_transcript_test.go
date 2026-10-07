@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -64,24 +65,6 @@ func stubTranscripts(t *testing.T, f fakeTranscripts) {
 // A pixel of PNG, enough for http.DetectContentType.
 var onePNG = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89")
 
-// redeemFull redeems and returns the answer plus the cookie it set, if any.
-func (w *linkWorld) redeemFull(token string, peek bool) (int, map[string]any, *http.Cookie) {
-	w.t.Helper()
-	body := `{"token":"` + token + `"}`
-	if peek {
-		body = `{"token":"` + token + `","peek":true}`
-	}
-	rec := httptest.NewRecorder()
-	handleLinkRedeem(rec, httptest.NewRequest(http.MethodPost, "/link/redeem", strings.NewReader(body)))
-	var got map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	var c *http.Cookie
-	if cs := rec.Result().Cookies(); len(cs) > 0 {
-		c = cs[0]
-	}
-	return rec.Code, got, c
-}
-
 func linkGet(path string, c *http.Cookie) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodGet, path, nil)
 	if c != nil {
@@ -106,7 +89,7 @@ func linkGet(path string, c *http.Cookie) *httptest.ResponseRecorder {
 func endedLink(t *testing.T, w *linkWorld) (token string, id string) {
 	t.Helper()
 	w.live[w.me][0].Transcript = convA
-	_, token, view := w.create(`{"name":"deploy","mode":"rw","ttl":"24h"}`)
+	_, token, view := w.create(`{"name":"deploy","ttl":"24h"}`)
 	w.live[w.me][0].Transcript = convB // the person ran /clear
 	sweepLinksOnce()
 	w.live[w.me] = nil // the session is killed
@@ -131,7 +114,13 @@ func TestALinkRecordsEveryConversationAndOutlivesItsSession(t *testing.T) {
 func TestAShellLinkStillEndsWithItsSession(t *testing.T) {
 	w := newLinkWorld(t)
 	swapShareStore(t)
-	w.create(`{"name":"deploy","mode":"ro","ttl":"1h"}`) // no transcript stamp
+	// A link is only ever made for a session with a transcript, but one stored
+	// before that rule (or written by hand) has nothing to show.
+	_ = linkStoreInstance.update(func(ls *LinkSet) error {
+		ls.Links = append(ls.Links, Link{ID: "0123456789abcdef", TokenHash: strings.Repeat("a", 64),
+			Owner: w.me, SessionID: "$3", SessionCreated: 1000, CreatedAt: 1})
+		return nil
+	})
 	w.live[w.me] = nil
 	sweepLinksOnce()
 	if ls, _ := linkStoreInstance.load(); len(ls.Links) != 0 {
@@ -144,37 +133,71 @@ func TestAnEndedLinkStillExpires(t *testing.T) {
 	swapShareStore(t)
 	token, _ := endedLink(t, w)
 	w.now = w.now.Add(25 * 60 * 60 * 1e9)
-	if code, _, _ := w.redeemFull(token, false); code != http.StatusNotFound {
+	if code, _, _ := w.redeem(token); code != http.StatusNotFound {
 		t.Fatalf("an expired ended link redeemed: %d", code)
 	}
 }
 
-func TestRedeemingAnEndedLinkAnswersATranscriptAndAViewCookie(t *testing.T) {
+func TestRedeemingAnEndedLinkSaysSoAndSetsAViewCookie(t *testing.T) {
 	w := newLinkWorld(t)
 	swapShareStore(t)
 	token, id := endedLink(t, w)
-
-	code, got, c := w.redeemFull(token, true)
-	if code != http.StatusOK || got["mode"] != "transcript" || c != nil {
-		t.Fatalf("peek: %d %v cookie=%v", code, got, c)
-	}
-	code, got, c = w.redeemFull(token, false)
-	if code != http.StatusOK || got["mode"] != "transcript" || got["link"] != id || got["ticket"] != nil {
+	code, got, c := w.redeem(token)
+	if code != http.StatusOK || got["link"] != id || got["endedAt"] == float64(0) {
 		t.Fatalf("redeem: %d %v", code, got)
 	}
-	if c == nil || c.Name != "tl_lv_"+id || !c.HttpOnly || !c.Secure || c.Path != "/s/api/link/" || c.SameSite != http.SameSiteStrictMode {
+	if c == nil || c.Name != "tl_lv_"+id {
 		t.Fatalf("view cookie: %+v", c)
 	}
 }
 
-func TestAnEndedLinkAttachesNoTerminal(t *testing.T) {
+// A live link reads the conversation as it grows: the transcript the session
+// writes now is included even before the sweep records it, ?after= returns
+// only what is new, and the last turn is left open, since it may be running.
+func TestALiveLinkFollowsTheConversation(t *testing.T) {
 	w := newLinkWorld(t)
-	swapShareStore(t)
-	_, id := endedLink(t, w)
-	// A ticket minted before the session ended was dropped with it.
-	tk, _ := tickets.mint(id, w.now)
-	if code, _ := w.attach(tk, "/dev/pts/3", "rw"); code != http.StatusForbidden {
-		t.Fatalf("attach through an ended link: %d", code)
+	w.live[w.me][0].Transcript = convA
+	_, token, view := w.create(`{"name":"deploy","ttl":"1h"}`)
+	w.live[w.me][0].Transcript = convB // a /clear the sweep has not seen yet
+	files := map[string][]string{
+		convA: {userLine("11111111-1111", "first question")},
+		convB: {userLine("22222222-2222", "still working on it")},
+	}
+	stubTranscripts(t, fakeTranscripts{files: files})
+	_, _, c := w.redeem(token)
+
+	read := func(q string) (live bool, last int64, events []sessionio.Event) {
+		t.Helper()
+		rec := linkGet("/link/transcript?l="+view.ID+q, c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("transcript%s: %d %s", q, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			Live   bool              `json:"live"`
+			Last   int64             `json:"last"`
+			Events []sessionio.Event `json:"events"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		return got.Live, got.Last, got.Events
+	}
+	live, last, events := read("")
+	joined := ""
+	for _, e := range events {
+		joined += e.Body + "|"
+	}
+	if !live || !strings.Contains(joined, "first question") || !strings.Contains(joined, "still working on it") {
+		t.Fatalf("live read: live=%v %q", live, joined)
+	}
+	if events[len(events)-1].Kind == sessionio.KindTurnEnd {
+		t.Fatal("a live conversation's running turn was closed")
+	}
+	if _, _, none := read("&after=" + strconv.FormatInt(last, 10)); len(none) != 0 {
+		t.Fatalf("nothing new, but got %d events", len(none))
+	}
+	files[convB] = append(files[convB], `{"type":"assistant","uuid":"33333333-3333","timestamp":"2026-10-06T10:00:09Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"done now"}]}}`)
+	_, _, fresh := read("&after=" + strconv.FormatInt(last, 10))
+	if len(fresh) == 0 || fresh[0].ID <= last || fresh[len(fresh)-1].Body != "done now" {
+		t.Fatalf("after=%d: %+v", last, fresh)
 	}
 }
 
@@ -186,7 +209,7 @@ func TestTheTranscriptIsEveryConversationInOrder(t *testing.T) {
 		convA: {userLine("11111111-1111", "first question")},
 		convB: {userLine("22222222-2222", "after clear")},
 	}})
-	_, _, c := w.redeemFull(token, false)
+	_, _, c := w.redeem(token)
 
 	rec := linkGet("/link/transcript?l="+id, c)
 	if rec.Code != http.StatusOK {
@@ -241,7 +264,7 @@ func TestTheTranscriptNeedsThisLinksViewCookie(t *testing.T) {
 	if rec := linkGet("/link/transcript?l="+id, forged); rec.Code != http.StatusNotFound {
 		t.Fatalf("a made-up view key: %d", rec.Code)
 	}
-	_, _, c := w.redeemFull(token, false)
+	_, _, c := w.redeem(token)
 	other := "0123456789abcdef"
 	c2 := &http.Cookie{Name: "tl_lv_" + other, Value: c.Value}
 	if rec := linkGet("/link/transcript?l="+other, c2); rec.Code != http.StatusNotFound {
@@ -264,7 +287,7 @@ func TestResultsAndImagesComeFromTheLinksTranscripts(t *testing.T) {
 		result: map[string]string{"toolu_01": "the whole output"},
 		images: map[string][]byte{"toolu_02": onePNG, "toolu_03": []byte("<svg onload=alert(1)>")},
 	})
-	_, _, c := w.redeemFull(token, false)
+	_, _, c := w.redeem(token)
 
 	rec := linkGet("/link/result?l="+id+"&tool=toolu_01", c)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "the whole output") {
@@ -302,7 +325,7 @@ func TestPicturesAreOnlyThoseATranscriptNames(t *testing.T) {
 		convA: {userLine("33333333-3333", "look at "+named)},
 		convB: {},
 	}})
-	_, _, c := w.redeemFull(token, false)
+	_, _, c := w.redeem(token)
 
 	if rec := linkGet("/link/picture?l="+id+"&p="+named, c); rec.Code != http.StatusOK {
 		t.Fatalf("named picture: %d %s", rec.Code, rec.Body.String())
@@ -337,7 +360,7 @@ func TestTheKillHookAsksTmuxOnlyWhenTheOwnerHasALink(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("a kill with no links listed sessions %d times", calls)
 	}
-	w.create(`{"name":"deploy","mode":"ro","ttl":"1h"}`)
+	w.create(`{"name":"deploy","ttl":"1h"}`)
 	calls = 0
 	noteLinkTranscriptsBeforeKill(w.me)
 	if calls != 1 {

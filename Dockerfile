@@ -99,15 +99,10 @@ COPY devvm/tmux-attach.sh /usr/local/bin/tmux-attach.sh
 # the script already detects that and falls back to a plain attach, so it works
 # here unmodified.
 COPY devvm/tmux-user-attach /usr/local/bin/tmux-user-attach
-# Public links (ADR-0039): the two halves of a link attach. In the container
-# both run as the one user, so the second half needs no sudo.
-COPY devvm/tmux-link-attach.sh /usr/local/bin/tmux-link-attach.sh
-COPY devvm/tmux-link-join /usr/local/bin/tmux-link-join
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/nginx.conf.template /etc/nginx/nginx.conf.template
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/tmux-attach.sh \
-      /usr/local/bin/tmux-user-attach /usr/local/bin/tmux-link-attach.sh \
-      /usr/local/bin/tmux-link-join
+      /usr/local/bin/tmux-user-attach
 
 # The services bind loopback: nginx is the only thing that reaches them, and it
 # is in the same network namespace. Nothing outside the container can send an

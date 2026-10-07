@@ -1,6 +1,9 @@
 # A public link attaches through a ticket and a grant
 
-> Amended by [ADR-0040](0040-an-ended-link-shows-its-transcript.md): a link
+> Amended by [ADR-0040](0040-an-ended-link-shows-its-transcript.md) and
+> superseded in its terminal path by
+> [ADR-0041](0041-a-public-link-shares-the-conversation-not-the-terminal.md):
+> links now share the conversation only. ADR-0040: a link
 > no longer ends with its session; it shows the conversation read-only.
 
 Viktor, 2026-10-06: *"i want to create public urls which i can share to users

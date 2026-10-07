@@ -120,18 +120,6 @@ var Grants = []Grant{
 			"that name elsewhere.",
 	},
 	{
-		Path:     "/etc/sudoers.d/tl-link",
-		Writer:   "this package's postinst, from the shipped template, once visudo has parsed it",
-		Template: "devvm/sudoers.d-tl-link.template",
-		Validate: true,
-		Why: "Public links (ADR-0039). tl-link runs the two terminal servers that take " +
-			"connections from anyone, and may run /usr/local/bin/tmux-link-join as any " +
-			"account but root. The wrapper attaches nothing without a single-use grant " +
-			"tmux-api issued for that account and that tty, so the account holds no " +
-			"credential of its own. It names no person, which is why it ships where the " +
-			"other two are rendered.",
-	},
-	{
 		Path:     "/etc/sudoers.d/t3-autopair",
 		Writer:   "infra: setup-devvm.sh",
 		Validate: false,

@@ -9,26 +9,14 @@ import {
   type Component,
 } from "solid-js";
 import { Portal } from "solid-js/web";
-import {
-  sessionLabel,
-  type LinkMode,
-  type LinkTTL,
-  type LinkView,
-  type Session,
-} from "../types/lobby";
+import { sessionLabel, type LinkTTL, type LinkView, type Session } from "../types/lobby";
 import {
   LINK_TTLS,
-  MODE_CHOICES,
   TTL_LABELS,
-  clampTtl,
-  countVisitors,
   expiryLabel,
   linkUrl,
   linksForSession,
-  modeBadge,
-  ttlAllowed,
-  visitorCountLabel,
-  visitorLabel,
+  viewersLabel,
 } from "./links.logic";
 import { createLink, listLinks, revokeLink } from "../lib/links-api";
 import type { ShareTarget } from "../store/share-dialog";
@@ -37,9 +25,9 @@ import { dismissOnPress } from "./overlay";
 import { Group, Row } from "./settings/controls";
 
 /**
- * How often an open list re-reads its links. Visitors come and go while the
- * dialog is up, and "guest 1 (driving)" appearing is the reason to look at it.
- * The session poll's own cadence, so the dialog is never staler than the bar.
+ * How often an open list re-reads its links. Readers come and go while the
+ * dialog is up, and seeing someone reading is the reason to look at it. The
+ * session poll's own cadence, so the dialog is never staler than the bar.
  */
 const LINKS_POLL_MS = 5000;
 
@@ -87,28 +75,22 @@ export function createLinksPoll(): {
 }
 
 /**
- * One link in a list: its mode, how long it has left, the private note and who
- * is on it, with a Revoke button. The dialog names the visitors; Settings,
- * which lists every session's links, counts them and names the session.
+ * One link in a list: how long it has left, the private note and how many
+ * are reading it, with a Revoke button. Settings, which lists every session's
+ * links, also names the session.
  */
 export const LinkRow: Component<{
   link: LinkView;
   now: number;
-  /** Settings: name the session and count visitors rather than list them. */
+  /** Settings: name the session each link is to. */
   overview?: boolean;
   onRevoke: (id: string) => void;
 }> = (props) => {
-  const visitors = (): string =>
-    props.overview
-      ? visitorCountLabel(countVisitors(props.link.visitors))
-      : props.link.visitors.map(visitorLabel).join(", ");
+  const viewers = (): string => viewersLabel(props.link.viewers);
   return (
     <div class="tl-link-row">
       <div class="tl-link-meta">
         <div class="tl-link-line">
-          <span class="tl-link-badge" data-mode={props.link.mode}>
-            {modeBadge(props.link.mode)}
-          </span>
           <Show when={props.overview}>
             <span class="tl-link-session" title={props.link.session}>
               {props.link.title || props.link.session}
@@ -122,14 +104,14 @@ export const LinkRow: Component<{
         <Show when={props.link.note}>
           <div class="tl-link-note">{props.link.note}</div>
         </Show>
-        <Show when={visitors()}>
-          <div class="tl-link-visitors">{visitors()}</div>
+        <Show when={viewers()}>
+          <div class="tl-link-visitors">{viewers()}</div>
         </Show>
       </div>
       <button
         type="button"
         class="tl-set-btn tl-set-btn-danger"
-        aria-label={`Revoke ${modeBadge(props.link.mode).toLowerCase()} link`}
+        aria-label="Revoke link"
         onClick={() => props.onRevoke(props.link.id)}
       >
         Revoke
@@ -193,18 +175,12 @@ export const ShareDialog: Component<{
       name: session()?.name ?? props.target.name,
     });
 
-  const [mode, setMode] = createSignal<LinkMode>("ro");
   const [ttl, setTtl] = createSignal<LinkTTL>("24h");
   const [note, setNote] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [status, setStatus] = createSignal("");
   const [created, setCreated] = createSignal<string | null>(null);
   const [copied, setCopied] = createSignal("");
-
-  const pickMode = (m: LinkMode): void => {
-    setMode(m);
-    setTtl((t) => clampTtl(m, t));
-  };
 
   const create = async (): Promise<void> => {
     const s = session();
@@ -215,7 +191,6 @@ export const ShareDialog: Component<{
     try {
       const got = await createLink({
         name: s.name,
-        mode: mode(),
         ttl: ttl(),
         ...(note().trim() ? { note: note().trim() } : {}),
       });
@@ -332,28 +307,11 @@ export const ShareDialog: Component<{
                 when={session()}
                 fallback={<div class="tl-set-hint tl-set-hint-static">This session has ended.</div>}
               >
-                <Row label="Access">
-                  <div class="tl-set-seg" role="radiogroup" aria-label="Access">
-                    <For each={["ro", "rw"] as const}>
-                      {(m) => (
-                        <button
-                          type="button"
-                          role="radio"
-                          aria-checked={mode() === m}
-                          classList={{ active: mode() === m }}
-                          onClick={() => pickMode(m)}
-                        >
-                          {MODE_CHOICES[m]}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Row>
-                <Show when={mode() === "rw"}>
-                  <div class="tl-share-warn" role="note">
-                    Anyone with this link gets a shell as you, until it expires or you revoke it.
-                  </div>
-                </Show>
+                <div class="tl-set-note">
+                  Anyone with the link reads this conversation as it happens, and after the session
+                  ends, until the link expires or you revoke it. Tool output is included. Nobody can
+                  type into the session through it.
+                </div>
                 <Row label="Lifetime">
                   <div class="tl-set-seg" role="radiogroup" aria-label="Lifetime">
                     <For each={LINK_TTLS}>
@@ -363,12 +321,6 @@ export const ShareDialog: Component<{
                           role="radio"
                           aria-checked={ttl() === t}
                           classList={{ active: ttl() === t }}
-                          disabled={!ttlAllowed(mode(), t)}
-                          title={
-                            ttlAllowed(mode(), t)
-                              ? undefined
-                              : "A link that can type lasts at most 24 hours"
-                          }
                           onClick={() => setTtl(t)}
                         >
                           {TTL_LABELS[t]}

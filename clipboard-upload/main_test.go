@@ -1095,3 +1095,43 @@ func TestImageUploadAlsoReportsStored(t *testing.T) {
 		t.Error("path must keep its name and position for every existing reader")
 	}
 }
+
+// /s/ is the public-link visitor page (ADR-0041): the one HTML document this
+// service serves to people who are not signed in. It must be the built
+// link.html and nothing else, never cached across deploys, and never framed.
+func TestTheLinkPageIsServedAtS(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLIPBOARD_UPLOAD_ASSET_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "link.html"), []byte("<!doctype html><title>link</title>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("THE LOBBY"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := assetServe(t, http.MethodGet, "/s/")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<title>link</title>") {
+		t.Fatalf("GET /s/: %d %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("Cache-Control = %q: a deploy must reach an open visitor page on its next load", cc)
+	}
+	if rec.Header().Get("X-Frame-Options") != "DENY" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("framing/referrer headers: %v", rec.Header())
+	}
+
+	rec = assetServe(t, http.MethodGet, "/s")
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/s/" {
+		t.Fatalf("GET /s: %d -> %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := assetServe(t, http.MethodPost, "/s/"); rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /s/: %d", rec.Code)
+	}
+	// Nothing else under /s/ is this service's to answer.
+	if rec := assetServe(t, http.MethodGet, "/s/index.html"); strings.Contains(rec.Body.String(), "THE LOBBY") {
+		t.Fatal("the lobby leaked through /s/")
+	}
+}

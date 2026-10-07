@@ -127,7 +127,7 @@ TL_AUTH_HEADER=X-Forwarded-User
 # refuses every route under /v1 that carries no bearer, and strips the header
 # and the secret before it reads identity, so an empty file leaves it running
 # and serving nobody. TL_BIND is shared, so widening the bind to reach it from
-# somewhere else opens 7681, 7683-7688 and 7692-7693 in the same change. Set
+# somewhere else opens 7681 and 7683-7688 in the same change. Set
 # TL_PROXY_SECRET then too.
 #
 # Unset means the path shown.
@@ -149,10 +149,7 @@ TL_MULTI_USER=auto
 # Widen it to 0.0.0.0 when the proxy lives somewhere else, an ingress in a
 # cluster say, and set TL_PROXY_SECRET in the same change, because a service
 # reachable from the network trusts TL_AUTH_HEADER from anything that reaches
-# it. Widening also opens 7681, which the secret cannot cover, and the two
-# public-link servers on 7692 and 7693 (ADR-0039), which take connections from
-# anyone by design and authorize each attach by a single-use ticket. Firewall
-# all three to the proxy.
+# it. Widening also opens 7681, which the secret cannot cover.
 TL_BIND=127.0.0.1
 
 # How stalled the box has to be before the lobby says so. tmux-api reads
@@ -301,14 +298,14 @@ var Package = Manifest{
 		// A long-running service rather than a timer: the comparison is between
 		// consecutive looks, so the previous snapshot has to survive the tick.
 		"tl-session-watch",
-		// The two terminal servers for public links (ADR-0039), which take
-		// connections from anyone and attach only what a ticket names.
-		"ttyd-link-ro", "ttyd-link-rw",
 	},
 	// The T3 bridge and its syncer are gone (ADR-0029). This is the release
 	// that stops them: the files go with the manifest entries above, and the
 	// running instance goes here.
-	Retire:   []string{"tl-t3-sync@*.service"},
+	//
+	// The two public-link terminal servers went when links stopped carrying a
+	// terminal (ADR-0041); postinst also removes their account and sudo grant.
+	Retire:   []string{"tl-t3-sync@*.service", "ttyd-link-ro.service", "ttyd-link-rw.service"},
 	External: []string{"/usr/local/bin/ttyd"},
 	Checks: []Check{
 		{Unit: "tmux-api", Name: "tmux-api /health", URL: "http://127.0.0.1:7684/health", WantStatus: 200},
@@ -329,8 +326,8 @@ var Package = Manifest{
 		// program, so the refusal probe is worth more here than elsewhere.
 		//
 		// Both are advisory, and 8710 is why. It is the one port the package
-		// holds outside its own block -- the other services sit at 7681,
-		// 7683-7689 and 7692-7693, and nothing else on a devvm goes looking there, while
+		// holds outside its own block -- the other seven services sit at 7681
+		// and 7683-7689, and nothing else on a devvm goes looking there, while
 		// 8710 is in the range a shared box hands to whoever asked first. The
 		// `python3 -m http.server <port>` a person runs to look at a rendered
 		// page is the common case; eight such listeners were live between 8130
@@ -364,12 +361,9 @@ var Package = Manifest{
 		// specific address would not, and this probe would have to follow it
 		// there.
 		{Unit: "ttyd", Name: "ttyd refuses anonymous", URL: "http://127.0.0.1:7681/", WantStatus: 407},
-		// The link servers have no -H, so their page answers 200 to anyone:
-		// that is what a visitor with no account loads. What they refuse is an
-		// attach without a ticket, which happens per WebSocket and is covered by
-		// tmux-api's tests rather than a probe.
-		{Unit: "ttyd-link-ro", Name: "ttyd-link-ro serves the visitor page", URL: "http://127.0.0.1:7692/s/", WantStatus: 200},
-		{Unit: "ttyd-link-rw", Name: "ttyd-link-rw serves the visitor page", URL: "http://127.0.0.1:7693/s/rw/", WantStatus: 200},
+		// The public-link visitor page (ADR-0041), served to people who are not
+		// signed in. A broken /s/ is a broken link for everyone holding one.
+		{Unit: "clipboard-upload", Name: "clipboard-upload serves the link page", URL: "http://127.0.0.1:7683/s/", WantStatus: 200},
 	},
 	Files: []File{
 		{Src: "bin/tmux-api", Dest: "/usr/local/bin/tmux-api", Mode: 0o755},
@@ -386,11 +380,6 @@ var Package = Manifest{
 		// Invoked by ttyd per WebSocket, by sessions, and by tmux-api via sudo.
 		{Src: "devvm/tmux-attach.sh", Dest: "/usr/local/bin/tmux-attach.sh", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-attach", Dest: "/usr/local/bin/tmux-user-attach", Mode: 0o755, Unmanaged: true},
-		// Public links (ADR-0039): the first half runs as tl-link under the link
-		// servers, per WebSocket; the second runs as the session's owner through
-		// tl-link's one sudo grant.
-		{Src: "devvm/tmux-link-attach.sh", Dest: "/usr/local/bin/tmux-link-attach.sh", Mode: 0o755, Unmanaged: true},
-		{Src: "devvm/tmux-link-join", Dest: "/usr/local/bin/tmux-link-join", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-dirlist", Dest: "/usr/local/bin/tmux-user-dirlist", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-setfacl", Dest: "/usr/local/bin/tmux-user-setfacl", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-restore-user", Dest: "/usr/local/bin/tmux-restore-user", Mode: 0o755, Unmanaged: true},
@@ -412,7 +401,7 @@ var Package = Manifest{
 		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755},
 
 		{Src: "share/index.html", Dest: "/usr/local/share/ttyd/index.html", Mode: 0o644},
-		// The public-link visitor page, served by the two link servers at /s/.
+		// The public-link visitor page, served by clipboard-upload at /s/.
 		{Src: "share/link.html", Dest: "/usr/local/share/ttyd/link.html", Mode: 0o644},
 
 		// The endpoint the self-update healer polls to learn a version shipped.
@@ -471,9 +460,6 @@ var Package = Manifest{
 		// each one.
 		{Src: "devvm/sudoers.d-ttyd-users.template", Dest: "/usr/share/terminal-lobby/sudoers.d-ttyd-users.template", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/sudoers.d-tl-reconcile.template", Dest: "/usr/share/terminal-lobby/sudoers.d-tl-reconcile.template", Mode: 0o644, Unmanaged: true},
-		// The link grant names no person, so postinst installs it from here once
-		// visudo has parsed it (Grants says why it is not a File onto its path).
-		{Src: "devvm/sudoers.d-tl-link.template", Dest: "/usr/share/terminal-lobby/sudoers.d-tl-link.template", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
 		// The ceiling over one user's browsers together. A vendor user unit,
@@ -498,8 +484,6 @@ var Package = Manifest{
 		{Src: "devvm/clipboard-cleanup.service", Dest: "/etc/systemd/system/clipboard-cleanup.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.timer", Dest: "/etc/systemd/system/clipboard-cleanup.timer", Mode: 0o644},
 		{Src: "devvm/tl-session-watch.service", Dest: "/etc/systemd/system/tl-session-watch.service", Mode: 0o644},
-		{Src: "devvm/ttyd-link-ro.service", Dest: "/etc/systemd/system/ttyd-link-ro.service", Mode: 0o644},
-		{Src: "devvm/ttyd-link-rw.service", Dest: "/etc/systemd/system/ttyd-link-rw.service", Mode: 0o644},
 
 		// The grant every attach depends on. visudo -cf gates it, because a
 		// malformed grant locks every user out of every session.
@@ -573,16 +557,6 @@ var Package = Manifest{
 			"/usr/local/bin/tl-session-watch",
 			"/etc/systemd/system/tl-session-watch.service",
 		}},
-		{Name: "ttyd-link-ro", Files: []string{
-			"/usr/local/bin/ttyd",
-			"/usr/local/share/ttyd/link.html",
-			"/etc/systemd/system/ttyd-link-ro.service",
-		}},
-		{Name: "ttyd-link-rw", Files: []string{
-			"/usr/local/bin/ttyd",
-			"/usr/local/share/ttyd/link.html",
-			"/etc/systemd/system/ttyd-link-rw.service",
-		}},
 	},
 }
 
@@ -637,7 +611,7 @@ TL_BIND=0.0.0.0
 TLEOF
   chmod 0644 "$TL_LOCAL_CONF"
   echo "terminal-lobby: pinned TL_AUTH_HEADER=X-Authentik-Username in $TL_LOCAL_CONF (existing multi-user box)"
-  echo "terminal-lobby: TL_BIND=0.0.0.0 in $TL_LOCAL_CONF leaves 7681, 7683-7688, 7692-7693 and 8710 open to the network; set TL_PROXY_SECRET there and have your proxy send X-TL-Proxy-Secret" >&2
+  echo "terminal-lobby: TL_BIND=0.0.0.0 in $TL_LOCAL_CONF leaves 7681, 7683-7688 and 8710 open to the network; set TL_PROXY_SECRET there and have your proxy send X-TL-Proxy-Secret" >&2
   echo "terminal-lobby: 8710 is agent-api, which the secret does not cover; it refuses every request until a credential is written in TL_BEARER_TOKENS" >&2
 fi
 `
@@ -666,22 +640,6 @@ if [ -e /etc/sudoers.d/tl-reconcile ] && ! visudo -cf /etc/sudoers.d/tl-reconcil
   exit 1
 fi
 
-# Public links (ADR-0039). The link servers run as tl-link, a system account
-# with no home and no shell, whose one sudo grant is tmux-link-join. The grant
-# names no person, so it ships; it is parsed BEFORE it is installed, since a
-# malformed file in /etc/sudoers.d breaks sudo for everyone, and checked again
-# in place below like the other two.
-if ! getent passwd tl-link >/dev/null; then
-  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin tl-link
-fi
-if visudo -cf /usr/share/terminal-lobby/sudoers.d-tl-link.template >/dev/null; then
-  install -m 0440 -o root -g root /usr/share/terminal-lobby/sudoers.d-tl-link.template /etc/sudoers.d/tl-link
-fi
-if [ -e /etc/sudoers.d/tl-link ] && ! visudo -cf /etc/sudoers.d/tl-link >/dev/null; then
-  echo "terminal-lobby: /etc/sudoers.d/tl-link is malformed; refusing to configure" >&2
-  exit 1
-fi
-
 # Units this package used to ship. dpkg has already deleted their files by the
 # time this runs, which is exactly why they are stopped BY NAME here: a service
 # started from a binary that no longer exists keeps running until someone
@@ -694,6 +652,14 @@ for unit in UNITS_TO_RETIRE; do
   systemctl disable "$unit" >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/*.wants/$unit
 done
+
+# What the retired public-link terminal servers left behind (ADR-0041): their
+# sudo grant and the tl-link account they ran as. After the loop above, so the
+# units are stopped and nothing still runs as tl-link when it is removed.
+rm -f /etc/sudoers.d/tl-link /usr/share/terminal-lobby/sudoers.d-tl-link.template
+if getent passwd tl-link >/dev/null; then
+  userdel tl-link >/dev/null 2>&1 || true
+fi
 
 MIGRATE_CONFIG
 

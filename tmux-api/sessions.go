@@ -82,7 +82,6 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	if raw, cerr := tmuxCmd(osUser, "list-clients", "-F", clientsListFmt).Output(); cerr == nil {
 		clients := parseClients(raw)
 		markDriven(sessions, clients)
-		annotateVisitors(osUser, sessions, clients)
 		activity = latestActivity(clients)
 		// Driven is what "last driven" is derived from, so the stamp is written
 		// here, while the client list is in hand. A read-only client reaches
@@ -94,6 +93,7 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	// reports its own activity is timed by it whether or not tmux answered
 	// list-clients, and this is the list the suspend sweep reads as well.
 	useReportedActivity(sessions)
+	annotateViewers(osUser, sessions)
 	// One /proc snapshot serves two readers: the liveness backstop (drop
 	// states whose claude died without a SessionEnd hook) and the tool mark
 	// (which command each session runs). A failed scan fails open — states
