@@ -333,6 +333,16 @@ version 1 rules above and are upgraded only by a restart.
   are written to a file per conversation under `-held-dir` so a restart keeps
   them, since tmux refuses a command over about 16 KB. Sent at a turn's end
   together, they reach Claude in one poll.
+- Amended 2026-10-06: Claude Code 2.1.290 refuses a `$.prompt.submit` text
+  whose first non-space character is a slash, so a prompt opening with a pasted
+  image's path did not run. A prompt that starts with a slash and is not a
+  command now goes to Claude with a zero-width space in front, which the model
+  reads past. session-events adds it for a prompt whose first word is a path
+  (`sessionio.MarkProse`), which covers every open session whatever mod it
+  loaded; the mod (0.4.1, `asProse`) adds it for any other non-command text.
+  sessionio takes it off again when it reads the transcript (`Unmark`), so the
+  Text view and the held queue see the prompt as written. A mod change reaches
+  only Claude processes started after it ships, since each loads the mod once.
 - If session-events is down, the mod keeps retrying hello with backoff and
   Claude itself is unaffected; what happened meanwhile is delivered in order
   once it is back.
