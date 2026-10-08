@@ -12,7 +12,7 @@ import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
 import { steer } from './lib/steer.ts';
 import { Level } from './lib/level.ts';
 import {
-  type CheckResult, type Command, type DialogDeps, Holds, OwnDialogs, holdDecision, ownDialog, raceQuestion,
+  type CheckResult, type Command, type DialogDeps, Holds, OwnDialogs, holdDecision, ownDialog, planOf, racePlan, raceQuestion,
 } from './lib/dialogs.ts';
 import { type CommandDeps, OPS, runCommand } from './lib/commands.ts';
 import { endSession } from './lib/lifecycle.ts';
@@ -66,6 +66,15 @@ const own = new OwnDialogs();
 const holds = new Holds<CheckResult>();
 // Words sent with a plan approval from the web, by the plan's tool_use_id.
 const planFeedback = new Map<string, string>();
+// What tool.check saw of each plan it asked about, by tool_use_id: tool.call's
+// own event for ExitPlanMode is not typed to carry the plan (2.1.293 lists
+// allowedPrompts only), and the plan card needs its text and file. Bounded,
+// oldest first out.
+const planInputs = new Map<string, unknown>();
+const PLAN_INPUTS_MAX = 16;
+// The main loop's plan file, as its last plan-mode reminder named it: where a
+// plan is read from when the call's input carries none (lib/dialogs.ts planOf).
+let reminderPlanFile = '';
 // Commands already run here, so one sent again after a re-hello is only re-acked.
 const seenCommands = new SeenCommands();
 // Whether this conversation still owes its summary (lib/summary.ts).
@@ -280,6 +289,8 @@ export const register: Register = (on) => {
         level.reset();
         summary.reset();
         planFeedback.clear();
+        planInputs.clear();
+        reminderPlanFile = '';
         lastModel = '';
         lastMainUuid = '';
       },
@@ -416,20 +427,44 @@ export const register: Register = (on) => {
           throw err;
         }
       }
+      // Only a plan whose check asked has a menu to race, as only an `ask`
+      // was ever held before.
+      const planInput = e.tool === 'ExitPlanMode' ? planInputs.get(e.tool_use_id) : undefined;
+      if (planInput !== undefined) planInputs.delete(e.tool_use_id);
+      if (planInput !== undefined && e.agentId === undefined && dialogDeps) {
+        const input = planInput;
+        let r: Awaited<ReturnType<typeof next>>;
+        try {
+          r = await racePlan(dialogDeps, { tool_use_id: e.tool_use_id, input }, () => next(e));
+        } catch (err) {
+          planFeedback.delete(e.tool_use_id);
+          send(shapeResult(e, { isError: true, text: errorText(err) }, now()));
+          throw err;
+        }
+        send(shapeResult(e, r, now()));
+        const words = planFeedback.get(e.tool_use_id);
+        planFeedback.delete(e.tool_use_id);
+        if (words !== undefined && r.deny === undefined) {
+          return { ...r, context: [...(r.context ?? []), planApprovalContext(words)] };
+        }
+        return r;
+      }
       const r = await next(e);
       send(shapeResult(e, r, now()));
       // A background agent is listed as soon as its Agent call returns.
       if (e.tool === 'Agent') sendLevel();
       if (e.tool === 'Workflow' && level.workflowLaunched(r.result, now())) sendLevel();
-      const words = planFeedback.get(e.tool_use_id);
-      if (e.tool === 'ExitPlanMode' && words !== undefined && r.deny === undefined) {
-        planFeedback.delete(e.tool_use_id);
-        return { ...r, context: [...(r.context ?? []), planApprovalContext(words)] };
-      }
       return r;
     } finally {
       if (level.toolEnded(e.tool_use_id)) sendLevel();
     }
+  });
+
+  // Remembers where the main loop keeps its plan, for a plan call written
+  // without one. Reads only; the reminder goes on as it was.
+  on('prompt.attachment', { type: 'plan_mode' }, ($, e, next) => {
+    if (e.agentId === undefined && e.detail?.planFilePath) reminderPlanFile = e.detail.planFilePath;
+    return next(e);
   });
 
   on('tool.check', async ($, e, next) => {
@@ -441,6 +476,19 @@ export const register: Register = (on) => {
     // held, never shown to anyone (D-F6).
     const toolId = e.tool_use_id;
     if (!toolId) return r;
+    // A plan is never held: on 2.1.293 a hook's allow no longer approves it
+    // and Claude draws its own menu regardless. tool.call races that menu
+    // (racePlan) and needs the plan, which only this event carries.
+    if (e.tool === 'ExitPlanMode') {
+      planInputs.delete(toolId);
+      planInputs.set(toolId, await planOf(e.input, reminderPlanFile, (path) => $.fs.read(path)));
+      while (planInputs.size > PLAN_INPUTS_MAX) {
+        const oldest = planInputs.keys().next().value;
+        if (oldest === undefined) break;
+        planInputs.delete(oldest);
+      }
+      return r;
+    }
     const deps = dialogDeps;
     try {
       return await holds.run(toolId, () => holdDecision(deps, { tool: e.tool, input: e.input, tool_use_id: toolId }, r));

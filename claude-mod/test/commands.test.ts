@@ -173,7 +173,7 @@ for (const op of ['model', 'history', 'nope']) {
 }
 
 test('OPS names what runCommand runs, and the hello ops the server reads', () => {
-  assert.deepEqual([...OPS], ['prompt', 'abort', 'answer', 'decide', 'steer', 'level', 'decide-feedback']);
+  assert.deepEqual([...OPS], ['prompt', 'abort', 'answer', 'decide', 'steer', 'level', 'decide-feedback', 'plan-keys']);
 });
 
 test('a command sent again after a re-hello is only acked again', async () => {

@@ -12,7 +12,7 @@ import type {
 // run an old copy (fixed by restarting them). .claude-plugin/plugin.json says
 // the same; test/version.test.ts keeps them equal and asks for a bump when
 // hooks/ changed.
-export const MOD_VERSION = '0.4.1';
+export const MOD_VERSION = '0.5.0';
 
 export type AgentStatus = 'pending' | 'running' | 'waiting' | 'idle' | 'completed' | 'failed' | 'killed';
 

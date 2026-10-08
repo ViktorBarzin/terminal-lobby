@@ -416,21 +416,20 @@ describe("feedback through the card's own field", () => {
     expect(v.ownField()!.value).toBe("smaller steps");
   });
 
-  it("approves with the card's words, through option 1, and says it clears the context", async () => {
+  it("approves with the card's words and keeps the context, whatever option 1 does", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer);
     await waitFor(() => expect(v.card()).not.toBeNull());
     await v.typeOwn("and keep the tests");
     const approve = v.approveWithFeedback();
-    expect(approve?.textContent).toBe("Approve with this feedback and clear context");
+    expect(approve?.textContent).toBe("Approve with this feedback");
     fireEvent.click(approve!);
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
       plan: { feedback: "and keep the tests", approve: true },
     });
     await waitFor(() => expect(v.card()).toBeNull());
-    expect(v.header()).toBe("Clearing context…");
-    expect(v.status()).toBe("Clearing the context and starting the plan…");
+    expect(v.header()).toBe("Approving…");
   });
 
   it("approves plainly when option 1 keeps the context", async () => {
@@ -687,5 +686,28 @@ describe("the live group while the card is docked", () => {
     await waitFor(() => expect(v.card()).toBeNull());
     v.setEvents([...v.events(), asking(4, ""), approved(5, "p1")]);
     await waitFor(() => expect(v.status()).toBe("Working…"));
+  });
+});
+
+/* Claude Code 2.1.293 sometimes writes the ExitPlanMode call with an empty
+   input, the plan living only in its file (2026-10-08, the {} Viktor saw on
+   the card). The lobby's mod still reads the plan where tool.check sees it and
+   session-events puts it on the reading. */
+describe("a plan call written with an empty input", () => {
+  const emptyUse = (id: number, toolId: string): Event =>
+    ev({ id, kind: "tool_use", tool: "ExitPlanMode", toolId, body: "{}", at: id * 1000 });
+
+  it("shows the plan the reading carries, never the raw input", async () => {
+    const v = mount([prompt(1), emptyUse(2, "p1"), asking(3, { ...PLAN_FIRST, plan: INPUT_PLAN })]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.card()!.textContent).toContain("Create hello.txt");
+    expect(v.card()!.textContent).not.toContain("{}");
+  });
+
+  it("names the plan file when nothing carries the plan", async () => {
+    const v = mount([prompt(1), emptyUse(2, "p1"), asking(3, PLAN_FIRST)]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.card()!.textContent).toContain(PLAN_FIRST.planPath);
+    expect(v.card()!.textContent).not.toContain("{}");
   });
 });

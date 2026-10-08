@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  type Command, type DialogDeps, Holds, OwnDialogs, holdDecision, ownDialog, raceQuestion,
+  type Command, type DialogDeps, Holds, OwnDialogs, holdDecision, ownDialog, planOf, racePlan, raceQuestion,
 } from '../hooks/lib/dialogs.ts';
 import { Pending } from '../hooks/lib/pending.ts';
 import type { DialogEvent } from '../hooks/lib/wire.ts';
-import { PERMISSION_ALLOW, PERMISSION_DENY, PLAN_APPROVE } from '../hooks/lib/shape.ts';
+import { PERMISSION_ALLOW, PERMISSION_DENY } from '../hooks/lib/shape.ts';
 
 async function settle() {
   for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -44,7 +44,6 @@ function harness() {
 
 const ASK = 'ask' as const;
 const bash = { tool: 'Bash', input: { command: 'rm -rf build' } };
-const plan = { tool: 'ExitPlanMode', input: { plan: '1. Do it.' } };
 
 // The race each dialog kind runs: the terminal answers first, or the web does.
 test('permission: the terminal answer wins and is settled by the terminal', async () => {
@@ -67,25 +66,105 @@ test('permission: the web answer wins and takes the terminal dialog down', async
   assert.equal(await h.deps.own.get(question), PERMISSION_ALLOW, 'the dialog is answered with the web\'s choice');
 });
 
-test('plan: the web approval wins; its feedback is kept for the plan\'s tool result', async () => {
+// Claude Code 2.1.293 ignores a hook's `allow` for a plan and draws its own
+// "Ready to code?" menu, so the plan is no longer held in tool.check. The
+// native menu (next) races the web: a deny takes it down, an approval only
+// carries words, and the approve key goes into the pane from session-events.
+const planInput = { tool_use_id: 'p1', input: { plan: '1. Do it.', planFilePath: '/home/u/.claude/plans/p.md' } };
+const KEEP_PLANNING = 'The user wants to keep planning. Do not start on the plan yet.';
+
+test('plan: announced with the plan and its file before the native menu runs', async () => {
   const h = harness();
-  const p = holdDecision(h.deps, { ...plan, tool_use_id: 'p1' }, { decision: ASK });
+  let started = false;
+  void racePlan(h.deps, planInput, () => { started = true; return new Promise(() => {}); });
   await settle();
-  assert.equal(h.announced[0]?.type, 'plan');
-  h.deps.web.resolve('p1', { op: 'decide', decision: 'allow', feedback: '  use sqlite  ' });
-  assert.deepEqual(await p, { decision: 'allow' });
-  assert.deepEqual(h.feedback, [['p1', 'use sqlite']]);
-  assert.equal(await h.deps.own.get(h.asks[0]?.question ?? ''), PLAN_APPROVE);
+  assert.deepEqual(h.announced[0], { type: 'plan', t: 7, toolId: 'p1', plan: '1. Do it.', planFilePath: '/home/u/.claude/plans/p.md' });
+  assert.equal(started, true);
 });
 
-test('plan: the terminal approval wins and no feedback is kept', async () => {
+test('plan: a web deny with words takes the native menu down with them', async () => {
   const h = harness();
-  const p = holdDecision(h.deps, { ...plan, tool_use_id: 'p1' }, { decision: ASK });
+  const p = racePlan(h.deps, planInput, () => new Promise<{ result: string }>(() => {}));
   await settle();
-  h.asks[0]?.answer.resolve(PLAN_APPROVE);
-  assert.deepEqual(await p, { decision: 'allow' });
+  assert.equal(h.deps.web.resolve('p1', { op: 'decide', decision: 'deny', reason: '  use sqlite  ' }), true);
+  const r = await p;
+  assert.ok('deny' in r && r.deny.includes('wants changes before you start: use sqlite'));
+  assert.deepEqual(h.log, ['announce plan p1', 'settled p1 web']);
+});
+
+test('plan: a web deny with no words keeps planning', async () => {
+  const h = harness();
+  const p = racePlan(h.deps, planInput, () => new Promise(() => {}));
+  await settle();
+  h.deps.web.resolve('p1', { op: 'decide', decision: 'deny' });
+  assert.deepEqual(await p, { deny: KEEP_PLANNING });
+});
+
+test('plan: a web approval keeps its words and waits for the native menu to go', async () => {
+  const h = harness();
+  const local = deferred<{ result: string }>();
+  const p = racePlan(h.deps, planInput, () => local.promise);
+  await settle();
+  assert.equal(h.deps.web.resolve('p1', { op: 'decide', decision: 'allow', feedback: '  use sqlite  ' }), true);
+  await settle();
+  assert.deepEqual(h.feedback, [['p1', 'use sqlite']]);
+  assert.deepEqual(h.log, ['announce plan p1'], 'not settled while the menu is up');
+  assert.ok(h.deps.web.has('p1'), 'still listening for a later answer');
+  local.resolve({ result: 'approved' });
+  assert.deepEqual(await p, { result: 'approved' });
+  assert.deepEqual(h.log, ['announce plan p1', 'settled p1 web']);
+  assert.equal(h.deps.web.resolve('p1', { op: 'decide', decision: 'deny' }), false, 'no waiter once settled');
+});
+
+test('plan: a web approval with no words stores none', async () => {
+  const h = harness();
+  const local = deferred<{ result: string }>();
+  const p = racePlan(h.deps, planInput, () => local.promise);
+  await settle();
+  h.deps.web.resolve('p1', { op: 'decide', decision: 'allow', feedback: '   ' });
+  await settle();
+  local.resolve({ result: 'approved' });
+  await p;
   assert.deepEqual(h.feedback, []);
+  assert.deepEqual(h.log, ['announce plan p1', 'settled p1 web']);
+});
+
+test('plan: an approval then a deny from the web denies', async () => {
+  const h = harness();
+  const p = racePlan(h.deps, planInput, () => new Promise(() => {}));
+  await settle();
+  h.deps.web.resolve('p1', { op: 'decide', decision: 'allow' });
+  await settle();
+  assert.equal(h.deps.web.resolve('p1', { op: 'decide', decision: 'deny' }), true);
+  assert.deepEqual(await p, { deny: KEEP_PLANNING });
+  assert.deepEqual(h.log, ['announce plan p1', 'settled p1 web']);
+});
+
+test('plan: answered in the terminal with no web command', async () => {
+  const h = harness();
+  const local = deferred<{ result: string }>();
+  const p = racePlan(h.deps, planInput, () => local.promise);
+  await settle();
+  local.resolve({ result: 'approved' });
+  assert.deepEqual(await p, { result: 'approved' });
   assert.deepEqual(h.log, ['announce plan p1', 'settled p1 terminal']);
+  assert.equal(h.deps.web.resolve('p1', { op: 'decide', decision: 'allow' }), false);
+});
+
+test('plan: a call that rejects settles as gone and rethrows', async () => {
+  const h = harness();
+  const p = racePlan(h.deps, planInput, () => Promise.reject(new Error('aborted')));
+  await assert.rejects(p, /aborted/);
+  assert.deepEqual(h.log, ['announce plan p1', 'settled p1 gone']);
+  assert.equal(h.deps.web.has('p1'), false);
+});
+
+test('plan: a long plan is capped before it is announced', async () => {
+  const h = harness();
+  void racePlan(h.deps, { tool_use_id: 'p1', input: { plan: 'p'.repeat(300_000) } }, () => new Promise(() => {}));
+  await settle();
+  const ev = h.announced[0];
+  assert.ok(ev?.type === 'plan' && ev.plan.length < 270_000 && ev.planFilePath === undefined);
 });
 
 // Contract item 11 (L-F7, D-F5): Esc on the mod's dialog makes Claude draw
@@ -227,4 +306,26 @@ test('ask: long strings in the questions are capped before they are announced', 
 test('a terminal answer to the mod\'s own dialog passes through', async () => {
   const r = await ownDialog({ questions: [{ question: 'Q' }] }, new Promise(() => {}), () => Promise.resolve({ result: 'mine' }));
   assert.deepEqual(r, { result: 'mine' });
+});
+
+// Claude Code 2.1.293 writes some ExitPlanMode calls with an empty input, the
+// plan only in its file (2026-10-08). The plan card then reads the file the
+// call names, or the one the last plan-mode reminder named.
+test('planOf: a plan in the input is used as it is', async () => {
+  const read = async () => { throw new Error('read'); };
+  assert.deepEqual(await planOf({ plan: '# P', planFilePath: '/p.md' }, '/other.md', read), { plan: '# P', planFilePath: '/p.md' });
+});
+
+test('planOf: an empty input reads the plan file it names, else the reminder\'s', async () => {
+  const files: Record<string, string> = { '/p.md': '# From p', '/r.md': '# From reminder' };
+  const read = async (path: string) => {
+    const f = files[path];
+    if (f === undefined) throw new Error('no file');
+    return f;
+  };
+  assert.deepEqual(await planOf({ planFilePath: '/p.md' }, '/r.md', read), { plan: '# From p', planFilePath: '/p.md' });
+  assert.deepEqual(await planOf({}, '/r.md', read), { plan: '# From reminder', planFilePath: '/r.md' });
+  assert.deepEqual(await planOf(undefined, '/r.md', read), { plan: '# From reminder', planFilePath: '/r.md' });
+  assert.deepEqual(await planOf({}, '', read), { plan: '' });
+  assert.deepEqual(await planOf({}, '/gone.md', read), { plan: '', planFilePath: '/gone.md' });
 });

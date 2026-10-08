@@ -1,8 +1,8 @@
 // The dialogs the lobby can answer from the web: Claude's own AskUserQuestion
-// menu, and plan approvals and permission prompts the mod holds in tool.check
-// behind a dialog of its own ($.ui.ask). Each races the terminal against the
-// web. Everything outside is injected, as in link.ts, so the races run the
-// same under `node --test` and inside Claude Code.
+// menu and plan approval, which run in tool.call, and permission prompts the
+// mod holds in tool.check behind a dialog of its own ($.ui.ask). Each races
+// the terminal against the web. Everything outside is injected, as in link.ts,
+// so the races run the same under `node --test` and inside Claude Code.
 
 import type { Pending } from './pending.ts';
 import {
@@ -32,7 +32,8 @@ export type DialogDeps = {
   now: () => number;
   // The subagent whose row asked for a tool call, when the mod saw it.
   agentOf: (toolId: string) => string | undefined;
-  // Words the person sent with a plan approval, for the plan's tool result.
+  // Words the person sent with a plan approval, for the plan's tool result
+  // (racePlan).
   feedback: (toolId: string, words: string) => void;
 };
 
@@ -135,6 +136,86 @@ export async function raceQuestion<Q extends Question, R>(
   return winner.r;
 }
 
+// ExitPlanMode from the main loop: Claude's own "Ready to code?" menu, drawn
+// inside tool.call's next, races the web.
+//
+// WHY NOT HELD IN tool.check ANY MORE. Until CLI 2.1.292 a hook's `allow`
+// approved the plan (ADR-0036, measured on 2.1.287). On 2.1.293 it does not:
+// "for a tool that requires the person a hook only tightens: its `allow` does
+// not dismiss the dialog" (ToolCheckResult.decision), and the native menu came
+// up after every approval from the mod's dialog. So an approval is a key in
+// the pane, which session-events presses (the hello's `plan-keys` op), and
+// here a web `allow` only says the web answered and carries the person's
+// words for the plan's tool result. A web `deny` returned from tool.call while
+// next is pending takes the native menu down and leaves the session in plan
+// mode (probed live on 2.1.293, 2026-10-08), so declining needs no keys.
+export async function racePlan<R>(
+  deps: DialogDeps,
+  e: { tool_use_id: string; input: unknown },
+  next: () => Promise<R>,
+): Promise<R | { deny: string }> {
+  const toolId = e.tool_use_id;
+  const input = (e.input && typeof e.input === 'object' ? e.input : {}) as Record<string, unknown>;
+  const ev: DialogEvent = { type: 'plan', t: deps.now(), toolId, plan: capStrings(String(input.plan ?? '')) as string };
+  if (typeof input.planFilePath === 'string') ev.planFilePath = input.planFilePath;
+  deps.announce(ev);
+  const local = next().then(
+    (r) => ({ by: 'terminal' as const, r }),
+    (err: unknown) => ({ by: 'gone' as const, err }),
+  );
+  let webTaken = false;
+  for (;;) {
+    const web = deps.web.wait(toolId);
+    // A web answer that lands once the menu has gone finds no waiter, so the
+    // web is told `gone` rather than that its answer was used.
+    local.then(web.cancel);
+    const winner = await Promise.race([local, web.promise.then((c) => ({ by: 'web' as const, c }))]);
+    web.cancel();
+    if (winner.by === 'web') {
+      const decision = decisionFromWeb('ExitPlanMode', winner.c.decision, winner.c.reason);
+      if (decision.decision === 'deny') {
+        deps.settled(toolId, 'web');
+        return { deny: decision.reason };
+      }
+      webTaken = true;
+      const words = typeof winner.c.feedback === 'string' ? winner.c.feedback.trim() : '';
+      if (words) deps.feedback(toolId, words);
+      continue;
+    }
+    if (winner.by === 'gone') {
+      deps.settled(toolId, 'gone');
+      throw winner.err;
+    }
+    deps.settled(toolId, webTaken ? 'web' : 'terminal');
+    return winner.r;
+  }
+}
+
+// The plan a check names, for the plan card. Claude Code 2.1.293 writes some
+// ExitPlanMode calls with an empty input, the plan only in its file
+// (2026-10-08), and the card then showed "{}". So a plan missing from the
+// input is read from the file the input names, or else the one the main
+// loop's last plan-mode reminder named (`prompt.attachment`, plan_mode). A
+// file that cannot be read leaves the plan empty.
+export async function planOf(
+  input: unknown,
+  reminderFile: string,
+  read: (path: string) => Promise<string>,
+): Promise<{ plan: string; planFilePath?: string }> {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const named = typeof o.planFilePath === 'string' ? o.planFilePath : '';
+  if (typeof o.plan === 'string' && o.plan.trim() !== '') {
+    return named ? { plan: o.plan, planFilePath: named } : { plan: o.plan };
+  }
+  const path = named || reminderFile;
+  if (!path) return { plan: '' };
+  try {
+    return { plan: await read(path), planFilePath: path };
+  } catch {
+    return { plan: '', planFilePath: path };
+  }
+}
+
 // The mod's own $.ui.ask dialog reaching tool.call: race it against a
 // takedown, so a web answer can take it off the screen.
 export async function ownDialog<Q extends Question, R>(
@@ -153,26 +234,20 @@ export async function ownDialog<Q extends Question, R>(
   return { result: { questions: e.questions, answers: { [question]: winner.label }, annotations: {} } };
 }
 
-// tool.check resolved to `ask` for a call: hold it, draw the mod's dialog,
-// race the web. The caller runs it through Holds.
+// tool.check resolved to `ask` for a permission prompt: hold it, draw the
+// mod's dialog, race the web. The caller runs it through Holds. A plan is
+// never held (racePlan).
 export async function holdDecision(
   deps: DialogDeps,
   e: { tool: string; input: unknown; tool_use_id: string },
   r: CheckResult,
 ): Promise<CheckResult> {
   const toolId = e.tool_use_id;
-  const input = (e.input && typeof e.input === 'object' ? e.input : {}) as Record<string, unknown>;
-  if (e.tool === 'ExitPlanMode') {
-    const ev: DialogEvent = { type: 'plan', t: deps.now(), toolId, plan: capStrings(String(input.plan ?? '')) as string };
-    if (typeof input.planFilePath === 'string') ev.planFilePath = input.planFilePath;
-    deps.announce(ev);
-  } else {
-    const ev: DialogEvent = { type: 'permission', t: deps.now(), toolId, tool: e.tool, input: capStrings(e.input) };
-    if (r.reason) ev.reason = r.reason;
-    const agentId = deps.agentOf(toolId);
-    if (agentId !== undefined) ev.agentId = agentId;
-    deps.announce(ev);
-  }
+  const ev: DialogEvent = { type: 'permission', t: deps.now(), toolId, tool: e.tool, input: capStrings(e.input) };
+  if (r.reason) ev.reason = r.reason;
+  const agentId = deps.agentOf(toolId);
+  if (agentId !== undefined) ev.agentId = agentId;
+  deps.announce(ev);
 
   const dialog = dialogFor(e.tool, e.input);
   const own = deps.own.claim(dialog.question);
@@ -196,8 +271,6 @@ export async function holdDecision(
       local.catch(() => {});
       const decision = decisionFromWeb(e.tool, winner.c.decision, winner.c.reason);
       own.takedown(decision.decision === 'allow' ? dialog.options[0] : dialog.options[1]);
-      const words = typeof winner.c.feedback === 'string' ? winner.c.feedback.trim() : '';
-      if (decision.decision === 'allow' && e.tool === 'ExitPlanMode' && words) deps.feedback(toolId, words);
       deps.settled(toolId, 'web');
       return decision;
     }

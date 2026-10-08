@@ -7,6 +7,8 @@ package main
 // to session-events as data, holds it, and settles it when the web answers,
 // which is how the Text view's cards work. This service reads and answers them
 // the same way, through session-events' internal routes (dialog.go, ADR-0037).
+// Since Claude Code 2.1.293 the plan approval is Claude's own menu again, and
+// session-events approves it with a key in the pane (ADR-0036, 2026-10-08).
 // It used to read the pane and press keys; that code is gone.
 //
 // A session whose Claude has no mod (it never loaded, or session-events
@@ -17,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"terminal-lobby/sessionio"
 )
 
 // The question kinds a needs_input task reports.
@@ -26,7 +30,8 @@ const (
 	KindPermission = "permission"
 	// KindPlan is the plan approval. Answerable: Approve plan or Keep planning
 	// by number, or words sent back as feedback, after which Claude keeps
-	// planning.
+	// planning. Approve plan approves in the first mode Claude's menu offers
+	// that keeps the context and the permission prompts.
 	KindPlan = "plan"
 	// KindChoice is an AskUserQuestion menu. Answerable when it asks one
 	// question: a row by number, or words as the "Other" answer. A menu of
@@ -45,11 +50,13 @@ const (
 	answerText   = "text"
 )
 
-// The rows of the mod's plan and permission dialogs, as the terminal draws
-// them (claude-mod/hooks/lib/shape.ts, dialogFor). The answer sends a
-// decision, not a key, so these are names for the two choices.
+// The rows offered for a plan and a permission prompt. They name the two
+// choices, not rows of Claude's own menu, and session-events reads them by
+// label: Approve plan presses the first row of Claude's plan menu that keeps
+// the context and does not turn permission prompts off, and Keep planning
+// sends the plan back with no key (session-events/moddialogs.go).
 var (
-	planRows       = []TaskOption{{1, "Approve plan"}, {2, "Keep planning"}}
+	planRows       = []TaskOption{{1, sessionio.PlanRowApprove}, {2, sessionio.PlanRowKeep}}
 	permissionRows = []TaskOption{{1, "Allow"}, {2, "Deny"}}
 )
 

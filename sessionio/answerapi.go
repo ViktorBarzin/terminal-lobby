@@ -57,34 +57,41 @@ type PermissionAnswer struct {
 	Decline string `json:"decline,omitempty"`
 }
 
-// PlanAnswer is one answer to the plan approval: an approve row, or words for
-// the feedback row. Exactly one of Option and Feedback.
+// PlanAnswer is one answer to the plan approval: an approve row, or words.
+// Exactly one of Option and Feedback.
 //
-// ONE REQUEST, ONE ACTION, AS FOR A QUESTION. The server reads the dialog
-// before any key, refuses what the drawn dialog does not offer with nothing
-// typed, and reports what the pane shows afterwards. The dialog going away is
-// the evidence an answer landed; for feedback, Claude goes on planning and
-// draws a new dialog some seconds later (about 8 s on 2.1.281), which the
-// pane watcher then reports like any other.
+// It goes through the lobby's mod (session-events/moddialogs.go). For a mod
+// that lists plan-keys (0.5.0, Claude Code 2.1.293) an approval is the row's
+// digit pressed in the pane after a reading that still draws its label
+// (plankeys.go), and words go to the mod, never into the menu's field. The
+// dialog going away is the evidence an answer landed; for words sent back,
+// Claude goes on planning and draws a new dialog some seconds later.
 type PlanAnswer struct {
-	// Option is the number of an approve row, the digit that selects it, and
-	// Label the label the reader saw on it. The labels change between
-	// sessions and while one runs ("(6% used)" climbs), so a label that is
-	// not the one drawn now is refused as unknown-option with nothing typed,
-	// rather than approving with whatever row carries that number today. The
-	// feedback row is not an approve option.
+	// Option is the number of an approve row and Label the label the reader
+	// saw on it. The labels change between sessions and while one runs ("(6%
+	// used)" climbs), so a label that is not the one drawn now is refused as
+	// unknown-option with nothing pressed. PlanRowApprove and PlanRowKeep
+	// name a choice rather than a row. The feedback row is not an approve
+	// option.
 	Option int    `json:"option,omitempty"`
 	Label  string `json:"label,omitempty"`
-	// Feedback is typed into the feedback row: its digit focuses the row,
-	// whatever the field already holds is cleared, the words are pasted and
-	// read back off the row, and only then does the committing key go in.
-	// Approve false presses Enter, which sends the words back and Claude keeps
-	// planning; Approve true presses Shift+Tab, the CLI's "approve with this
-	// feedback". The words must not be blank, and nothing presses Enter on an
-	// empty feedback row, where it rejects the plan outright.
+	// Feedback is the reader's words. Approve false sends them back and
+	// Claude keeps planning; Approve true approves with the first row that
+	// keeps the context (PlanApproveRow), and Claude reads the words with the
+	// approval. The words must not be blank.
 	Feedback string `json:"feedback,omitempty"`
 	Approve  bool   `json:"approve,omitempty"`
 }
+
+// The rows agent-api offers for a plan (agent-api/question.go), which name a
+// choice rather than a row of Claude's menu. session-events reads them by
+// label: PlanRowApprove approves with the row PlanApproveRow picks, and
+// PlanRowKeep sends the plan back, though it is row 2 and row 2 of Claude's
+// own menu approves.
+const (
+	PlanRowApprove = "Approve plan"
+	PlanRowKeep    = "Keep planning"
+)
 
 // AnswerResult reasons. Empty means the request was applied.
 const (

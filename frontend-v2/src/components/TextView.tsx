@@ -60,7 +60,6 @@ import { isNoRow, permissionPreview, permissionPromptKey } from "./permission.lo
 import {
   clearsContext,
   decidePlanDock,
-  feedbackClearsContext,
   planDockFacts,
   planFeedback,
   planReadingKey,
@@ -1642,10 +1641,22 @@ export const TextView: Component<{
   /** The plan the card shows: the pending call's row, corrected for a plan
    *  file written in the same message (timeline.logic), or null while the
    *  transcript has no call for this dialog ("Loading the plan…"). */
+  /**
+   * The plan the card shows: the transcript's, else the one the reading
+   * carries, which the mod read where Claude checked the call. Claude Code
+   * 2.1.293 writes some calls with an empty input (2026-10-08), and with
+   * neither the card names the plan file rather than showing nothing.
+   */
   const planShown = createMemo((): { text: string | null; stale: boolean } => {
-    const call = planDocked()?.call;
+    const docked = planDocked();
+    const call = docked?.call;
     const row = call ? findPlanRow(baseRows(), call) : undefined;
-    return row ? { text: row.body, stale: row.stale === true } : { text: null, stale: false };
+    if (row && row.body.trim() !== "") return { text: row.body, stale: row.stale === true };
+    const carried = docked?.reading.plan;
+    if (carried) return { text: carried, stale: false };
+    if (!row) return { text: null, stale: false };
+    const path = docked?.reading.planPath ?? "";
+    return { text: path ? `The plan is in \`${path}\`.` : "", stale: false };
   });
   /** A notice for a press that was not sent, keeping any reading a reply left. */
   const sayOnPlanCard = (notice: PlanNotice): void => {
@@ -1723,8 +1734,8 @@ export const TextView: Component<{
    * When the reply says the plan has gone, the words move into the composer,
    * which comes back in the card's place, so the next Send goes out as the
    * prompt they would otherwise have been; the card lets go of them. An
-   * approval with feedback approves through option 1 (feedbackClearsContext),
-   * so the row says what option 1 says it does, as the card's button does.
+   * approval with feedback keeps the context: the server presses the first
+   * row that does (ADR-0036, 2026-10-08).
    */
   const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> => {
     if (followed(await sendPlanFeedbackNow(text, approve))) return true;
@@ -1745,11 +1756,7 @@ export const TextView: Component<{
       sayOnPlanCard("too-long");
       return false;
     }
-    const action: PlanTransient = !approve
-      ? "feedback"
-      : feedbackClearsContext(planCardReading())
-        ? "clear"
-        : "approve";
+    const action: PlanTransient = approve ? "approve" : "feedback";
     const resp = await answerPlan({ feedback: f.text, approve }, { kind: "feedback" }, action);
     return resp?.applied === true;
   };

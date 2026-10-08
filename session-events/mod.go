@@ -127,6 +127,13 @@ type modAck struct {
 	ID string
 }
 
+// planKeys is the half of sessionio.Injector that answers Claude's own plan
+// menu (sessionio/plankeys.go).
+type planKeys interface {
+	ReadPlan(osUser, session string) (*sessionio.Dialog, error)
+	PressPlanRow(ctx context.Context, osUser, session string, n int, label string) (sessionio.AnswerResponse, error)
+}
+
 // modConn is one Claude session's link to its mod.
 type modConn struct {
 	hub  *modHub
@@ -192,6 +199,8 @@ type modConn struct {
 	// held are the lobby's prompts waiting behind the running main turn,
 	// oldest first (held.go).
 	held []string
+	// planPolls are the plans whose menu watchPlan is reading off the pane.
+	planPolls map[*modDialog]bool
 }
 
 // alive reports whether the mod is still there to keep the session's state
@@ -229,7 +238,11 @@ type modHub struct {
 	// in tests that do not care. It tells a starting Claude from a shell and
 	// from one that exited (whyNoStream).
 	paneProcs func(osUser, session string) []paneProc
-	now       func() time.Time
+	// plans reads and presses Claude's own plan menu in a pane, for a mod
+	// that lists plan-keys (moddialogs.go); nil in tests that do not care,
+	// which answer every plan through the mod.
+	plans planKeys
+	now   func() time.Time
 
 	mu        sync.Mutex
 	byToken   map[string]*modConn

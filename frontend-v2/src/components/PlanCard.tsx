@@ -13,12 +13,7 @@ import type { PlanOptionView } from "../lib/answer-api";
 import { CardDot, CardHead } from "./CardHead";
 import { Markdown } from "./Markdown";
 import { OwnAnswer } from "./OwnAnswer";
-import {
-  feedbackClearsContext,
-  splitPlanTitle,
-  type PlanNotice,
-  type PlanSending,
-} from "./plan.logic";
+import { splitPlanTitle, type PlanNotice, type PlanSending } from "./plan.logic";
 import type { PlanReading } from "./timeline.logic";
 
 /** The words for each notice (docs/plans/2026-09-24-text-composer-redesign.md). */
@@ -39,7 +34,8 @@ const UNREADABLE = "Couldn't read the plan's choices. Open the Terminal to answe
  * the card docks, and what it shows"; the T3 pass, prototype 6-plan).
  *
  * It renders; it does not send. The plan comes from the transcript (the
- * ExitPlanMode call's input, or null while the call is not written yet), the
+ * ExitPlanMode call's input, or null while the call is not written yet), or
+ * from the reading when the call was written with an empty input, the
  * approve rows from the pane's reading, and the answer in flight and the last
  * reply's notice from the caller, which is also where feedback is sent from.
  * Keeping both kinds of answer with one owner is what lets a Send pressed
@@ -317,10 +313,10 @@ export const PlanCard: Component<{
               Open Terminal
             </button>
           </Show>
-          {/* The CLI's Shift+Tab on its feedback row: approve, carrying the
-              words in the field above. Offered only while there are words to
-              carry. It approves through option 1, so when option 1 clears the
-              context the button says so: that cannot be undone from here. */}
+          {/* Approve, carrying the words in the field above. Offered only
+              while there are words to carry. The server presses the first row
+              that keeps the context, and the words reach Claude with the
+              approval (ADR-0036, 2026-10-08), so it never clears the context. */}
           <Show when={offerApprove()}>
             <button
               type="button"
@@ -328,9 +324,7 @@ export const PlanCard: Component<{
               disabled={held()}
               onClick={() => void sendWords(props.onApproveWithFeedback)}
             >
-              {feedbackClearsContext(props.reading ?? null)
-                ? "Approve with this feedback and clear context"
-                : "Approve with this feedback"}
+              Approve with this feedback
             </button>
           </Show>
         </div>

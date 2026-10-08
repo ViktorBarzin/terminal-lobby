@@ -66,6 +66,10 @@ type Dialog struct {
 	// PlanPath is the plan file the footer names, "~/.claude/plans/<slug>.md",
 	// empty when the footer names none.
 	PlanPath string `json:"planPath,omitempty"`
+	// Plan is the plan's text as the lobby's mod saw it, never read off the
+	// pane. Claude Code 2.1.293 writes some plan calls into the transcript
+	// with an empty input (2026-10-08), so the card shows this one then.
+	Plan string `json:"plan,omitempty"`
 
 	// The tool permission prompt's own reading, set only when Kind is
 	// DialogKindPermission, which session-events draws from the lobby's mod

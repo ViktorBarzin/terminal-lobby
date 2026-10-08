@@ -116,7 +116,9 @@ Measured on 2.1.287 on this box, 2026-10-02:
   `{result}` returned while the dialog is up takes it down.
 - `tool.check` resolves to `ask` for ExitPlanMode and for a tool that needs
   permission. Holding it keeps Claude's menu off the screen. `allow` approves,
-  `deny` with a reason rejects and passes the reason to the model.
+  `deny` with a reason rejects and passes the reason to the model. Since CLI
+  2.1.293 `allow` no longer approves a plan; see "Plan approval on Claude Code
+  2.1.293" below.
 - `$.session.id()`, `TMUX` and `TMUX_PANE` identify the session.
 
 ## Wire protocol (version 1)
@@ -300,6 +302,58 @@ version 1 rules above and are upgraded only by a restart.
 - Golden JSON for every event is in `testdata/mod-wire/`. The Go side decodes
   each file with unknown fields refused, and the mod's tests check its events
   carry the same keys.
+
+## Plan approval on Claude Code 2.1.293 (2026-10-08, mod 0.5.0)
+
+Viktor could not approve a plan from the Text view and had to switch to the
+Terminal. On CLI 2.1.293 the mod's approach to plans stopped working.
+
+What we measured on 2.1.293:
+
+- The mod's `allow` from `tool.check` no longer approves a plan. Claude draws
+  its own "Ready to code?" menu after it, and nothing in the lobby could answer
+  that menu. This reproduced from the card and from the mod's dialog in the
+  Terminal. In one field case the card approved at 08:33:42 and the plan was
+  only resolved from the Terminal at 08:40:57. The 2.1.293 types describe this
+  as intended: `ToolCheckResult.decision` says that for a tool that requires the
+  person "a hook only tightens: its `allow` does not dismiss the dialog".
+  Permission prompts are not affected, and `allow` still answers them.
+- A settings `PermissionRequest` hook answering `allow` with a `setMode`
+  update also leaves the menu up.
+- A `tool.call` hook that returns `{deny}` while `next(e)` is pending takes
+  Claude's plan menu down. The model gets the reason, and the session stays in
+  plan mode.
+- Some ExitPlanMode calls are written to the transcript with an empty input,
+  and the plan exists only in its file. The plan card showed `{}` for these.
+
+How plans work from mod 0.5.0:
+
+- The mod no longer holds ExitPlanMode in `tool.check`. Claude's own menu comes
+  up once, and `tool.call` races it against the web (`racePlan`). The `plan`
+  event is announced from there, carrying the plan text that `tool.check` saw.
+  When that input has no plan, the mod reads the plan file the input names, or
+  the one the main loop's last `plan_mode` reminder named.
+- The hello lists the op `plan-keys`. For such a mod, session-events reads the
+  menu off the pane once Claude draws it (every 300 ms for up to 15 s) and the
+  card shows Claude's own rows and feedback row. The reading carries the plan
+  text as `plan`.
+- An approval is a key press. session-events sends `decide allow` first, which
+  tells the mod that the web answered and gives it any words. The mod attaches
+  those words to the approved result, as `decide-feedback` already did. Then
+  session-events presses the row's digit (`sessionio/plankeys.go`). It does
+  this only after checking a fresh reading that still draws that label, with
+  the cursor off the feedback row, and then waits for the menu to go.
+- The label decides what an answer means. Approving with words, agent-api's
+  "Approve plan", and the card's single row from before the menu was read all
+  press the first row that neither clears the context nor turns permission
+  prompts off. Clearing the context would drop the words. agent-api's "Keep
+  planning" is a deny, even though it is row 2, because row 2 of Claude's menu
+  approves.
+- "Keep planning" and words sent back are a `decide deny`. The mod's
+  `tool.call` returns it as the call's answer, and the menu goes, with no keys.
+- A session started before the release keeps its old mod until it restarts. It
+  keeps the old behaviour: approve from the card, then answer Claude's menu in
+  the Terminal.
 
 ## Consequences
 - `claude-tmux-state` and `claude-se-hook` leave Claude's managed hooks, except

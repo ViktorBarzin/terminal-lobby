@@ -198,17 +198,6 @@ export function clearsContext(label: string): boolean {
 }
 
 /**
- * Whether "Approve with this feedback" clears the context. The CLI's Shift+Tab
- * on its feedback row approves through option 1: measured in two sessions
- * whose option 1 cleared the context (2026-09-24, and on the Android emulator
- * on 2026-09-27, where the context meter went from 9% to 5%).
- */
-export function feedbackClearsContext(reading: PlanReading | null): boolean {
-  const first = reading?.options.find((o) => o.number === 1);
-  return first !== undefined && clearsContext(first.label);
-}
-
-/**
  * The plan's own title, for the plan card's question line (the T3 pass,
  * prototype 6-plan): a first line that is a level 1-3 heading becomes the
  * title, and the markdown after it is what the card's well shows. A plan that

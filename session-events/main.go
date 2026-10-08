@@ -101,6 +101,7 @@ func main() {
 	// The mod hub clears options in one tmux call; drill-ins nobody reads and
 	// connections whose mod went quiet are swept on a ticker.
 	rg.mods.unset = injector.UnsetOptions
+	rg.mods.plans = injector
 	rg.mods.paneSession = func(osUser, pane string) string {
 		out, err := injector.Command(osUser, "display-message", "-p", "-t", pane, "#{session_name}").Output()
 		if err != nil {

@@ -260,6 +260,16 @@ describe("a plan row's outcome, from the result that resolves it", () => {
   });
 });
 
+describe("a call written with an empty input", () => {
+  // Claude Code 2.1.293 writes some ExitPlanMode calls as {} (2026-10-08).
+  it("has an empty body, not the raw input", () => {
+    const row = onlyPlan([
+      ev({ id: 1, kind: "tool_use", tool: "ExitPlanMode", toolId: "p1", body: "{}" }),
+    ]);
+    expect(row.body).toBe("");
+  });
+});
+
 describe("an approved row's body", () => {
   it("is toolUseResult.plan, so an edit made with ctrl+g shows", () => {
     const edited = `${INPUT_PLAN}3. Edited in the CLI.\n`;

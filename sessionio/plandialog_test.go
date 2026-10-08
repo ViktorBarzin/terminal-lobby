@@ -43,6 +43,14 @@ func TestParsePlanDialogReadsTheOptionsAsDrawn(t *testing.T) {
 		{"plan-narrow.txt", planOptionsWizard, 4, "~/.claude/plans/plan-do-not-execute-binary-kazoo.md"},
 		// The default renderer (tui: default): no ▔ edge, a one-space indent.
 		{"plan-default-tui.txt", planOptionsWizard, 4, "~/.claude/plans/plan-do-not-execute-floofy-engelbart.md"},
+		// CLI 2.1.293 on a 78-column pane (2026-10-08): the same rows and
+		// furniture as 2.1.281, a short plan clipped with a ↓, and the footer
+		// wrapped so the path has a line of its own.
+		{"plan-2.1.293-78col.txt", []PlanOption{
+			{Number: 1, Label: "Yes, clear context (7% used) and use auto mode"},
+			{Number: 2, Label: "Yes, and use auto mode"},
+			{Number: 3, Label: "Yes, manually approve edits"},
+		}, 4, "~/.claude/plans/do-no-research-and-sequential-panda.md"},
 		// No clear context option and no auto mode, which is what an account
 		// without either draws: two approve options, and the feedback row is 3.
 		{"plan-no-auto.txt", []PlanOption{

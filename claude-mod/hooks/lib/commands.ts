@@ -12,8 +12,13 @@ import type { EventBody } from './wire.ts';
 // The command ops runCommand runs, and the wire features this mod speaks,
 // named in every hello so session-events sends a mod only what it can do
 // (steer arrived in 0.2.0; level and decide-feedback in 0.3.0; history `last` in
-// 0.4.0).
-export const OPS = ['prompt', 'abort', 'answer', 'decide', 'steer', 'level', 'decide-feedback'] as const;
+// 0.4.0; plan-keys in 0.5.0).
+//
+// plan-keys: the plan approval is Claude's own menu, raced in tool.call
+// (dialogs.ts racePlan). session-events approves it by pressing the row's
+// digit in the pane; a `decide` allow sent with it only says the web answered
+// and carries the person's words, and a `decide` deny takes the menu down.
+export const OPS = ['prompt', 'abort', 'answer', 'decide', 'steer', 'level', 'decide-feedback', 'plan-keys'] as const;
 
 export type CommandDeps = {
   send: (ev: EventBody) => void;

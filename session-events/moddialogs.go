@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -27,6 +28,10 @@ type modDialog struct {
 
 	tool, title, reason string   // a permission prompt's tool, heading and why it asks
 	detail              []string // what the tool will do
+
+	// native is Claude's own plan menu as the pane draws it, read for a mod
+	// that lists plan-keys (watchPlan); nil until read. Guarded by modConn.mu.
+	native *sessionio.Dialog
 }
 
 // dialogOf is the dialog an ask, plan or permission event opens, with what
@@ -85,12 +90,9 @@ func (c *modConn) showDialogs(fs *sessionio.FileSource) {
 	switch {
 	case asking == nil:
 	case asking.kind == "plan":
-		body, _ := json.Marshal(sessionio.Dialog{
-			Kind:        sessionio.DialogKindPlan,
-			Options:     []sessionio.PlanOption{{Number: 1, Label: "Yes, approve the plan"}},
-			FeedbackRow: 2, PlanPath: asking.planFilePath,
-		})
+		body, _ := json.Marshal(c.planCard(asking))
 		reading = string(body)
+		c.watchPlan(asking)
 	default:
 		body, _ := json.Marshal(sessionio.Dialog{
 			Kind: sessionio.DialogKindPermission, Title: asking.title,
@@ -100,6 +102,98 @@ func (c *modConn) showDialogs(fs *sessionio.FileSource) {
 		reading = string(body)
 	}
 	fs.SetAsking(reading)
+}
+
+// planApproveSynthetic is the card's one approve row for a plan whose menu has
+// not been read off the pane: every plan of a mod before plan-keys, and a
+// plan-keys one for the moment before Claude draws its menu.
+const planApproveSynthetic = "Yes, approve the plan"
+
+// planCard is the reading the plan card draws: Claude's own menu once the pane
+// has shown it, and the synthetic row until then, each with the plan's text
+// from the mod.
+func (c *modConn) planCard(d *modDialog) sessionio.Dialog {
+	c.mu.Lock()
+	native := d.native
+	c.mu.Unlock()
+	if native != nil {
+		out := *native
+		if out.PlanPath == "" {
+			out.PlanPath = d.planFilePath
+		}
+		out.Plan = d.plan
+		return out
+	}
+	return sessionio.Dialog{
+		Kind:        sessionio.DialogKindPlan,
+		Options:     []sessionio.PlanOption{{Number: 1, Label: planApproveSynthetic}},
+		FeedbackRow: 2, PlanPath: d.planFilePath, Plan: d.plan,
+	}
+}
+
+// How often and for how long watchPlan reads the pane for Claude's plan menu.
+// The mod announces the plan just before Claude draws the menu, so the first
+// reading or two usually miss it; a menu not drawn within planReadFor is left
+// to the synthetic row. Vars so a test can shorten them.
+var (
+	planReadEvery = 300 * time.Millisecond
+	planReadFor   = 15 * time.Second
+)
+
+// watchPlan reads Claude's plan menu off the pane for a plan-keys mod's open
+// plan, once, and puts it on the card: the rows Claude draws are the ones the
+// answer presses, and their labels change from session to session. It stops
+// at the first reading, when the dialog closes, or after planReadFor. A plan
+// announced again (a snapshot after a hello) is a new dialog and read again.
+func (c *modConn) watchPlan(d *modDialog) {
+	h := c.hub
+	if h.plans == nil || !c.can(opPlanKeys) {
+		return
+	}
+	c.mu.Lock()
+	if d.native != nil || c.planPolls[d] {
+		c.mu.Unlock()
+		return
+	}
+	if c.planPolls == nil {
+		c.planPolls = map[*modDialog]bool{}
+	}
+	c.planPolls[d] = true
+	c.mu.Unlock()
+	every, deadline := planReadEvery, time.Now().Add(planReadFor)
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			delete(c.planPolls, d)
+			c.mu.Unlock()
+		}()
+		ctx := h.rg.ctx
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(every):
+			}
+			if c.dialogFor("plan", d.toolID) != d {
+				return
+			}
+			reading, err := h.plans.ReadPlan(c.user, c.sessionName())
+			if err != nil || reading == nil {
+				continue
+			}
+			c.mu.Lock()
+			d.native = reading
+			c.mu.Unlock()
+			// Under applyMu, so this write cannot land between an apply's
+			// fold and its own showDialogs.
+			c.applyMu.Lock()
+			if fs := c.source(); fs != nil {
+				c.showDialogs(fs)
+			}
+			c.applyMu.Unlock()
+			return
+		}
+	}()
 }
 
 // permissionTitle is the card's heading for a tool, in the words Claude's own
@@ -215,6 +309,9 @@ func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessi
 		if d == nil {
 			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}
 		}
+		if c.hub.plans != nil && c.can(opPlanKeys) {
+			return c.answerPlanKeys(ctx, d, *req.Plan)
+		}
 		p := req.Plan
 		switch {
 		case p.Option == 1:
@@ -256,6 +353,12 @@ func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessi
 	default:
 		return sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}
 	}
+	return c.sendDecisions(ctx, cmds)
+}
+
+// sendDecisions sends the commands that settle a dialog, in order, and stops
+// at the first the mod did not take.
+func (c *modConn) sendDecisions(ctx context.Context, cmds []modCommand) sessionio.AnswerResponse {
 	for _, cmd := range cmds {
 		a, err := c.send(ctx, cmd)
 		if err != nil {
@@ -267,6 +370,72 @@ func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessi
 		}
 	}
 	return sessionio.AnswerResponse{Applied: true, Done: true}
+}
+
+// opPlanKeys is the hello op of a mod that leaves the plan to Claude's own
+// menu (mod 0.5.0): approvals are keys in the pane, and a deny goes to the mod.
+const opPlanKeys = "plan-keys"
+
+// answerPlanKeys answers a plan-keys mod's plan. Claude Code 2.1.293 keeps its
+// own menu up whatever a hook answers (ADR-0036, 2026-10-08), so:
+//
+//   - an approval presses a row of that menu in the pane, after a `decide
+//     allow` that tells the mod the web answered and hands it any words, which
+//     it attaches to the approved result; nothing is typed into the menu's
+//     feedback field;
+//   - Keep planning and words sent back are a `decide deny`, which the mod's
+//     tool.call returns as the call's answer, and that takes the menu down.
+//
+// The label decides what an answer means, never the number. A row of Claude's
+// menu has to carry the same label on a reading taken now. agent-api's
+// Approve plan and the card's synthetic row mean the row PlanApproveRow picks;
+// agent-api's Keep planning is row 2, which on Claude's menu approves.
+func (c *modConn) answerPlanKeys(ctx context.Context, d *modDialog, p sessionio.PlanAnswer) sessionio.AnswerResponse {
+	words := strings.TrimSpace(p.Feedback)
+	deny := modCommand{Op: "decide", ToolID: d.toolID, Decision: "deny"}
+	switch {
+	case p.Option != 0 && words != "":
+		return sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption}
+	case p.Option != 0 && p.Label == sessionio.PlanRowKeep:
+		// The mod sends its own keep-planning message.
+		return c.sendDecisions(ctx, []modCommand{deny})
+	case p.Option == 0 && words == "":
+		return sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption}
+	case p.Option == 0 && !p.Approve:
+		deny.Reason = p.Feedback
+		return c.sendDecisions(ctx, []modCommand{deny})
+	}
+	h := c.hub
+	osUser, session := c.user, c.sessionName()
+	reading, err := h.plans.ReadPlan(osUser, session)
+	if err != nil {
+		return sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified}
+	}
+	if reading == nil {
+		return sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}
+	}
+	var row sessionio.PlanOption
+	var ok bool
+	if p.Option == 0 || p.Label == sessionio.PlanRowApprove || p.Label == planApproveSynthetic {
+		row, ok = sessionio.PlanApproveRow(reading)
+	} else {
+		row, ok = sessionio.PlanOptionNamed(reading, p.Option, p.Label)
+	}
+	if !ok {
+		return sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption, Dialog: reading}
+	}
+	allow := modCommand{Op: "decide", ToolID: d.toolID, Decision: "allow"}
+	if p.Option == 0 {
+		allow.Feedback = p.Feedback
+	}
+	if resp := c.sendDecisions(ctx, []modCommand{allow}); !resp.Applied {
+		return resp
+	}
+	resp, err := h.plans.PressPlanRow(ctx, osUser, session, row.Number, row.Label)
+	if err != nil {
+		return sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified}
+	}
+	return resp
 }
 
 // heldQuestion is the part of an AskUserQuestion question an answer is checked

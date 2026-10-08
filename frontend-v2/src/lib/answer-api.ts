@@ -117,10 +117,11 @@ export type PermissionAnswer = { option: number; label: string } | { decline: st
  * server refuses a label that is not the one drawn now as `unknown-option`,
  * rather than approving with whatever row carries that number today.
  *
- * Feedback is typed into the feedback row and read back before the committing
- * key: `approve: false` presses Enter, which sends the words back and Claude
- * keeps planning; `approve: true` presses Shift+Tab, "approve with this
- * feedback". It is one line of at most 2,000 bytes and must not be blank.
+ * Feedback goes to the lobby's mod, never into the Terminal's field:
+ * `approve: false` sends the words back and Claude keeps planning; `approve:
+ * true` approves with the first row that keeps the context, and Claude reads
+ * the words with the approval (ADR-0036, 2026-10-08). It is one line of at
+ * most 2,000 bytes and must not be blank.
  */
 export type PlanAnswer = { option: number; label: string } | { feedback: string; approve: boolean };
 

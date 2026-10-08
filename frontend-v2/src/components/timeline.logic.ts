@@ -974,7 +974,14 @@ function collectTurnRows(
         }
         if (d.type === "plan") {
           const plan = parseJSON(e.body) as { plan?: unknown; planFilePath?: unknown } | null;
-          const text = typeof plan?.plan === "string" ? plan.plan : (e.body ?? "");
+          // An input object without a plan is empty, never its raw JSON:
+          // Claude Code 2.1.293 writes some calls as {} (2026-10-08).
+          const text =
+            typeof plan?.plan === "string"
+              ? plan.plan
+              : plan && typeof plan === "object"
+                ? ""
+                : (e.body ?? "");
           const row: PlanRow = {
             kind: "plan",
             key: `plan-${e.toolId || e.id}`,
@@ -2493,7 +2500,13 @@ export interface PermissionReading {
 export function planFromPane(reading: string | DialogView | null | undefined): PlanReading | null {
   const raw: unknown = typeof reading === "string" ? parseJSON(reading) : reading;
   if (!raw || typeof raw !== "object") return null;
-  const o = raw as { kind?: unknown; options?: unknown; feedbackRow?: unknown; planPath?: unknown };
+  const o = raw as {
+    kind?: unknown;
+    options?: unknown;
+    feedbackRow?: unknown;
+    planPath?: unknown;
+    plan?: unknown;
+  };
   if (o.kind !== DIALOG_KIND_PLAN || !Array.isArray(o.options) || o.options.length === 0) {
     return null;
   }
@@ -2511,6 +2524,7 @@ export function planFromPane(reading: string | DialogView | null | undefined): P
     options,
     feedbackRow: o.feedbackRow as number,
     planPath: typeof o.planPath === "string" ? o.planPath : "",
+    ...(typeof o.plan === "string" && o.plan.trim() !== "" ? { plan: o.plan } : {}),
   };
 }
 
@@ -2522,6 +2536,9 @@ export interface PlanReading {
   feedbackRow: number;
   /** The plan file the footer names, or "" when it names none. */
   planPath: string;
+  /** The plan's text as the lobby's mod saw it, for a call the transcript
+   *  wrote without one (session-events moddialogs.go). */
+  plan?: string;
 }
 
 /** The mode in force, from the most recent mode marker. */
