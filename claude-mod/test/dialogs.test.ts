@@ -70,8 +70,30 @@ test('permission: the web answer wins and takes the terminal dialog down', async
 // "Ready to code?" menu, so the plan is no longer held in tool.check. The
 // native menu (next) races the web: a deny takes it down, an approval only
 // carries words, and the approve key goes into the pane from session-events.
-const planInput = { tool_use_id: 'p1', input: { plan: '1. Do it.', planFilePath: '/home/u/.claude/plans/p.md' } };
+// tool.check runs inside tool.call's next (2.1.293 types: "after the
+// tool.call and PreToolUse hooks"), so the plan arrives once the check asks.
+const asked = (plan: string, planFilePath?: string) =>
+  Promise.resolve(planFilePath === undefined ? { plan } : { plan, planFilePath });
+const planInput = { tool_use_id: 'p1', asked: asked('1. Do it.', '/home/u/.claude/plans/p.md') };
 const KEEP_PLANNING = 'The user wants to keep planning. Do not start on the plan yet.';
+
+test('plan: nothing is announced until the check asks', async () => {
+  const h = harness();
+  const check = deferred<{ plan: string }>();
+  void racePlan(h.deps, { tool_use_id: 'p1', asked: check.promise }, () => new Promise(() => {}));
+  await settle();
+  assert.equal(h.announced.length, 0);
+  check.resolve({ plan: '# Later' });
+  await settle();
+  assert.equal(h.announced[0]?.type, 'plan');
+});
+
+test('plan: a call whose check never asked announces and settles nothing', async () => {
+  const h = harness();
+  const r = await racePlan(h.deps, { tool_use_id: 'p1', asked: new Promise(() => {}) }, async () => ({ result: 'ok' }));
+  assert.deepEqual(r, { result: 'ok' });
+  assert.deepEqual(h.log, []);
+});
 
 test('plan: announced with the plan and its file before the native menu runs', async () => {
   const h = harness();
@@ -151,17 +173,27 @@ test('plan: answered in the terminal with no web command', async () => {
   assert.equal(h.deps.web.resolve('p1', { op: 'decide', decision: 'allow' }), false);
 });
 
-test('plan: a call that rejects settles as gone and rethrows', async () => {
+test('plan: a call that rejects once the menu is up settles as gone and rethrows', async () => {
   const h = harness();
-  const p = racePlan(h.deps, planInput, () => Promise.reject(new Error('aborted')));
+  const local = deferred<never>();
+  const p = racePlan(h.deps, planInput, () => local.promise);
+  await settle();
+  local.reject(new Error('aborted'));
   await assert.rejects(p, /aborted/);
   assert.deepEqual(h.log, ['announce plan p1', 'settled p1 gone']);
   assert.equal(h.deps.web.has('p1'), false);
 });
 
+test('plan: a call aborted before its check asked rethrows and announces nothing', async () => {
+  const h = harness();
+  const p = racePlan(h.deps, { tool_use_id: 'p1', asked: new Promise(() => {}) }, () => Promise.reject(new Error('aborted')));
+  await assert.rejects(p, /aborted/);
+  assert.deepEqual(h.log, []);
+});
+
 test('plan: a long plan is capped before it is announced', async () => {
   const h = harness();
-  void racePlan(h.deps, { tool_use_id: 'p1', input: { plan: 'p'.repeat(300_000) } }, () => new Promise(() => {}));
+  void racePlan(h.deps, { tool_use_id: 'p1', asked: asked('p'.repeat(300_000)) }, () => new Promise(() => {}));
   await settle();
   const ev = h.announced[0];
   assert.ok(ev?.type === 'plan' && ev.plan.length < 270_000 && ev.planFilePath === undefined);

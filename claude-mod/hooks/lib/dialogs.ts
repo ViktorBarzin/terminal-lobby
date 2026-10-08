@@ -149,20 +149,27 @@ export async function raceQuestion<Q extends Question, R>(
 // words for the plan's tool result. A web `deny` returned from tool.call while
 // next is pending takes the native menu down and leaves the session in plan
 // mode (probed live on 2.1.293, 2026-10-08), so declining needs no keys.
+//
+// tool.check runs inside next ("after the tool.call and PreToolUse hooks"), so
+// `asked` resolves with the plan when the check asks, which is when the menu
+// draws, and only then is the dialog announced. A call whose check never asks
+// draws no menu and announces nothing.
 export async function racePlan<R>(
   deps: DialogDeps,
-  e: { tool_use_id: string; input: unknown },
+  e: { tool_use_id: string; asked: Promise<{ plan: string; planFilePath?: string }> },
   next: () => Promise<R>,
 ): Promise<R | { deny: string }> {
   const toolId = e.tool_use_id;
-  const input = (e.input && typeof e.input === 'object' ? e.input : {}) as Record<string, unknown>;
-  const ev: DialogEvent = { type: 'plan', t: deps.now(), toolId, plan: capStrings(String(input.plan ?? '')) as string };
-  if (typeof input.planFilePath === 'string') ev.planFilePath = input.planFilePath;
-  deps.announce(ev);
   const local = next().then(
     (r) => ({ by: 'terminal' as const, r }),
     (err: unknown) => ({ by: 'gone' as const, err }),
   );
+  const first = await Promise.race([local, e.asked.then((input) => ({ by: 'asked' as const, input }))]);
+  if (first.by === 'gone') throw first.err;
+  if (first.by === 'terminal') return first.r;
+  const ev: DialogEvent = { type: 'plan', t: deps.now(), toolId, plan: capStrings(first.input.plan) as string };
+  if (first.input.planFilePath) ev.planFilePath = first.input.planFilePath;
+  deps.announce(ev);
   let webTaken = false;
   for (;;) {
     const web = deps.web.wait(toolId);

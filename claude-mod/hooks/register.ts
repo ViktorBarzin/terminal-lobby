@@ -66,11 +66,15 @@ const own = new OwnDialogs();
 const holds = new Holds<CheckResult>();
 // Words sent with a plan approval from the web, by the plan's tool_use_id.
 const planFeedback = new Map<string, string>();
-// What tool.check saw of each plan it asked about, by tool_use_id: tool.call's
-// own event for ExitPlanMode is not typed to carry the plan (2.1.293 lists
-// allowedPrompts only), and the plan card needs its text and file. Bounded,
-// oldest first out.
-const planInputs = new Map<string, unknown>();
+// Plans whose tool.call is racing Claude's menu, by tool_use_id: tool.check
+// runs inside that call's next and hands the plan over when it asks
+// (lib/dialogs.ts racePlan). tool.call's own event for ExitPlanMode is not
+// typed to carry the plan (2.1.293 lists allowedPrompts only).
+type PlanInput = { plan: string; planFilePath?: string };
+const planAsks = new Map<string, (input: PlanInput) => void>();
+// A check that asked with no call racing it yet, in case a later engine runs
+// the check first. Bounded, oldest first out.
+const planInputs = new Map<string, PlanInput>();
 const PLAN_INPUTS_MAX = 16;
 // The main loop's plan file, as its last plan-mode reminder named it: where a
 // plan is read from when the call's input carries none (lib/dialogs.ts planOf).
@@ -427,19 +431,26 @@ export const register: Register = (on) => {
           throw err;
         }
       }
-      // Only a plan whose check asked has a menu to race, as only an `ask`
-      // was ever held before.
-      const planInput = e.tool === 'ExitPlanMode' ? planInputs.get(e.tool_use_id) : undefined;
-      if (planInput !== undefined) planInputs.delete(e.tool_use_id);
-      if (planInput !== undefined && e.agentId === undefined && dialogDeps) {
-        const input = planInput;
+      if (e.tool === 'ExitPlanMode' && e.agentId === undefined && dialogDeps) {
+        const id = e.tool_use_id;
+        let markAsked!: (input: PlanInput) => void;
+        const asked = new Promise<PlanInput>((resolve) => { markAsked = resolve; });
+        const early = planInputs.get(id);
+        if (early) {
+          planInputs.delete(id);
+          markAsked(early);
+        } else {
+          planAsks.set(id, markAsked);
+        }
         let r: Awaited<ReturnType<typeof next>>;
         try {
-          r = await racePlan(dialogDeps, { tool_use_id: e.tool_use_id, input }, () => next(e));
+          r = await racePlan(dialogDeps, { tool_use_id: id, asked }, () => next(e));
         } catch (err) {
-          planFeedback.delete(e.tool_use_id);
+          planFeedback.delete(id);
           send(shapeResult(e, { isError: true, text: errorText(err) }, now()));
           throw err;
+        } finally {
+          planAsks.delete(id);
         }
         send(shapeResult(e, r, now()));
         const words = planFeedback.get(e.tool_use_id);
@@ -480,8 +491,14 @@ export const register: Register = (on) => {
     // and Claude draws its own menu regardless. tool.call races that menu
     // (racePlan) and needs the plan, which only this event carries.
     if (e.tool === 'ExitPlanMode') {
+      const input = await planOf(e.input, reminderPlanFile, (path) => $.fs.read(path));
+      const ask = planAsks.get(toolId);
+      if (ask) {
+        ask(input);
+        return r;
+      }
       planInputs.delete(toolId);
-      planInputs.set(toolId, await planOf(e.input, reminderPlanFile, (path) => $.fs.read(path)));
+      planInputs.set(toolId, input);
       while (planInputs.size > PLAN_INPUTS_MAX) {
         const oldest = planInputs.keys().next().value;
         if (oldest === undefined) break;

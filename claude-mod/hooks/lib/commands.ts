@@ -12,7 +12,7 @@ import type { EventBody } from './wire.ts';
 // The command ops runCommand runs, and the wire features this mod speaks,
 // named in every hello so session-events sends a mod only what it can do
 // (steer arrived in 0.2.0; level and decide-feedback in 0.3.0; history `last` in
-// 0.4.0; plan-keys in 0.5.0).
+// 0.4.0; plan-keys in 0.5.0, working from 0.5.1).
 //
 // plan-keys: the plan approval is Claude's own menu, raced in tool.call
 // (dialogs.ts racePlan). session-events approves it by pressing the row's

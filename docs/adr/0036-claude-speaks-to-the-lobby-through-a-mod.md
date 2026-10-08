@@ -303,7 +303,7 @@ version 1 rules above and are upgraded only by a restart.
   each file with unknown fields refused, and the mod's tests check its events
   carry the same keys.
 
-## Plan approval on Claude Code 2.1.293 (2026-10-08, mod 0.5.0)
+## Plan approval on Claude Code 2.1.293 (2026-10-08, mod 0.5.1)
 
 Viktor could not approve a plan from the Text view and had to switch to the
 Terminal. On CLI 2.1.293 the mod's approach to plans stopped working.
@@ -326,11 +326,15 @@ What we measured on 2.1.293:
 - Some ExitPlanMode calls are written to the transcript with an empty input,
   and the plan exists only in its file. The plan card showed `{}` for these.
 
-How plans work from mod 0.5.0:
+How plans work from mod 0.5.1:
 
 - The mod no longer holds ExitPlanMode in `tool.check`. Claude's own menu comes
-  up once, and `tool.call` races it against the web (`racePlan`). The `plan`
-  event is announced from there, carrying the plan text that `tool.check` saw.
+  up once, and `tool.call` races it against the web (`racePlan`). `tool.check`
+  runs inside `tool.call`'s `next(e)` (the 2.1.293 types: "after the
+  `tool.call` and PreToolUse hooks"), so the `plan` event is announced when the
+  check asks, which is when the menu draws, and carries the plan text the check
+  saw. Mod 0.5.0 looked for the check's input before the check had run and so
+  announced no plan; it was replaced by 0.5.1 the same evening.
   When that input has no plan, the mod reads the plan file the input names, or
   the one the main loop's last `plan_mode` reminder named.
 - The hello lists the op `plan-keys`. For such a mod, session-events reads the
