@@ -897,6 +897,12 @@ describe("<NewSessionComposer> — the command it runs", () => {
 // half the web), and the box has no other text for a heuristic to read.
 const SIGN_IN_WORDS =
   /\b(new|start(ing)?|open)\s+(the\s+|a\s+)?session\b|\blog\s*-?in\b|\bsign\s*-?in\b/i;
+// The fix above swapped one form for another: "First message to Claude" read
+// as a first-name field, so the bar offered Viktor's own name from his contact
+// card, and autocorrect stayed off again (Viktor, 2026-10-08). A contact form's
+// words are as much a trigger as a sign-in form's.
+const CONTACT_WORDS =
+  /\b(first|last|middle|given|family|full|nick|user)\s*-?name\b|\b(first|last|name|surname|title|e-?mail|phone|address|street|city|postcode|zip|country|company|birthday|username)\b/i;
 const wordsOf = (el: HTMLElement): string[] =>
   ["aria-label", "title", "placeholder"].map((a) => el.getAttribute(a) ?? "");
 
@@ -915,6 +921,25 @@ describe("<NewSessionComposer> — the box does not read as a sign-in form", () 
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     for (const words of wordsOf(nameBox(m.container)!)) expect(words).not.toMatch(SIGN_IN_WORDS);
+    m.store.dispose();
+  });
+});
+
+describe("<NewSessionComposer> — the box does not read as a contact form", () => {
+  it("names the prompt box without contact-form words", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(field(m.container)).not.toBeNull());
+    for (const words of wordsOf(field(m.container)!)) expect(words).not.toMatch(CONTACT_WORDS);
+    m.store.dispose();
+  });
+
+  it("names the shell's name box without contact-form words", async () => {
+    const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
+    await m.store.refresh();
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    for (const words of wordsOf(nameBox(m.container)!)) expect(words).not.toMatch(CONTACT_WORDS);
     m.store.dispose();
   });
 });
@@ -1408,7 +1433,7 @@ describe("<NewSessionComposer> — a new shell", () => {
     await waitFor(() =>
       expect(m.container.querySelector(".tl-new-hero")!.textContent).toBe("Name a shell in alpha"),
     );
-    expect(nameBox(m.container)!.placeholder).toBe("Name this shell…");
+    expect(nameBox(m.container)!.placeholder).toBe("Call this shell…");
     m.store.dispose();
   });
 
