@@ -7043,8 +7043,8 @@ body.tl-kb-up {
    question card's cap, its pinned head and actions, and its phone rules;
    these rules add the plan and the lines under it. */
 /* About six lines of plan in the prototype's well, then "Read the full plan".
-   The card's body scrolls, so an expanded plan pushes the choices down rather
-   than off the card. */
+   Opened in full, the plan scrolls inside its well and the choices stay in
+   view under it. */
 /* The plan card's body is a column: the well gives way and the rows keep their
    height, so a short card still shows every choice and "Tell Claude what to
    change". Found live on 2026-09-28 at 1280x800: a three-step plan fit its
@@ -7078,9 +7078,16 @@ body.tl-kb-up {
   border-radius: 10px;
   background: var(--bg-page);
 }
-/* Opened in full, the plan takes its height and the body scrolls. */
+/* Opened in full, the plan scrolls inside the well and the well takes what
+   the rows leave, so the choices stay docked under it and "Show less" stays
+   in the head. Until 2026-10-08 the well took the plan's whole height and the
+   body scrolled, which put the choices under a long plan; on an iPhone the
+   reader could neither collapse the plan nor approve it from the Text view. */
 .tl-plancard-well[data-full="true"] {
-  flex: none;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 /* Up to twelve lines on a desktop: six held only a plan's Context section,
    and the steps were under the fade (found live on 2026-09-27). It shrinks to

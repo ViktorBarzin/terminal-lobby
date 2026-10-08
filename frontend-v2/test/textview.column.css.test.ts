@@ -310,8 +310,13 @@ describe("the card in the composer's place", () => {
     );
     expect(decl(appCss, ".tl-plancard-plan", "min-height")).toBe("var(--tl-plan-floor)");
     expect(decl(appCss, ".tl-plancard .tl-qcard-options", "flex")).toBe("none");
-    // Opened in full, the plan takes its height and the body scrolls.
-    expect(decl(appCss, '.tl-plancard-well[data-full="true"]', "flex")).toBe("none");
+    // Opened in full, the plan scrolls inside its well and the well gives way,
+    // so the choices stay docked under it and "Show less" stays in the head.
+    // Reported on an iPhone on 2026-10-08: with the well at the plan's whole
+    // height the body scrolled instead, and the reader could neither collapse
+    // the plan nor approve it from the Text view.
+    expect(decl(appCss, '.tl-plancard-well[data-full="true"]', "flex")).toBe("1 1 auto");
+    expect(decl(appCss, '.tl-plancard-well[data-full="true"]', "overflow-y")).toBe("auto");
   });
 
   it("never lets the well shrink under the plan it holds", () => {
