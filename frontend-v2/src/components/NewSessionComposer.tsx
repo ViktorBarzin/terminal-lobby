@@ -129,7 +129,7 @@ function objectUrl(f: File): string | undefined {
  * GET /pi-models each time this opens with pi chosen (ADR-0032), and its effort
  * is pi's thinking level.
  *
- * Choosing `shell` turns the box back into a NAME box, "Name this shell…": a
+ * Choosing `shell` turns the box back into a NAME box, "Call this shell…": a
  * shell has no conversation to prompt or to summarise, and it is the case where
  * someone most likely wanted to name the thing. The `+` is held out of sight
  * and the model button leaves. It holds the same line either way: nothing
@@ -711,8 +711,8 @@ export const NewSessionComposer: Component<{
                   ref={nameEl}
                   class="tl-composer-input tl-new-name"
                   rows={1}
-                  placeholder="Name this shell…"
-                  aria-label="Name for the shell"
+                  placeholder="Call this shell…"
+                  aria-label="What to call the shell"
                   maxlength={MAX_TITLE_RUNES}
                   enterkeyhint="go"
                   value={name()}
@@ -754,8 +754,11 @@ export const NewSessionComposer: Component<{
             // session" and "Enter to start the session" made iOS treat this box
             // as a login field: a Passwords key where the word suggestions go,
             // and autocorrect off (2026-10-05). The open session's box is the
-            // same field with different words, and never had it.
-            label="First message to Claude"
+            // same field with different words, and never had it. Nor contact-form
+            // words: "First message to Claude" read as a first-name field, so the
+            // bar offered Viktor's own name and autocorrect went off again
+            // (2026-10-08). "Name" is the same trap, hence the shell box's wording.
+            label="Message to send to Claude"
             placeholder={placeholder()}
             hint="Enter to send · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}
