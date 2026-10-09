@@ -25,6 +25,7 @@ import {
   paneUrl,
   promptUrl,
   unqueueUrl,
+  cancelQueuedUrl,
   resultUrl,
   answerTextUrl,
   searchUrl,
@@ -160,6 +161,8 @@ export interface SessionStore {
    * go: they never reached Claude, so no record will release them.
    */
   unqueue: () => Promise<string[]>;
+  /** Cancels one queued prompt; false when it could not (and says so). */
+  cancelQueued: (text: string) => Promise<boolean>;
   /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
@@ -1292,6 +1295,39 @@ export function createSessionStore(
     }
   };
 
+  /**
+   * Cancels one queued prompt, swiped or held away on its ghost in the Text
+   * view. session-events drops it from what it holds behind the turn; it never
+   * reached Claude, so it is gone. False, said in a toast, when it could not:
+   * Claude had it already, or the box did not answer.
+   */
+  const cancelQueued = async (text: string): Promise<boolean> => {
+    try {
+      const res = await fetchWithDeadline(cancelQueuedUrl(session()), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const reply = res.ok
+        ? ((await res.json().catch(() => null)) as { restored?: unknown } | null)
+        : null;
+      if (reply?.restored === true) {
+        letGo([text]);
+        return true;
+      }
+      opts.notify?.(
+        res.ok
+          ? "Claude already has that message, so it can't be cancelled"
+          : "Couldn't cancel the message",
+        "error",
+      );
+      return false;
+    } catch {
+      opts.notify?.("Couldn't cancel the message", "error");
+      return false;
+    }
+  };
+
   const answer = async (keys: string[]): Promise<boolean> => {
     try {
       const res = await fetchWithDeadline(keysUrl(session()), {
@@ -1456,6 +1492,7 @@ export function createSessionStore(
     send,
     interrupt,
     unqueue,
+    cancelQueued,
     answer,
     answerText,
     answerOne,

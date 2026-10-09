@@ -70,6 +70,9 @@ export function installSwipe(root: HTMLElement, opts: SwipeOptions): () => void 
     if (e.pointerType === "mouse") return;
     if (opts.enabled && !opts.enabled()) return;
     if (insideHorizontalScroller(e.target, root)) return;
+    // An element with a sideways gesture of its own: a queued ghost swiped
+    // away is cancelled (QueuedGhost), and must not move session as well.
+    if (e.target instanceof Element && e.target.closest("[data-own-swipe]")) return;
     tracking = true;
     startX = e.clientX;
     startY = e.clientY;

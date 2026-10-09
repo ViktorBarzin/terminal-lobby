@@ -2114,6 +2114,89 @@ label.tl-set-row-label {
   color: var(--text-muted);
   animation: tl-rise 0.22s ease-out;
 }
+/* Cancelling a queued prompt (QueuedGhost). The row follows a sideways swipe
+   by an inline transform; its outline turns red once letting go would cancel
+   it (data-armed), and the row dims while the server drops it. */
+.tl-row-ghost {
+  align-items: flex-start;
+  gap: 6px;
+  transition:
+    transform 0.16s ease-out,
+    opacity 0.16s ease-out;
+}
+.tl-row-ghost[style*="translateX"] {
+  transition: none;
+}
+.tl-row-ghost[data-armed] .tl-bubble-user {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.tl-row-ghost[data-cancelling] {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.tl-ghost-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+/* A long press must open the offer, not select the text or raise the
+   browser's menu. iOS picks the long-press owner before any script runs. */
+.tl-row-ghost[data-own-swipe] {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.tl-ghost-offer {
+  display: flex;
+  gap: 8px;
+}
+.tl-ghost-offer button {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  cursor: pointer;
+}
+.tl-ghost-offer .tl-ghost-cancel-confirm {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+/* The mouse's way: a × beside the bubble on hover or keyboard focus. A touch
+   screen swipes or holds instead, so it never shows there. */
+.tl-ghost-x {
+  display: none;
+  flex: none;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: calc(16px * var(--tl-text-scale, 1));
+  line-height: 24px;
+  cursor: pointer;
+}
+.tl-ghost-x:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tl-row-ghost:hover .tl-ghost-x,
+  .tl-ghost-x:focus-visible {
+    display: block;
+  }
+  .tl-row-ghost[data-own-swipe] {
+    -webkit-touch-callout: default;
+    user-select: text;
+  }
+}
 .tl-ghost-body {
   display: -webkit-box;
   -webkit-box-orient: vertical;

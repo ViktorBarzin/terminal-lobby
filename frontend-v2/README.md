@@ -855,6 +855,10 @@ src/
                          as dashed ghost bubbles. What the open turn is doing
                          shows on the live work group at the end, not on a
                          row of its own
+    QueuedGhost.tsx      One queued prompt's ghost row, and cancelling it: a
+                         sideways swipe, a press and hold that offers Cancel,
+                         or a × with a mouse. session-events drops the prompt
+                         it holds behind the turn
     Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize, plus a
                          rehype pass that draws a picture Claude names by its
                          absolute path (plain, in backticks, or as a link's

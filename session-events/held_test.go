@@ -191,6 +191,59 @@ func TestUnqueueWithNothingHeldHandsBackNothing(t *testing.T) {
 	}
 }
 
+// A queued bubble swiped away cancels that one prompt: the others stay held
+// and go out when the turn ends, and the cancelled one never reaches Claude.
+func TestCancelQueuedDropsThatPromptAlone(t *testing.T) {
+	rg, mux := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	sent := fakeMod(t, c)
+	postTurn(t, mux, "/prompt/demo", `{"text":"one"}`)
+	postTurn(t, mux, "/prompt/demo", `{"text":"  two  "}`)
+	postTurn(t, mux, "/prompt/demo", `{"text":"three"}`)
+	rec := postTurn(t, mux, "/prompt/demo/cancel-queued", `{"text":"two"}`)
+	if r := decodeTake(t, rec.Body.String()); rec.Code != http.StatusOK || !r.Restored || !slices.Equal(r.Queue, []string{"  two  "}) {
+		t.Fatalf("status %d reply %q", rec.Code, rec.Body.String())
+	}
+	if q := queueOf(c); !slices.Equal(q, []string{"one", "three"}) {
+		t.Fatalf("queue after the cancel = %q", q)
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}})
+	if got := prompts(t, sent, 2); !slices.Equal(got, []string{"prompt one", "prompt three"}) {
+		t.Fatalf("sent %q", got)
+	}
+}
+
+// A text that is not held (Claude took it already, or another device
+// cancelled it) cancels nothing and leaves the rest held.
+func TestCancelQueuedWithATextNotHeldCancelsNothing(t *testing.T) {
+	rg, mux := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	fakeMod(t, c)
+	postTurn(t, mux, "/prompt/demo", `{"text":"one"}`)
+	rec := postTurn(t, mux, "/prompt/demo/cancel-queued", `{"text":"gone"}`)
+	if r := decodeTake(t, rec.Body.String()); rec.Code != http.StatusOK || r.Restored || r.Queue == nil || len(r.Queue) != 0 {
+		t.Fatalf("status %d reply %q", rec.Code, rec.Body.String())
+	}
+	if q := queueOf(c); !slices.Equal(q, []string{"one"}) {
+		t.Fatalf("queue = %q", q)
+	}
+}
+
+func TestCancelQueuedNamingNothingIsRefused(t *testing.T) {
+	for _, body := range []string{``, `{"text":`, `{"text":"  "}`} {
+		rg, mux := heldMux(t, t.TempDir())
+		c := running(t, rg, "sid1")
+		fakeMod(t, c)
+		postTurn(t, mux, "/prompt/demo", `{"text":"one"}`)
+		if rec := postTurn(t, mux, "/prompt/demo/cancel-queued", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %q: status %d", body, rec.Code)
+		}
+		if q := queueOf(c); !slices.Equal(q, []string{"one"}) {
+			t.Fatalf("body %q: queue = %q", body, q)
+		}
+	}
+}
+
 // An interrupt ends the turn, and the turn's end would send what is held. A
 // Stop that asks for the queue back takes it first.
 func TestAStopTakesTheHeldPromptsBackBeforeItAborts(t *testing.T) {

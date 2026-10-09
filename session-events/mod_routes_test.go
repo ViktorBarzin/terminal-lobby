@@ -25,6 +25,7 @@ func modTurnMux(t *testing.T, f *fakeTurns) (*registry, http.Handler) {
 	mux.HandleFunc("POST /cancel/{session}", handleCancel(rg, f))
 	mux.HandleFunc("POST /model/{session}", handleModel(f))
 	mux.HandleFunc("POST /prompt/{session}/unqueue", handleUnqueue(rg))
+	mux.HandleFunc("POST /prompt/{session}/cancel-queued", handleCancelQueued(rg))
 	return rg, mux
 }
 

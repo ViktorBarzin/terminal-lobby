@@ -67,6 +67,7 @@ import { browsingRuns, cardAnchors, type BrowsingRun } from "./browser.logic";
 import { StreamBody, useRowBody } from "./stream-body";
 import { NO_STREAM, streamBody, type StreamState } from "../store/stream";
 import { BrowserCard, type BrowserCardHost } from "./BrowserCard";
+import { QueuedGhost } from "./QueuedGhost";
 
 const USER_COLLAPSE_CHARS = 600;
 
@@ -149,6 +150,9 @@ const UserRowView: Component<{
  * finishes this turn": the Queued tag says it, as the prototype's ghost does.
  * `data-queued` is what the stylesheet draws the outline from.
  *
+ * Each can be cancelled by a swipe, a press and hold, or a × with a mouse
+ * (QueuedGhost, 2026-10-09).
+ *
  * Not keyed rows. They are not the transcript's: they come from the queue's own
  * operations (timeline.logic `queuedPrompts`), leave the moment Claude takes
  * them, and the prompt then arrives as an ordinary user row.
@@ -159,18 +163,22 @@ const GhostRowsView: Component<{
   sending?: ReadonlySet<number>;
   me?: string;
   onOpenPreview?: (path: string) => void;
+  /** Cancels one queued prompt (QueuedGhost). */
+  onCancel?: (text: string) => Promise<boolean>;
 }> = (props) => (
   <>
     <For each={props.queued.slice(0, MAX_QUEUED_SHOWN)}>
       {(text, i) => (
-        <div
-          class="tl-row tl-row-user tl-row-ghost"
-          data-queued=""
-          data-sending={props.sending?.has(i()) || undefined}
+        <QueuedGhost
+          text={text}
+          sending={props.sending?.has(i())}
+          onCancel={props.onCancel}
+          lead={
+            <Show when={props.sending?.has(i())}>
+              <SendingSpinner />
+            </Show>
+          }
         >
-          <Show when={props.sending?.has(i())}>
-            <SendingSpinner />
-          </Show>
           <div class="tl-bubble-user tl-bubble-ghost" title={text}>
             <div class="tl-ghost-body">
               <span class="tl-ghost-tag">{props.sending?.has(i()) ? "Sending" : "Queued"}</span>
@@ -183,7 +191,7 @@ const GhostRowsView: Component<{
               </pre>
             </div>
           </div>
-        </div>
+        </QueuedGhost>
       )}
     </For>
     <Show when={props.queued.length > MAX_QUEUED_SHOWN}>
@@ -432,6 +440,9 @@ export const MessagesTimeline: Component<{
   /** Indexes into `queued` of prompts sent from here that the session has not
    *  taken yet, drawn as "Sending" rather than "Queued". */
   queuedSending?: ReadonlySet<number>;
+  /** Cancels one queued prompt from its ghost; resolves false when it could
+   *  not. Absent on a watching device, and the ghosts then offer nothing. */
+  onCancelQueued?: (text: string) => Promise<boolean>;
   /** The ExitPlanMode call whose plan the docked plan card is showing
    *  (decidePlanDock). Its row shrinks to one line meanwhile. */
   planDocked?: string | null;
@@ -1512,6 +1523,7 @@ export const MessagesTimeline: Component<{
           sending={props.queuedSending}
           me={props.me}
           onOpenPreview={props.onOpenPreview}
+          onCancel={props.onCancelQueued}
         />
       </Show>
       <span class="tl-sr-only tl-timeline-live" aria-live="polite">

@@ -165,6 +165,30 @@ func (c *modConn) takeHeld() []string {
 	return out
 }
 
+// cancelHeld drops the first held prompt whose text, trimmed, is text, and
+// takes it off the stream's queue. False when nothing held matches: Claude
+// has it already, or another device took it.
+func (c *modConn) cancelHeld(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.mu.Lock()
+	at := slices.IndexFunc(c.held, func(h string) bool { return strings.TrimSpace(h) == text })
+	if text == "" || at < 0 {
+		c.mu.Unlock()
+		return "", false
+	}
+	gone := c.held[at]
+	c.held = slices.Delete(slices.Clone(c.held), at, at+1)
+	held, ls, user, sid := slices.Clone(c.held), c.ls, c.user, c.sid
+	c.mu.Unlock()
+	c.hub.files.save(user, sid, held)
+	if ls != nil {
+		ls.fs.Unqueue([]string{gone}, c.hub.now().UnixMilli())
+	}
+	return gone, true
+}
+
 // putBack holds again, ahead of anything held since, prompts a Stop took
 // whose interrupt then failed, and shows them queued again.
 func (c *modConn) putBack(texts []string) {
@@ -309,6 +333,41 @@ func handleUnqueue(rg *registry) http.HandlerFunc {
 		if len(out) > 0 {
 			events.Emit("claude.queue_taken", osUser, telemetry.Attrs{
 				"tl.session": session, "tl.count": len(out), "tl.via": "edit",
+			})
+		}
+		writeJSON(w, takeReply{Restored: len(out) > 0, Queue: out})
+	}
+}
+
+// handleCancelQueued drops one held prompt, {"text": ...}, cancelled from its
+// queued bubble in the Text view; the rest stay held. It answers as unqueue
+// does, with the prompt it dropped, or restored false when nothing held
+// matches (Claude has it already, or the session has no mod).
+//
+// A route of its own rather than a body on unqueue: a session-events from
+// before this ignores unqueue's body and hands back every held prompt, so a
+// newer page cancelling one would lose them all. This route answers 404
+// there instead.
+func handleCancelQueued(rg *registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, cancelBodyLimit)).Decode(&body) != nil ||
+			strings.TrimSpace(body.Text) == "" {
+			http.Error(w, "body must name the prompt: {\"text\": ...}", http.StatusBadRequest)
+			return
+		}
+		out := []string{}
+		if c := rg.mods.conn(osUser, session); c != nil {
+			if gone, ok := c.cancelHeld(body.Text); ok {
+				out = []string{gone}
+			}
+		}
+		if len(out) > 0 {
+			events.Emit("claude.queue_taken", osUser, telemetry.Attrs{
+				"tl.session": session, "tl.count": 1, "tl.via": "cancel",
 			})
 		}
 		writeJSON(w, takeReply{Restored: len(out) > 0, Queue: out})
