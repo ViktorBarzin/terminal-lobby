@@ -12,6 +12,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -193,6 +194,16 @@ func (s *Server) createConversation(c *call) (any, error) {
 	cwd, err := resolveCWD(s.HomeBase, c.id.OSUser, req.CWD)
 	if err != nil {
 		return nil, badRequest("%v", err)
+	}
+	// Before the checks, so a pinned model this box does not offer is refused
+	// with a reason rather than launched into a session that never answers.
+	if pin, ok := s.CallerPins[c.id.Header]; ok {
+		asked := req
+		pin.apply(&req)
+		if req != asked {
+			log.Printf("agent-api: %s asked for model %q effort %q permission_mode %q; pinned to %q %q %q",
+				c.id.Header, asked.Model, asked.Effort, asked.PermissionMode, req.Model, req.Effort, req.PermissionMode)
+		}
 	}
 	if req.Model != "" && !argValueRe.MatchString(req.Model) {
 		return nil, badRequest("model %q is not a model name", req.Model)

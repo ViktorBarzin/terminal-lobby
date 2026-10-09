@@ -32,6 +32,11 @@ StartLimitIntervalSec=0
 # empty by default so the feature ships off; and TL_AGENT_PUBLIC_URL, the base
 # the callback in a delegation's message names, by default
 # https://terminal-api.viktorbarzin.me.
+#
+# TL_CALLER_PINS forces launch settings on named Callers' new conversations,
+# replacing whatever they send: entries separated by ";", each
+# "<caller>:model=...,effort=...,permission_mode=..." with any subset of the
+# three keys. Unset by default. A malformed entry is logged and ignored.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
 # Binds 127.0.0.1:8710 always, and TL_AGENT_BIND names any further address to

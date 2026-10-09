@@ -1644,7 +1644,7 @@
       },
       "CreateConversationRequest": {
         "type": "object",
-        "description": "What a new conversation should be.",
+        "description": "What a new conversation should be. The box owner can pin model, effort and permission_mode for your credential; a pinned field replaces whatever you send for it, and the others stay yours.",
         "required": [
           "cwd"
         ],

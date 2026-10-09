@@ -114,6 +114,9 @@ type Server struct {
 	// DelegationCreators names the Callers that may create a delegation, from
 	// TL_DELEGATION_CREATORS. Empty, nobody can, and the feature is off.
 	DelegationCreators map[string]bool
+	// CallerPins forces launch settings on named callers' new conversations,
+	// from TL_CALLER_PINS (pins.go). A caller with no entry chooses freely.
+	CallerPins map[string]callerPin
 	// PublicURL is the base the callback in a delegation's message names,
 	// from TL_AGENT_PUBLIC_URL; defaultPublicURL when empty.
 	PublicURL string

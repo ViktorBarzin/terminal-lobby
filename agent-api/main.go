@@ -161,6 +161,15 @@ func main() {
 	srv.Delegations = store
 	srv.DelegationCreators = delegationCreators(os.Getenv)
 	srv.PublicURL = publicURL(os.Getenv)
+	pins, refused := callerPins(os.Getenv)
+	for _, r := range refused {
+		log.Printf("agent-api: TL_CALLER_PINS entry ignored, that caller is NOT pinned: %s", r)
+	}
+	for name, p := range pins {
+		log.Printf("agent-api: %s's conversations are pinned to model %q effort %q permission_mode %q (empty = the caller's choice)",
+			name, p.Model, p.Effort, p.PermissionMode)
+	}
+	srv.CallerPins = pins
 	go store.SweepEvery(delegationSweepInterval)
 	if len(srv.DelegationCreators) == 0 {
 		log.Printf("agent-api: delegations are off: TL_DELEGATION_CREATORS names no Caller (store %s)", delegationsPath)
