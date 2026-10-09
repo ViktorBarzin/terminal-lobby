@@ -2135,12 +2135,18 @@ label.tl-set-row-label {
   opacity: 0.35;
   pointer-events: none;
 }
+/* The stack holds the bubble and the offer under it. It takes the bubble's
+   84% cap, since a percentage on the bubble would now measure the stack. */
 .tl-ghost-stack {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
   min-width: 0;
+  max-width: 84%;
+}
+.tl-ghost-stack > .tl-bubble-user {
+  max-width: 100%;
 }
 /* A long press must open the offer, not select the text or raise the
    browser's menu. iOS picks the long-press owner before any script runs. */
