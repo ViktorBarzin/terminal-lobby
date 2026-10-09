@@ -144,3 +144,54 @@ func TestAPinBindsOnlyItsCaller(t *testing.T) {
 		t.Errorf("command %q, want the caller's own choices", got)
 	}
 }
+
+// "inherit" drops the caller's value so the box's own default applies: no
+// --model or --effort reaches claude, and managed-settings decides. Viktor,
+// 2026-10-09: Muse follows the box default rather than a slug someone has to
+// bump on every release.
+func TestAnInheritPinDropsTheCallersValue(t *testing.T) {
+	h := newHarness(t)
+	h.srv.CallerPins = map[string]callerPin{testActor: {
+		Model: pinInherit, Effort: pinInherit, PermissionMode: "bypassPermissions",
+	}}
+	cwd := filepath.Join(h.homeBase, testOSUser, "code", "infra")
+
+	h.decodeJSON(h.call("POST", "/v1/conversations",
+		`{"cwd":`+jsonString(cwd)+`,"model":"claude-opus-5","effort":"max","permission_mode":"default"}`), http.StatusCreated, nil)
+	created := h.sessions.createCalls()
+	got := created[len(created)-1].Command[0]
+	for _, gone := range []string{"--model", "--effort", "--permission-mode default"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("command %q still carries %q", got, gone)
+		}
+	}
+	if !strings.Contains(got, "--permission-mode bypassPermissions") {
+		t.Errorf("command %q lacks the pinned mode", got)
+	}
+}
+
+// inherit on permission_mode gives this API's own default, bypass, rather
+// than whatever the caller asked for.
+func TestAnInheritPermissionModeGivesTheAPIDefault(t *testing.T) {
+	h := newHarness(t)
+	h.srv.CallerPins = map[string]callerPin{testActor: {PermissionMode: pinInherit}}
+	cwd := filepath.Join(h.homeBase, testOSUser, "code", "infra")
+
+	h.decodeJSON(h.call("POST", "/v1/conversations",
+		`{"cwd":`+jsonString(cwd)+`,"permission_mode":"default"}`), http.StatusCreated, nil)
+	created := h.sessions.createCalls()
+	if got := created[len(created)-1].Command[0]; !strings.Contains(got, "--permission-mode "+defaultPermissionMode) {
+		t.Errorf("command %q, want --permission-mode %s", got, defaultPermissionMode)
+	}
+}
+
+func TestCallerPinsAcceptsInherit(t *testing.T) {
+	got, bad := callerPins(pinsEnv("muse:model=inherit,effort=inherit,permission_mode=inherit"))
+	if len(bad) != 0 {
+		t.Fatalf("refused %v", bad)
+	}
+	want := callerPin{Model: pinInherit, Effort: pinInherit, PermissionMode: pinInherit}
+	if got["muse"] != want {
+		t.Fatalf("got %+v, want %+v", got["muse"], want)
+	}
+}

@@ -36,7 +36,9 @@ StartLimitIntervalSec=0
 # TL_CALLER_PINS forces launch settings on named Callers' new conversations,
 # replacing whatever they send: entries separated by ";", each
 # "<caller>:model=...,effort=...,permission_mode=..." with any subset of the
-# three keys. Unset by default. A malformed entry is logged and ignored.
+# three keys. A value of "inherit" drops what the Caller sent so the box's own
+# default applies (managed-settings for model and effort, bypass for the
+# mode). Unset by default. A malformed entry is logged and ignored.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
 # Binds 127.0.0.1:8710 always, and TL_AGENT_BIND names any further address to
