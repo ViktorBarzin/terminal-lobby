@@ -398,6 +398,9 @@ export const TextView: Component<{
    * oldest first; empty when nothing did.
    */
   onUnqueue?: () => Promise<string[]>;
+  /** Cancel one queued prompt from its ghost bubble (QueuedGhost). Resolves
+   *  false when it could not. */
+  onCancelQueued?: (text: string) => Promise<boolean>;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
   sendToTerminal?: (bytes: string) => void;
@@ -2452,6 +2455,7 @@ export const TextView: Component<{
           session={props.session}
           queued={ghosts()}
           queuedSending={ghostsSending()}
+          onCancelQueued={props.inertReason ? undefined : props.onCancelQueued}
           planDocked={planDocked()?.call ?? null}
           cardDocked={cardUp()}
           planAnswer={(() => {

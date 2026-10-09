@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { swipeDirection, SWIPE_MIN_PX, SWIPE_MAX_MS } from "../src/mobile/swipe";
+import { installSwipe, swipeDirection, SWIPE_MIN_PX, SWIPE_MAX_MS } from "../src/mobile/swipe";
 import { defaultMode } from "../src/store/viewmode";
 
 describe("swipeDirection", () => {
@@ -21,6 +21,39 @@ describe("swipeDirection", () => {
   // A slow drag is someone selecting text or scrolling, not flicking.
   it("ignores a drag that took too long", () => {
     expect(swipeDirection({ dx: -200, dy: 0, ms: SWIPE_MAX_MS + 1 })).toBeNull();
+  });
+});
+
+describe("installSwipe", () => {
+  const flick = (el: Element, x0: number, x1: number) => {
+    for (const [type, x] of [
+      ["pointerdown", x0],
+      ["pointerup", x1],
+    ] as const) {
+      el.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, clientX: x, clientY: 100, pointerType: "touch" }),
+      );
+    }
+  };
+
+  // A queued ghost swiped away is cancelled (QueuedGhost), and that swipe
+  // must not also move to the next session.
+  it("leaves a swipe that started inside [data-own-swipe] to that element", () => {
+    const root = document.createElement("div");
+    const own = document.createElement("div");
+    own.setAttribute("data-own-swipe", "");
+    const inner = document.createElement("span");
+    own.append(inner);
+    root.append(own);
+    document.body.append(root);
+    const seen: string[] = [];
+    const off = installSwipe(root, { onSwipe: (d) => seen.push(d) });
+    flick(inner, 300, 150);
+    expect(seen).toEqual([]);
+    flick(root, 300, 150);
+    expect(seen).toEqual(["next"]);
+    off();
+    root.remove();
   });
 });
 

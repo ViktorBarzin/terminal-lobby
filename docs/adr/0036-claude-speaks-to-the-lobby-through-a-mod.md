@@ -401,6 +401,14 @@ How plans work from mod 0.5.1:
   sessionio takes it off again when it reads the transcript (`Unmark`), so the
   Text view and the held queue see the prompt as written. A mod change reaches
   only Claude processes started after it ships, since each loads the mod once.
+- Amended 2026-10-09: a queued bubble in the Text view can be cancelled by a
+  sideways swipe, a press and hold, or a × with a mouse. `POST
+  /prompt/<session>/cancel-queued` with `{"text": ...}` drops that one held
+  prompt and leaves the rest held. It is a route of its own because a
+  session-events from before it ignores a body on `unqueue` and hands back
+  every held prompt; this route answers 404 there instead. A prompt already in
+  Claude's own queue (a session without the mod, or one typed in the pane)
+  cannot be cancelled, and the view says so.
 - If session-events is down, the mod keeps retrying hello with backoff and
   Claude itself is unaffected; what happened meanwhile is delivered in order
   once it is back.

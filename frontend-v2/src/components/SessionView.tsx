@@ -1956,6 +1956,7 @@ export const SessionView: Component<{
             onSend={send}
             onStop={stop}
             onUnqueue={store.unqueue}
+            onCancelQueued={store.cancelQueued}
             onResolve={resolve}
             sendToTerminal={coarse() ? sendBytesToPty : undefined}
             onOpenPreview={(path) => void preview.open(path)}

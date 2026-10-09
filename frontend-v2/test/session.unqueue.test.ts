@@ -22,7 +22,7 @@ afterEach(() => {
 
 type Reply = { status: number; body?: unknown } | "unreachable";
 
-function mount(replies: { unqueue?: Reply; cancel?: Reply }) {
+function mount(replies: { unqueue?: Reply; cancel?: Reply; cancelQueued?: Reply }) {
   g.EventSource = class {
     onopen = null;
     onerror = null;
@@ -35,15 +35,19 @@ function mount(replies: { unqueue?: Reply; cancel?: Reply }) {
   };
   vi.stubGlobal("requestAnimationFrame", () => 1);
   const urls: string[] = [];
+  const bodies: (string | undefined)[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       urls.push(url);
+      bodies.push(typeof init?.body === "string" ? init.body : undefined);
       const reply = url.includes("/unqueue")
         ? replies.unqueue
-        : url.includes("/cancel/")
-          ? replies.cancel
-          : undefined;
+        : url.includes("/cancel-queued")
+          ? replies.cancelQueued
+          : url.includes("/cancel/")
+            ? replies.cancel
+            : undefined;
       if (reply === "unreachable") throw new TypeError("Failed to fetch");
       if (!reply) return { ok: true, status: 204 } as unknown as Response;
       return {
@@ -60,7 +64,7 @@ function mount(replies: { unqueue?: Reply; cancel?: Reply }) {
     dispose = d;
     store = createSessionStore("s", { notify });
   });
-  return { store, dispose, urls, notify };
+  return { store, dispose, urls, bodies, notify };
 }
 
 describe("unqueue(): Up takes the held prompts back", () => {
@@ -98,6 +102,36 @@ describe("unqueue(): Up takes the held prompts back", () => {
     await store.send("first");
     expect(await store.unqueue()).toEqual([]);
     expect(store.pendingPrompts().map((p) => p.text)).toEqual(["first"]);
+    dispose();
+  });
+});
+
+describe("cancelQueued(text): a ghost cancelled from the Text view", () => {
+  it("names the one prompt, lets go of its held copy alone, and resolves true", async () => {
+    const { store, dispose, urls, bodies, notify } = mount({
+      cancelQueued: { status: 200, body: { restored: true, queue: ["second"] } },
+    });
+    await store.send("first");
+    await store.send("second");
+    expect(await store.cancelQueued("second")).toBe(true);
+    const at = urls.findIndex((u) => u.endsWith("/prompt/s/cancel-queued"));
+    expect(JSON.parse(bodies[at]!)).toEqual({ text: "second" });
+    expect(store.pendingPrompts().map((p) => p.text)).toEqual(["first"]);
+    expect(notify).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it.each<[string, Reply]>([
+    ["Claude has it already", { status: 200, body: { restored: false, queue: [] } }],
+    ["the server refused", { status: 500 }],
+    ["the server predates the route", { status: 404 }],
+    ["the box is unreachable", "unreachable"],
+  ])("resolves false and says so when %s", async (_, reply) => {
+    const { store, dispose, notify } = mount({ cancelQueued: reply });
+    await store.send("first");
+    expect(await store.cancelQueued("first")).toBe(false);
+    expect(store.pendingPrompts().map((p) => p.text)).toEqual(["first"]);
+    expect(notify).toHaveBeenCalledTimes(1);
     dispose();
   });
 });

@@ -145,6 +145,11 @@ export function unqueueUrl(session: string): string {
   return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}/unqueue`);
 }
 
+/** POST {text}: drops one held prompt, cancelled from its queued bubble. */
+export function cancelQueuedUrl(session: string): string {
+  return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}/cancel-queued`);
+}
+
 /**
  * POST target that puts the session on a model and an effort level
  * (session-events). Body: {tool, model, effort, awaitReady}; the reply is what

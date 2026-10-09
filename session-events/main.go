@@ -192,6 +192,7 @@ func main() {
 	// Up in the Text view: the prompts held behind the running turn, handed
 	// back to edit (held.go).
 	web.HandleFunc("POST /prompt/{session}/unqueue", handleUnqueue(rg))
+	web.HandleFunc("POST /prompt/{session}/cancel-queued", handleCancelQueued(rg))
 	// One step further back — what a reader reaching the top of the transcript
 	// asks for (see OpenBackfillBytes).
 	web.HandleFunc("GET /earlier/{session}", func(w http.ResponseWriter, r *http.Request) {
