@@ -39,6 +39,7 @@ import type { CommandAvailability } from "../src/lib/new-commands";
 import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
 import { toasts } from "../src/store/toast";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
+import { STRONG_OTP, WEAK_OTP, labelWordsOf, labelledByText } from "./safari-autofill-words";
 import { resetPiModels } from "../src/lib/pi-models";
 
 class FakeApi implements LobbyApi {
@@ -455,7 +456,35 @@ describe("<NewSessionComposer> — timing the first prompt", () => {
       "tl.ms": 640,
       "tl.slot": "warm",
       "tl.hidden": false,
+      "tl.words": 3,
+      "tl.autocorrected": 0,
     });
+  });
+
+  // Whether autocorrect ran on the first prompt, measured on every send: an
+  // iOS AutoFill mode turns it off with nothing the page can see, and each
+  // earlier fix was judged on one retest.
+  it("reports how many words autocorrect replaced, counted afresh for each prompt", async () => {
+    const api = new FakeApi();
+    const w = { ...emptyWire(), claimAnswer: { claimed: true, found: "claimed" } as ClaimResult };
+    w.accepted = { ms: 640, helloWaitMs: 0 };
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    const replace = () =>
+      field(m.container)!.dispatchEvent(
+        new InputEvent("beforeinput", { inputType: "insertReplacementText", bubbles: true }),
+      );
+    replace();
+    replace();
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(w.reports.length).toBe(1));
+    expect(w.reports[0]).toMatchObject({ "tl.autocorrected": 2, "tl.words": 3 });
+    type(field(m.container)!, "And the tests");
+    enter(field(m.container)!);
+    await waitFor(() => expect(w.reports.length).toBe(2));
+    expect(w.reports[1]).toMatchObject({ "tl.autocorrected": 0 });
+    m.store.dispose();
   });
 
   it("reports a slot still booting at Send", async () => {
@@ -903,8 +932,7 @@ const SIGN_IN_WORDS =
 // words are as much a trigger as a sign-in form's.
 const CONTACT_WORDS =
   /\b(first|last|middle|given|family|full|nick|user)\s*-?name\b|\b(first|last|name|surname|title|e-?mail|phone|address|street|city|postcode|zip|country|company|birthday|username)\b/i;
-const wordsOf = (el: HTMLElement): string[] =>
-  ["aria-label", "title", "placeholder"].map((a) => el.getAttribute(a) ?? "");
+const wordsOf = labelWordsOf;
 
 describe("<NewSessionComposer> — the box does not read as a sign-in form", () => {
   it("names the prompt box without sign-in words", async () => {
@@ -940,6 +968,75 @@ describe("<NewSessionComposer> — the box does not read as a contact form", () 
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     for (const words of wordsOf(nameBox(m.container)!)) expect(words).not.toMatch(CONTACT_WORDS);
+    m.store.dispose();
+  });
+});
+
+// The third AutoFill mode on the same box: a key and Bitwarden's
+// "verification code for meshcentral.viktorbarzin.me" over the keyboard, and
+// no autocorrect (Viktor, 2026-10-09, project t3-code). Safari's form script
+// treats a lone field as a one-time-code field when "code", "passcode", "PIN"
+// or "token" ends a word in its placeholder, title or label, and the
+// placeholder named the project: "What should Claude do in t3-code?". Most of
+// Viktor's sessions start in "code" or "t3-code", so the box was a code field
+// most of the time and a text field whenever another project was showing,
+// which read as fixed-then-broken after each relabel. So no project, and no
+// other user data, goes into anything the box is called.
+describe("<NewSessionComposer> — the box does not read as a one-time-code field", () => {
+  const PROJECTS = ["code", "t3-code", "Xcode", "PIN-pad", "auth-token", "tripit"];
+  const withProjects = (api: FakeApi): void => {
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: PROJECTS.map((name) => ({ name, sessions: [], dir: `/home/wizard/code/${name}` })),
+    };
+  };
+
+  for (const project of PROJECTS) {
+    for (const command of ["claude", "codex"] as const) {
+      it(`keeps ${project} out of the ${command} prompt box's words`, async () => {
+        const api = new FakeApi();
+        withProjects(api);
+        const m = mount(api);
+        await m.store.refresh();
+        m.setPreset(project);
+        choose(m.container, "Command for new session", command);
+        await waitFor(() => expect(field(m.container)).not.toBeNull());
+        for (const words of wordsOf(field(m.container)!)) {
+          expect(words).not.toContain(project);
+          expect(words).not.toMatch(WEAK_OTP);
+          expect(words).not.toMatch(STRONG_OTP);
+        }
+        m.store.dispose();
+      });
+    }
+  }
+
+  it("keeps the project out of the shell's name box words", async () => {
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    m.prefs.setPref({ session: { newCommand: "shell" } });
+    await m.store.refresh();
+    m.setPreset("t3-code");
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    for (const words of wordsOf(nameBox(m.container)!)) {
+      expect(words).not.toContain("t3-code");
+      expect(words).not.toMatch(WEAK_OTP);
+    }
+    m.store.dispose();
+  });
+
+  // A field with a label of its own is matched on that label alone. Without
+  // one, Safari reads the visible text before the field instead, and the
+  // hero above this box carries the project: "Name a shell in t3-code".
+  it("gives both boxes a label of their own, so Safari reads nothing around them", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(field(m.container)).not.toBeNull());
+    expect(labelledByText(field(m.container)!).trim()).not.toBe("");
+    m.prefs.setPref({ session: { newCommand: "shell" } });
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    expect(labelledByText(nameBox(m.container)!).trim()).not.toBe("");
     m.store.dispose();
   });
 });
@@ -1127,7 +1224,7 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
   const hero = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-new-hero");
   const strip = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-new-strip");
 
-  it("asks what to build in the project, in the hero and the placeholder", async () => {
+  it("asks what to build in the project, in the hero", async () => {
     const api = new FakeApi();
     withAlpha(api);
     const m = mount(api);
@@ -1138,7 +1235,8 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     );
     // The project in its own span, drawn muted.
     expect(hero(m.container)!.querySelector("span")!.textContent).toBe("alpha");
-    expect(field(m.container)!.placeholder).toBe("What should Claude do in alpha?");
+    // The placeholder leaves it out: see "does not read as a one-time-code field".
+    expect(field(m.container)!.placeholder).toBe("What should Claude do?");
     m.store.dispose();
   });
 
@@ -1149,9 +1247,7 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     await m.store.refresh();
     m.setPreset("alpha");
     choose(m.container, "Command for new session", "codex");
-    await waitFor(() =>
-      expect(field(m.container)!.placeholder).toBe("What should Codex do in alpha?"),
-    );
+    await waitFor(() => expect(field(m.container)!.placeholder).toBe("What should Codex do?"));
     m.store.dispose();
   });
 

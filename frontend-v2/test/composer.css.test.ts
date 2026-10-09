@@ -327,3 +327,18 @@ describe("the side gutter", () => {
     expect(gutter).not.toMatch(/v(w|i|min|max)\b/);
   });
 });
+
+// Safari's AutoFill script scans the visible text before a lone field for
+// phrases like "verification code". The copy of the draft behind the field is
+// already transparent, but transparent still counts as visible; only
+// `visibility: hidden` takes it out. Chips stay visible: they are what the
+// copy is for.
+describe("the draft's copy behind the field", () => {
+  it("hides its prose from Safari's page scan", () => {
+    expect(rule(".tl-mirror-text")).toMatch(/visibility:\s*hidden/);
+  });
+
+  it("does not turn anything visible inside a hidden ancestor", () => {
+    expect(css).not.toMatch(/visibility:\s*visible/);
+  });
+});

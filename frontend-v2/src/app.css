@@ -4097,6 +4097,14 @@ label.tl-set-row-label {
   /* The text is the FIELD's. This copy only carries the pills. */
   color: transparent;
 }
+/* The copy's prose, out of Safari's AutoFill: it scans the visible text
+   before a lone field for "verification code" and the like, and transparent
+   text still counts as visible. The chips are outside these spans and stay
+   drawn. Never pair this with `visibility: visible` on a child: that would
+   show it through an offstage preload's `visibility: hidden`. */
+.tl-mirror-text {
+  visibility: hidden;
+}
 .tl-composer-input {
   flex: 1 1 auto;
   display: block;

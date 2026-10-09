@@ -2,6 +2,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   For,
   onCleanup,
   Show,
@@ -251,6 +252,11 @@ export const NewSessionComposer: Component<{
   });
 
   let nameEl: HTMLTextAreaElement | undefined;
+  const nameLabelId = createUniqueId();
+  /** Words autocorrect replaced in the prompt being written, reported with
+   *  it as tl.autocorrected: a box iOS has put in an AutoFill mode gets none,
+   *  and nothing else on the page can tell. */
+  let autocorrected = 0;
   const [name, setName] = createSignal("");
 
   // ---- speculative pre-warm ------------------------------------------------
@@ -440,6 +446,8 @@ export const NewSessionComposer: Component<{
   const submit = async (text: string, attached: readonly DraftAttachment[]): Promise<boolean> => {
     // The Send press, which a first prompt is timed from (prompt.landed).
     const sentAt = performance.now();
+    const corrected = autocorrected;
+    autocorrected = 0;
     const shown = watchHidden();
     // The project list is empty until the first layout fetch lands, so a
     // prompt sent in that gap would resolve to Ungrouped and then write
@@ -523,6 +531,8 @@ export const NewSessionComposer: Component<{
             "tl.ms": a.ms,
             "tl.slot": slotOutcome(c, a.helloWaitMs),
             "tl.hidden": shown.hidden(),
+            "tl.words": text.split(/\s+/).filter(Boolean).length,
+            "tl.autocorrected": corrected,
           }),
         ),
     }).finally(shown.stop);
@@ -542,13 +552,14 @@ export const NewSessionComposer: Component<{
   // ---- the words -------------------------------------------------------------
   /** The project as the strip names it. */
   const projectName = (): string => props.project() || "Ungrouped";
-  /** Ungrouped is not a place, so the words leave the project out there. */
-  const inProject = (): string => (props.project() ? ` in ${props.project()}` : "");
-  /** The placeholder names the CLI the command starts. */
+  /** The placeholder names the CLI the command starts, and never the
+   *  project: Safari's AutoFill reads the placeholder, and a project called
+   *  "code" or "t3-code" made the box a one-time-code field (2026-10-09). The
+   *  hero above names the project instead. */
   const placeholder = (): string => {
     const c = cmd();
     const who = c === "codex" || c === "pi" ? COMMAND_LABELS[c] : "Claude";
-    return `What should ${who} do${inProject()}?`;
+    return `What should ${who} do?`;
   };
   /** A project's row says where its session would start. */
   function whereItStarts(name: string): string {
@@ -713,6 +724,7 @@ export const NewSessionComposer: Component<{
                   rows={1}
                   placeholder="Call this shell…"
                   aria-label="What to call the shell"
+                  aria-labelledby={nameLabelId}
                   maxlength={MAX_TITLE_RUNES}
                   enterkeyhint="go"
                   value={name()}
@@ -728,6 +740,11 @@ export const NewSessionComposer: Component<{
                     submitName();
                   }}
                 />
+                {/* Its own label, so Safari's AutoFill stops reading the hero
+                    before it, "Name a shell in <project>" (see PromptField). */}
+                <span id={nameLabelId} class="tl-sr-only">
+                  What to call the shell
+                </span>
                 <div class="tl-pill-end">
                   <button
                     type="button"
@@ -750,15 +767,14 @@ export const NewSessionComposer: Component<{
             onSend={submit}
             onAttach={holdFiles}
             pendingAttachments
-            // No sign-in words in what a field is called. "Prompt for a new
-            // session" and "Enter to start the session" made iOS treat this box
-            // as a login field: a Passwords key where the word suggestions go,
-            // and autocorrect off (2026-10-05). The open session's box is the
-            // same field with different words, and never had it. Nor contact-form
-            // words: "First message to Claude" read as a first-name field, so the
-            // bar offered Viktor's own name and autocorrect went off again
-            // (2026-10-08). "Name" is the same trap, hence the shell box's wording.
+            // Safari's AutoFill decides what this box is from its words, so
+            // they must not read as a form: sign-in words gave a Passwords key
+            // (2026-10-05), "First" a contact card (2026-10-08), and "code"
+            // from the project in the placeholder a one-time code (2026-10-09),
+            // each with autocorrect off. "Name" is the contact trap, hence the
+            // shell box's wording. Tests: safari-autofill-words.ts.
             label="Message to send to Claude"
+            onAutocorrect={() => autocorrected++}
             placeholder={placeholder()}
             hint="Enter to send · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}

@@ -13,6 +13,7 @@ import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
 import { trackPrompt } from "../src/lib/leaving";
+import { labelledByText } from "./safari-autofill-words";
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -289,5 +290,69 @@ describe("<PromptField> — @ completion after an Escape", () => {
     type(ta, "hello @al");
     await settle();
     expect(options(container).some((o) => o.includes("@alpha.txt"))).toBe(true);
+  });
+});
+
+/**
+ * What Safari's AutoFill script can read off the box (see
+ * safari-autofill-words.ts). A label of its own stops Safari reading the text
+ * around the field, and the field's copy of the draft behind it must not
+ * count as visible text, or a draft saying "enter the verification code"
+ * turns the box into a code field.
+ */
+describe("<PromptField> — what Safari's AutoFill reads", () => {
+  it("labels the field with an element of its own, not just aria-label", () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message to send" />);
+    expect(labelledByText(field(container))).toBe("Message to send");
+  });
+
+  it("keeps the traits that leave AutoFill out and autocorrect in", () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    const el = field(container);
+    // Absent, not "off": WebKit maps both to no AutoFill, but "off" also
+    // turns inline predictions off (Element::isWritingSuggestionsEnabled).
+    expect(el.getAttribute("autocomplete")).toBeNull();
+    expect(el.getAttribute("autocorrect")).toBe("on");
+    expect(el.getAttribute("spellcheck")).toBe("true");
+    expect(el.getAttribute("name")).toBeNull();
+    expect(el.getAttribute("id")).toBeNull();
+    expect(el.closest("form")).toBeNull();
+  });
+
+  it("puts the draft's copy behind the field in hidden spans only", () => {
+    saveDraft(NEW_SESSION_DRAFT_KEY, {
+      text: "enter the verification code from the SMS",
+      attachments: [],
+      at: 1,
+    });
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" draftKey={NEW_SESSION_DRAFT_KEY} />
+    ));
+    const mirror = container.querySelector(".tl-composer-mirror")!;
+    expect(mirror.textContent).toContain("verification code");
+    const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.textContent) continue;
+      expect(n.parentElement!.closest(".tl-mirror-text, .tl-inline-chip")).not.toBeNull();
+    }
+  });
+
+  // Autocorrect replacing a word arrives as insertReplacementText. Counting it
+  // per prompt lets the lobby report whether autocorrect ran, since nothing
+  // in a page can see the QuickType bar itself.
+  it("reports each autocorrection to onAutocorrect", () => {
+    let n = 0;
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" onAutocorrect={() => n++} />
+    ));
+    const el = field(container);
+    el.dispatchEvent(
+      new InputEvent("beforeinput", { inputType: "insertReplacementText", bubbles: true }),
+    );
+    el.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", bubbles: true }));
+    el.dispatchEvent(
+      new InputEvent("beforeinput", { inputType: "insertReplacementText", bubbles: true }),
+    );
+    expect(n).toBe(2);
   });
 });

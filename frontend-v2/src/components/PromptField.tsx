@@ -2,6 +2,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   For,
   Show,
   onCleanup,
@@ -131,8 +132,14 @@ export const PromptField: Component<{
    */
   onSend: (text: string, attachments: readonly DraftAttachment[]) => Promise<boolean>;
   placeholder?: string;
-  /** aria-label for the field; what a screen reader announces it as. */
+  /** aria-label for the field; what a screen reader announces it as. Also
+   *  drawn, out of sight, as the element aria-labelledby names: with a label
+   *  of its own, Safari's AutoFill matches the field on its words alone and
+   *  stops reading the text around it (see the textarea below). */
   label: string;
+  /** Called for each word autocorrect replaces, so a caller can report
+   *  whether autocorrect ran; no page can see the QuickType bar itself. */
+  onAutocorrect?: () => void;
   /** The field's tooltip, which is also where the Enter/Shift+Enter contract is
    *  written down for a mouse user. */
   hint?: string;
@@ -267,6 +274,8 @@ export const PromptField: Component<{
   let menuPlusEl: HTMLDivElement | undefined;
   /** The chip layer behind the field — see `mirror` and the JSX below. */
   let mirrorEl: HTMLDivElement | undefined;
+  /** The field's label element, which aria-labelledby names. */
+  const labelId = createUniqueId();
   const [draft, setDraft] = createSignal("");
 
   // ---- the shape ----------------------------------------------------------
@@ -1133,6 +1142,7 @@ export const PromptField: Component<{
    */
   let allowLineBreak = false;
   const onBeforeInput = (e: InputEvent) => {
+    if (e.inputType === "insertReplacementText") props.onAutocorrect?.();
     if (e.inputType !== "insertLineBreak") return;
     // On a phone the key is return: the line goes in (see onKeyDown).
     if (coarse()) return;
@@ -1527,7 +1537,10 @@ export const PromptField: Component<{
               </Show>
               <For each={mirror()}>
                 {(part) => (
-                  <Show when={part.item} fallback={part.text}>
+                  // The prose in a hidden span: transparent text still counts
+                  // as visible to Safari's AutoFill, which scans the text
+                  // before a lone field for "verification code" and the like.
+                  <Show when={part.item} fallback={<span class="tl-mirror-text">{part.text}</span>}>
                     {(item) => (
                       <span class="tl-inline-chip" data-kind={item().kind}>
                         {part.text}
@@ -1547,7 +1560,15 @@ export const PromptField: Component<{
               autocorrect="on"
               spellcheck={true}
               enterkeyhint={coarse() ? "enter" : "send"}
+              // Safari's AutoFill decides what a field is from its words: the
+              // placeholder, title and labels, and when it has no label, the
+              // text before it. A "code" there made this box a one-time-code
+              // field, with Bitwarden's codes over the keyboard and no
+              // autocorrect (2026-10-09). The label below stops the reading of
+              // the text around it. No autocomplete attribute: "off" changes no
+              // AutoFill in WebKit and turns inline predictions off.
               aria-label={props.label}
+              aria-labelledby={labelId}
               onInput={() => {
                 setPlusOpen(false);
                 setHistAt(-1);
@@ -1566,6 +1587,9 @@ export const PromptField: Component<{
                 if (mirrorEl && ta) mirrorEl.scrollTop = ta.scrollTop;
               }}
             />
+            <span id={labelId} class="tl-sr-only">
+              {props.label}
+            </span>
           </div>
           {/* The round button is the surface's last control, always, in one
               of three states (Composer.queue.test.tsx).
