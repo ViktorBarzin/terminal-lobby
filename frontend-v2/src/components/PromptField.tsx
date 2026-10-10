@@ -41,6 +41,7 @@ import {
 import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { dismissFloat, dismissOnPress } from "./overlay";
+import { ZoomImage } from "./ZoomImage";
 import { PlusMenu } from "./PlusMenu";
 import { ColumnGrip } from "./ColumnGrip";
 
@@ -1698,7 +1699,11 @@ export const PromptField: Component<{
       <Show when={zoom()}>
         {(shot) => (
           <div class="tl-lightbox" ref={dismissOnPress(closeZoom, { keepFocus: true })}>
-            <img src={shot().src} alt={storedDisplayName(shot().name)} />
+            <ZoomImage
+              src={shot().src}
+              alt={storedDisplayName(shot().name)}
+              onDismiss={closeZoom}
+            />
           </div>
         )}
       </Show>

@@ -1,6 +1,7 @@
 import { Show, onCleanup, onMount, type Component } from "solid-js";
 import { closePicture, picture, pictureSpot, stepPicture } from "../store/picture";
 import { dismissOnPress } from "./overlay";
+import { ZoomImage } from "./ZoomImage";
 import { LightboxNav, stepKey } from "./LightboxNav";
 import { closeOnBack } from "../lib/back-closes";
 
@@ -44,7 +45,7 @@ export const PictureLightbox: Component = () => {
     <Show when={picture()}>
       {(pic) => (
         <div class="tl-lightbox" ref={dismissOnPress(closePicture, { keepFocus: true })}>
-          <img src={pic().src} alt={pic().alt} />
+          <ZoomImage src={pic().src} alt={pic().alt} onDismiss={closePicture} />
           <Show when={pictureSpot()}>
             {(spot) => (
               <LightboxNav index={spot().index} count={spot().count} onStep={stepPicture} />

@@ -14,6 +14,7 @@ import { HTML_SANDBOX, dirname } from "../store/preview.logic";
 import { IMAGE_DECODE_MESSAGE, contentUrl, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
 import { dismissOnPress } from "./overlay";
+import { ZoomImage } from "./ZoomImage";
 import { CodeView } from "./CodeView";
 import { CodeEditor } from "./CodeEditor";
 import { wrapTab } from "../lib/focus-trap";
@@ -154,10 +155,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
   };
 
   return (
-    <div
-      class="tl-preview-backdrop"
-      ref={dismissOnPress(() => s.close(), { surfaceOnly: true })}
-    >
+    <div class="tl-preview-backdrop" ref={dismissOnPress(() => s.close(), { surfaceOnly: true })}>
       {/* data-kind lets the stylesheet treat a picture differently from a
           document. The panel is otherwise a fixed 85vh whatever it holds, which
           is right for text that scrolls and wrong for an image, which has a size
@@ -272,11 +270,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
               already know, so gating it on an already-loaded file locked out
               exactly the sessions that need it (no transcript, no path). The
               store picks the starting directory. */}
-          <button
-            type="button"
-            class="tl-btn"
-            onClick={() => void s.browseStart(pathInput())}
-          >
+          <button type="button" class="tl-btn" onClick={() => void s.browseStart(pathInput())}>
             Browse
           </button>
         </form>
@@ -315,9 +309,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                     type="button"
                     class="tl-btn"
                     disabled={!s.canBrowseUp()}
-                    title={
-                      s.canBrowseUp() ? "Parent folder" : "Already at the top folder"
-                    }
+                    title={s.canBrowseUp() ? "Parent folder" : "Already at the top folder"}
                     onClick={() => void s.browseUp()}
                   >
                     ⬆ Up
@@ -330,10 +322,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                       .gitignore / .env / .bashrc that file-api deliberately
                       lets you edit could not be found by browsing. Reuses the
                       app's generic checkbox-row layout. */}
-                  <label
-                    class="tl-settings-check"
-                    title="Show dotfiles (.gitignore, .env, …)"
-                  >
+                  <label class="tl-settings-check" title="Show dotfiles (.gitignore, .env, …)">
                     <input
                       type="checkbox"
                       checked={s.showHidden()}
@@ -350,9 +339,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                     <div class="tl-preview-note">Loading…</div>
                   </Match>
                   <Match when={s.browseStatus() === "error"}>
-                    <div class="tl-preview-note tl-preview-error">
-                      {s.browseError()}
-                    </div>
+                    <div class="tl-preview-note tl-preview-error">{s.browseError()}</div>
                   </Match>
                   <Match when={s.browseEntries().length === 0}>
                     <div class="tl-preview-note">Empty directory</div>
@@ -366,14 +353,10 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                             class="tl-preview-entry"
                             classList={{ dir: entry.isDir }}
                             onClick={() =>
-                              entry.isDir
-                                ? void s.browse(entry.path)
-                                : void s.open(entry.path)
+                              entry.isDir ? void s.browse(entry.path) : void s.open(entry.path)
                             }
                           >
-                            <span class="tl-preview-entry-icon">
-                              {entry.isDir ? "📁" : "📄"}
-                            </span>
+                            <span class="tl-preview-entry-icon">{entry.isDir ? "📁" : "📄"}</span>
                             <span class="tl-preview-entry-name">{entry.name}</span>
                           </button>
                         )}
@@ -421,27 +404,23 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                 />
               </Show>
               <Show when={!s.editing()}>
-              <Switch>
-                <Match when={s.kind() === "image"}>
-                  <Show
-                    when={imgError() === null}
-                    fallback={
-                      <div class="tl-preview-note tl-preview-error">
-                        {imgError()}
+                <Switch>
+                  <Match when={s.kind() === "image"}>
+                    <Show
+                      when={imgError() === null}
+                      fallback={<div class="tl-preview-note tl-preview-error">{imgError()}</div>}
+                    >
+                      <div class="tl-preview-image">
+                        <ZoomImage
+                          src={contentUrl(s.path()!) ?? ""}
+                          alt={s.name()}
+                          onError={onImgError}
+                        />
                       </div>
-                    }
-                  >
-                    <div class="tl-preview-image">
-                      <img
-                        src={contentUrl(s.path()!) ?? ""}
-                        alt={s.name()}
-                        onError={onImgError}
-                      />
-                    </div>
-                  </Show>
-                </Match>
+                    </Show>
+                  </Match>
 
-                {/* A pdf renders in the browser's OWN viewer. <embed> loads it
+                  {/* A pdf renders in the browser's OWN viewer. <embed> loads it
                     by URL, so nothing is fetched twice, and clipboard-upload
                     serves a stored document with nosniff plus an inline
                     disposition — anything that could execute as markup is
@@ -449,59 +428,55 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                     document. Before this it read "Binary file — preview
                     unavailable", one click from a dead end on the format most
                     likely to be attached. */}
-                <Match when={s.kind() === "pdf"}>
-                  <div class="tl-preview-pdf">
-                    <embed
-                      src={contentUrl(s.path()!) ?? ""}
-                      type="application/pdf"
-                      title={s.name()}
-                    />
-                  </div>
-                </Match>
-
-                <Match when={s.kind() === "markdown"}>
-                  <Show
-                    when={s.mode() === "rendered"}
-                    fallback={<CodeView code={s.text()} language="markdown" />}
-                  >
-                    <div class="tl-preview-md">
-                      <Markdown text={s.text()} base={mdBase()} />
+                  <Match when={s.kind() === "pdf"}>
+                    <div class="tl-preview-pdf">
+                      <embed
+                        src={contentUrl(s.path()!) ?? ""}
+                        type="application/pdf"
+                        title={s.name()}
+                      />
                     </div>
-                  </Show>
-                </Match>
+                  </Match>
 
-                <Match when={s.kind() === "html"}>
-                  <Show
-                    when={s.mode() === "rendered"}
-                    fallback={<CodeView code={s.text()} language="xml" />}
-                  >
-                    {/* SANDBOXED: srcdoc + empty sandbox — no scripts, no
-                        same-origin, opaque origin. Never set `src`. */}
-                    <iframe
-                      class="tl-preview-iframe"
-                      title="HTML preview"
-                      sandbox={HTML_SANDBOX}
-                      srcdoc={s.text()}
-                      referrerpolicy="no-referrer"
-                    />
-                  </Show>
-                </Match>
-
-                <Match when={s.kind() === "code"}>
-                  <CodeView code={s.text()} language={s.language()} />
-                </Match>
-
-                <Match when={s.kind() === "binary"}>
-                  <div class="tl-preview-note">
-                    Binary file — preview unavailable
-                    <Show when={s.size() !== null}>
-                      {" "}
-                      ({fmtBytes(s.size())})
+                  <Match when={s.kind() === "markdown"}>
+                    <Show
+                      when={s.mode() === "rendered"}
+                      fallback={<CodeView code={s.text()} language="markdown" />}
+                    >
+                      <div class="tl-preview-md">
+                        <Markdown text={s.text()} base={mdBase()} />
+                      </div>
                     </Show>
-                    .
-                  </div>
-                </Match>
-              </Switch>
+                  </Match>
+
+                  <Match when={s.kind() === "html"}>
+                    <Show
+                      when={s.mode() === "rendered"}
+                      fallback={<CodeView code={s.text()} language="xml" />}
+                    >
+                      {/* SANDBOXED: srcdoc + empty sandbox — no scripts, no
+                        same-origin, opaque origin. Never set `src`. */}
+                      <iframe
+                        class="tl-preview-iframe"
+                        title="HTML preview"
+                        sandbox={HTML_SANDBOX}
+                        srcdoc={s.text()}
+                        referrerpolicy="no-referrer"
+                      />
+                    </Show>
+                  </Match>
+
+                  <Match when={s.kind() === "code"}>
+                    <CodeView code={s.text()} language={s.language()} />
+                  </Match>
+
+                  <Match when={s.kind() === "binary"}>
+                    <div class="tl-preview-note">
+                      Binary file — preview unavailable
+                      <Show when={s.size() !== null}> ({fmtBytes(s.size())})</Show>.
+                    </div>
+                  </Match>
+                </Switch>
               </Show>
             </Match>
           </Switch>

@@ -876,6 +876,12 @@ src/
                          its timeline. Escape closes it and goes no further
     LightboxNav.tsx      Both lightboxes' arrows, the ← and → keys (stepKey)
                          and the "2/5" count. Stops at either end
+    ZoomImage.tsx        Every full-size picture (both lightboxes, the
+                         composer's, the file preview): pinch, wheel and double
+                         tap zoom the picture through @panzoom/panzoom, never
+                         the page. A single tap closes, after the double-tap
+                         window and only at fit
+    zoom.logic.ts        PURE tap / double tap / neither, from pointer presses
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         The LIVE session's composer, after the T3 pass: a
                          50px pill on a phone at rest, a box when focused and

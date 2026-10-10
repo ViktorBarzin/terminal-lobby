@@ -5252,6 +5252,32 @@ body.tl-kb-up {
   right: calc(12px + env(safe-area-inset-right));
 }
 
+/* The stage a full-size picture zooms on (ZoomImage). In a lightbox it fills
+   the overlay, so a pinch that starts on the dark area is still the picture's
+   and never the page's; the arrows come after it in the DOM and sit on top.
+   Panzoom sets touch-action and overflow on it inline. */
+.tl-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.tl-lightbox > .tl-zoom {
+  position: absolute;
+  inset: 0;
+}
+.tl-zoom[data-zoomed="on"] {
+  cursor: grab;
+}
+.tl-zoom[data-zoomed="on"]:active {
+  cursor: grabbing;
+}
+.tl-zoom img {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
 /* Full-screen dashed-accent overlay while a file-bearing drag is over the
    window; pointer-events:none so the drag keeps reaching the drop target. */
 .tl-drop-overlay {

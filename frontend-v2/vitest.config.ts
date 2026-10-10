@@ -35,5 +35,10 @@ export default defineConfig({
     // with no source change). A suite that reports a different answer each run
     // cannot be evidence for anything.
     isolate: true,
+    // @panzoom/panzoom declares "type": "module" but points "main" at its UMD
+    // build, which Node then loads as ESM with no default export. Inlining it
+    // sends it through Vite's resolver, which reads "module" (the ESM build)
+    // the way the production build already does.
+    server: { deps: { inline: ["@panzoom/panzoom"] } },
   },
 });

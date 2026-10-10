@@ -16,6 +16,7 @@ import { clipboardImgUrl } from "../lib/config";
 import { refocusTerminal } from "../keybindings/refocus";
 import { PaperclipIcon } from "./Icons";
 import { dismissOnPress } from "./overlay";
+import { ZoomImage } from "./ZoomImage";
 import { LightboxNav, stepKey } from "./LightboxNav";
 
 /**
@@ -245,7 +246,12 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
                 </div>
               }
             >
-              <img alt={img().name} src={src(img().name)} onError={() => markBroken(img().name)} />
+              <ZoomImage
+                alt={img().name}
+                src={src(img().name)}
+                onError={() => markBroken(img().name)}
+                onDismiss={() => s.stepBack()}
+              />
             </Show>
             <LightboxNav
               index={s.lightboxIndex()}
