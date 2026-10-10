@@ -26,6 +26,15 @@ import { DOUBLE_TAP_MS, createTapTracker } from "./zoom.logic";
 
 const MAX_SCALE = 8;
 const DOUBLE_TAP_SCALE = 2.5;
+/**
+ * Panzoom's pinch is linear: scale grows by `step` per 80px the fingers
+ * spread. Its default 0.3 left a 3.25x spread (80px to 260px, CDP touch in a
+ * Pixel 7 profile, 2026-10-10) at 1.675x, so the photo lagged the fingers.
+ * 0.65 tracks a pinch that starts about 120px apart.
+ */
+const PINCH_STEP = 0.65;
+/** The wheel keeps Panzoom's default: a trackpad sends dozens of events a gesture. */
+const WHEEL_STEP = 0.3;
 /** Below this the picture counts as back at fit, and is recentred. */
 const FIT_EPSILON = 1.01;
 
@@ -91,7 +100,7 @@ export const ZoomImage: Component<{
 
   const onWheel = (e: WheelEvent): void => {
     if (!pz) return;
-    pz.zoomWithWheel(e);
+    pz.zoomWithWheel(e, { step: WHEEL_STEP });
     settle();
   };
 
@@ -105,6 +114,7 @@ export const ZoomImage: Component<{
       canvas: true,
       minScale: 1,
       maxScale: MAX_SCALE,
+      step: PINCH_STEP,
       panOnlyWhenZoomed: true,
       // The stylesheet owns the cursor: zoom-out over a lightbox, grab when
       // zoomed. Panzoom would otherwise write `move` inline over both.
