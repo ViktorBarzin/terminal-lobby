@@ -409,6 +409,10 @@ How plans work from mod 0.5.1:
   every held prompt; this route answers 404 there instead. A prompt already in
   Claude's own queue (a session without the mod, or one typed in the pane)
   cannot be cancelled, and the view says so.
+- Amended 2026-10-10: a held prompt reaches Claude at the running turn's next
+  tool boundary instead of waiting for the turn to end. The mod asks for what
+  is held (`POST /mod/v1/take-held`) and attaches it to the tool's result as
+  context; press and hold on a queued bubble opens it to edit. See ADR-0042.
 - If session-events is down, the mod keeps retrying hello with backoff and
   Claude itself is unaffected; what happened meanwhile is delivered in order
   once it is back.

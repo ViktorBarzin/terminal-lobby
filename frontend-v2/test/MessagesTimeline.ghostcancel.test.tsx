@@ -3,7 +3,8 @@
  * 2026-10-09: "on the card we could swipe it or press and hold").
  *
  * On a phone: swipe the bubble sideways past SWIPE_MIN_PX and it is cancelled,
- * or press and hold it and a Cancel button appears under it. With a mouse a ×
+ * and a press and hold takes it out to edit instead, where the form has a
+ * Discard (MessagesTimeline.ghostedit.test.tsx). With a mouse a ×
  * sits on the bubble. The ghost dims while session-events takes it off the
  * queue (session-events/held.go cancelHeld), and comes back when it could not.
  * A ghost still being sent has nothing held to cancel, so it offers nothing.
@@ -31,7 +32,13 @@ const touch = (el: Element, type: string, x: number, y = 100) =>
     }),
   );
 
-function mount(opts: { onCancel?: (t: string) => Promise<boolean>; sending?: Set<number> } = {}) {
+function mount(
+  opts: {
+    onCancel?: (t: string) => Promise<boolean>;
+    onEditStart?: (t: string) => Promise<boolean>;
+    sending?: Set<number>;
+  } = {},
+) {
   const onCancel = opts.onCancel ?? vi.fn(async () => true);
   const r = render(() => (
     <MessagesTimeline
@@ -39,6 +46,7 @@ function mount(opts: { onCancel?: (t: string) => Promise<boolean>; sending?: Set
       queued={["first", "second"]}
       queuedSending={opts.sending}
       onCancelQueued={onCancel}
+      onEditQueuedStart={opts.onEditStart}
     />
   ));
   const ghosts = () => Array.from(r.container.querySelectorAll<HTMLElement>(".tl-row-ghost"));
@@ -112,30 +120,14 @@ describe("cancelling a queued message", () => {
     expect(ghosts()[0]!.style.transform).toBe("");
   });
 
-  it("offers Cancel after a press and hold, and cancels when it is tapped", async () => {
+  it("takes it out to edit on a press and hold, rather than cancelling it", () => {
     vi.useFakeTimers();
-    const { onCancel, bubble, container } = mount();
+    const onEditStart = vi.fn(async () => true);
+    const { onCancel, bubble } = mount({ onEditStart });
     touch(bubble(0), "pointerdown", 300);
     vi.advanceTimersByTime(GHOST_HOLD_MS);
     touch(bubble(0), "pointerup", 300);
-    const cancel = container.querySelector<HTMLButtonElement>(".tl-ghost-cancel-confirm");
-    expect(cancel?.textContent).toBe("Cancel message");
-    fireEvent.click(cancel!);
-    expect(onCancel).toHaveBeenCalledWith("first");
-  });
-
-  it("takes the Cancel offer away on Keep, and a hold that moved offers nothing", () => {
-    vi.useFakeTimers();
-    const { onCancel, bubble, container } = mount();
-    touch(bubble(0), "pointerdown", 300);
-    vi.advanceTimersByTime(GHOST_HOLD_MS);
-    fireEvent.click(container.querySelector(".tl-ghost-keep")!);
-    expect(container.querySelector(".tl-ghost-cancel-confirm")).toBeNull();
-
-    touch(bubble(1), "pointerdown", 300);
-    touch(bubble(1), "pointermove", 300, 120);
-    vi.advanceTimersByTime(GHOST_HOLD_MS);
-    expect(container.querySelector(".tl-ghost-cancel-confirm")).toBeNull();
+    expect(onEditStart).toHaveBeenCalledWith("first");
     expect(onCancel).not.toHaveBeenCalled();
   });
 

@@ -32,6 +32,7 @@ import {
 } from "../lib/config";
 import type { Event, PermissionDecision, SearchHit } from "../types/events";
 import { readCatalogue, type Catalogue } from "./catalogue";
+import { loadQueuedEdit, saveQueuedEdit, type OpenQueuedEdit } from "./drafts";
 import { isSlashCommand, sameCommand, type PendingPrompt } from "../logic/compose.logic";
 import { trackPrompt } from "../lib/leaving";
 import { fetchWithDeadline } from "../lib/http";
@@ -163,6 +164,16 @@ export interface SessionStore {
   unqueue: () => Promise<string[]>;
   /** Cancels one queued prompt; false when it could not (and says so). */
   cancelQueued: (text: string) => Promise<boolean>;
+  /** The queued prompt this device has out of the queue in its edit form, or
+   *  null. Survives a reload (store/drafts.ts). */
+  editingQueued: Accessor<OpenQueuedEdit | null>;
+  /** Takes one queued prompt out of the queue into the edit form; false when
+   *  it could not (and says so). */
+  editQueuedStart: (text: string) => Promise<boolean>;
+  /** Keeps what the edit form holds, so a reload brings it back. */
+  setQueuedDraft: (draft: string) => void;
+  /** Closes the edit form. Whatever it sent went through `send`. */
+  endQueuedEdit: () => void;
   /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
@@ -1296,12 +1307,15 @@ export function createSessionStore(
   };
 
   /**
-   * Cancels one queued prompt, swiped or held away on its ghost in the Text
-   * view. session-events drops it from what it holds behind the turn; it never
-   * reached Claude, so it is gone. False, said in a toast, when it could not:
-   * Claude had it already, or the box did not answer.
+   * Takes one prompt out of what session-events holds behind the turn
+   * (held.go cancelHeld) and lets go of its held copy here. When it could not,
+   * a toast says why in the caller's words: Claude had it already
+   * (`refused`), or the box did not answer (`failed`).
    */
-  const cancelQueued = async (text: string): Promise<boolean> => {
+  const takeHeld = async (
+    text: string,
+    say: { refused: string; failed: string },
+  ): Promise<"taken" | "refused" | "failed"> => {
     try {
       const res = await fetchWithDeadline(cancelQueuedUrl(session()), {
         method: "POST",
@@ -1313,20 +1327,81 @@ export function createSessionStore(
         : null;
       if (reply?.restored === true) {
         letGo([text]);
-        return true;
+        return "taken";
       }
-      opts.notify?.(
-        res.ok
-          ? "Claude already has that message, so it can't be cancelled"
-          : "Couldn't cancel the message",
-        "error",
-      );
-      return false;
+      opts.notify?.(res.ok ? say.refused : say.failed, "error");
+      return res.ok ? "refused" : "failed";
     } catch {
-      opts.notify?.("Couldn't cancel the message", "error");
-      return false;
+      opts.notify?.(say.failed, "error");
+      return "failed";
     }
   };
+
+  /**
+   * Cancels one queued prompt, swiped away on its ghost in the Text view. It
+   * never reached Claude, so it is gone.
+   */
+  const cancelQueued = async (text: string): Promise<boolean> =>
+    (await takeHeld(text, {
+      refused: "Claude already has that message, so it can't be cancelled",
+      failed: "Couldn't cancel the message",
+    })) === "taken";
+
+  /**
+   * The queued prompt open in this device's edit form (QueuedGhost). Only a
+   * `ready` edit is stored, so a reload brings the form back with what was
+   * typed, and a reload mid-request leaves no form for a message the server
+   * still holds.
+   */
+  const [editingQueued, setEditingQueuedSignal] = createSignal<OpenQueuedEdit | null>(
+    untrack(() => {
+      const saved = loadQueuedEdit(session());
+      return saved ? { ...saved, status: "ready" as const } : null;
+    }),
+  );
+  const setEditingQueued = (edit: OpenQueuedEdit | null): void => {
+    setEditingQueuedSignal(edit);
+    if (!edit || edit.status === "ready") {
+      saveQueuedEdit(untrack(session), edit && { text: edit.text, draft: edit.draft });
+    }
+  };
+
+  /**
+   * Takes a queued prompt out of the queue to edit it, as Up does in Claude
+   * Code, so Claude cannot take it mid-edit. The form opens at once, before
+   * the server answers, so the gesture that asked can focus it (iOS raises the
+   * keyboard only then). Once the server lets go, the form holds the only copy
+   * until it sends the words again or drops them. When it could not, the form
+   * closes, unless something was typed: that stays, to be sent as a new
+   * message or discarded.
+   */
+  const editQueuedStart = async (text: string): Promise<boolean> => {
+    // One form at a time: a second would overwrite the first, and with it the
+    // only copy of a message already off the queue.
+    if (untrack(editingQueued)) {
+      opts.notify?.("Finish the message you're editing first", "error");
+      return false;
+    }
+    setEditingQueued({ text, draft: text, status: "taking" });
+    const outcome = await takeHeld(text, {
+      refused: "Claude already has that message, so it can't be edited",
+      failed: "Couldn't edit the message",
+    });
+    const now = untrack(editingQueued);
+    // The form was closed some other way meanwhile, or is another prompt's.
+    if (!now || now.text !== text || now.status !== "taking") return outcome === "taken";
+    if (outcome === "taken") setEditingQueued({ ...now, status: "ready" });
+    else if (now.draft.trim() !== text.trim()) setEditingQueued({ ...now, status: outcome });
+    else setEditingQueued(null);
+    return outcome === "taken";
+  };
+
+  const setQueuedDraft = (draft: string): void => {
+    const edit = untrack(editingQueued);
+    if (edit) setEditingQueued({ ...edit, draft });
+  };
+
+  const endQueuedEdit = (): void => setEditingQueued(null);
 
   const answer = async (keys: string[]): Promise<boolean> => {
     try {
@@ -1493,6 +1568,10 @@ export function createSessionStore(
     interrupt,
     unqueue,
     cancelQueued,
+    editingQueued,
+    editQueuedStart,
+    setQueuedDraft,
+    endQueuedEdit,
     answer,
     answerText,
     answerOne,

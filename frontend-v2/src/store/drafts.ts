@@ -59,10 +59,40 @@ export interface Draft {
   at: number;
 }
 
+/**
+ * A queued message taken out of the queue to edit (QueuedGhost, Viktor
+ * 2026-10-10), as Up does in Claude Code. While the form is open the server no
+ * longer holds it, so this is its only copy, and a reload must bring the form
+ * back with what was typed.
+ *
+ *   tl:queued-edits:v1   name → {text, draft}
+ */
+export const QUEUED_EDITS_KEY = "tl:queued-edits:v1";
+
+export interface QueuedEdit {
+  /** The words as they were queued, which Close sends back. */
+  text: string;
+  /** What the form holds now. */
+  draft: string;
+}
+
+/**
+ * An edit as the form shows it. The form opens before the server answers, so
+ * the hold's own pointerup can focus it and iOS raises the keyboard.
+ *
+ *   taking    the request to take it off the queue is out; nothing sends yet
+ *   ready     it is off the queue, and only this form holds it (persisted)
+ *   refused   Claude had it already; only what was typed can still be sent
+ *   failed    the box did not answer, so whether it is still queued is unknown
+ */
+export interface OpenQueuedEdit extends QueuedEdit {
+  status: "taking" | "ready" | "refused" | "failed";
+}
+
 /** The whole document, or {} for absent/corrupt/foreign-shaped storage. */
-function readAll(): Record<string, unknown> {
+function readAll(key = DRAFTS_KEY): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(lsGet(DRAFTS_KEY) ?? "null");
+    const parsed: unknown = JSON.parse(lsGet(key) ?? "null");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
@@ -71,9 +101,27 @@ function readAll(): Record<string, unknown> {
   }
 }
 
-function writeAll(doc: Record<string, unknown>): void {
+function writeAll(doc: Record<string, unknown>, key = DRAFTS_KEY): void {
   // A refused write means the draft simply does not stick.
-  lsSet(DRAFTS_KEY, JSON.stringify(doc));
+  lsSet(key, JSON.stringify(doc));
+}
+
+/** The edit open for one session on this device, or null. */
+export function loadQueuedEdit(session: string): QueuedEdit | null {
+  const rec = readAll(QUEUED_EDITS_KEY)[session];
+  if (!rec || typeof rec !== "object") return null;
+  const { text, draft } = rec as Record<string, unknown>;
+  if (typeof text !== "string" || typeof draft !== "string") return null;
+  return { text, draft };
+}
+
+/** Persist one session's edit, or forget it on null. */
+export function saveQueuedEdit(session: string, edit: QueuedEdit | null): void {
+  const doc = readAll(QUEUED_EDITS_KEY);
+  if (edit) doc[session] = { text: edit.text, draft: edit.draft };
+  else if (session in doc) delete doc[session];
+  else return;
+  writeAll(doc, QUEUED_EDITS_KEY);
 }
 
 /**
@@ -155,7 +203,8 @@ export function clearDraft(session: string): void {
 }
 
 /**
- * Move a session's unsent draft onto the name a rename gave it (ADR-0022).
+ * Move a session's unsent draft, and any queued edit, onto the name a rename
+ * gave it (ADR-0022).
  *
  * A title lands seconds into the first turn, which is exactly when somebody is
  * likely to be part-way through typing the next message. The draft is keyed by
@@ -164,6 +213,11 @@ export function clearDraft(session: string): void {
  */
 export function carryDraft(from: string, to: string): void {
   if (from === to) return;
+  const edit = loadQueuedEdit(from);
+  if (edit) {
+    saveQueuedEdit(to, edit);
+    saveQueuedEdit(from, null);
+  }
   const draft = loadDraft(from);
   if (!draft) return;
   saveDraft(to, draft);
@@ -171,7 +225,7 @@ export function carryDraft(from: string, to: string): void {
 }
 
 /**
- * Drop drafts for sessions that no longer exist.
+ * Drop drafts and queued edits for sessions that no longer exist.
  *
  * An EMPTY live list is treated as "no information", not "everything died" — a
  * poll in flight or a briefly unreachable tmux would otherwise wipe every draft
@@ -179,14 +233,16 @@ export function carryDraft(from: string, to: string): void {
  */
 export function pruneDrafts(live: readonly string[]): void {
   if (live.length === 0) return;
-  const doc = readAll();
   const keep = new Set(live);
-  let changed = false;
-  for (const name of Object.keys(doc)) {
-    if (!keep.has(name)) {
-      delete doc[name];
-      changed = true;
+  for (const key of [DRAFTS_KEY, QUEUED_EDITS_KEY]) {
+    const doc = readAll(key);
+    let changed = false;
+    for (const name of Object.keys(doc)) {
+      if (!keep.has(name)) {
+        delete doc[name];
+        changed = true;
+      }
     }
+    if (changed) writeAll(doc, key);
   }
-  if (changed) writeAll(doc);
 }

@@ -1957,6 +1957,10 @@ export const SessionView: Component<{
             onStop={stop}
             onUnqueue={store.unqueue}
             onCancelQueued={store.cancelQueued}
+            onEditQueuedStart={store.editQueuedStart}
+            queuedEdit={store.editingQueued}
+            onQueuedEditDraft={store.setQueuedDraft}
+            onQueuedEditEnd={store.endQueuedEdit}
             onResolve={resolve}
             sendToTerminal={coarse() ? sendBytesToPty : undefined}
             onOpenPreview={(path) => void preview.open(path)}

@@ -2135,7 +2135,7 @@ label.tl-set-row-label {
   opacity: 0.35;
   pointer-events: none;
 }
-/* The stack holds the bubble and the offer under it. It takes the bubble's
+/* The stack holds the bubble and the edit form under it. It takes the bubble's
    84% cap, since a percentage on the bubble would now measure the stack. */
 .tl-ghost-stack {
   display: flex;
@@ -2148,18 +2148,68 @@ label.tl-set-row-label {
 .tl-ghost-stack > .tl-bubble-user {
   max-width: 100%;
 }
-/* A long press must open the offer, not select the text or raise the
+/* A long press must open the edit form, not select the text or raise the
    browser's menu. iOS picks the long-press owner before any script runs. */
 .tl-row-ghost[data-own-swipe] {
   -webkit-touch-callout: none;
   user-select: none;
 }
-.tl-ghost-offer {
+/* The form a queued prompt taken out to edit is held in, last in the queue
+   (QueuedEditRow, Viktor 2026-10-10). The stack widens to its 84% cap so a
+   short message still gets a box worth typing in, and to the whole row on a
+   phone. The box keeps text selection and its long-press menu even inside a
+   row that turned them off for the hold, because that is how a phone pastes. */
+.tl-row-ghost[data-editing] .tl-ghost-stack {
+  flex: 1 1 auto;
+  align-items: stretch;
+}
+@media (max-width: 480px) {
+  .tl-row-ghost[data-editing] .tl-ghost-stack {
+    max-width: 100%;
+  }
+}
+.tl-ghost-edit {
   display: flex;
+  flex-direction: column;
   gap: 8px;
 }
-.tl-ghost-offer button {
-  padding: 6px 12px;
+.tl-ghost-edit-field {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  max-height: 40vh;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  resize: none;
+  overflow-y: auto;
+  -webkit-touch-callout: default;
+  user-select: text;
+}
+.tl-ghost-edit-field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* 16px on any finger, or iOS Safari zooms the page when the box takes focus
+   (as .tl-qcard-owninput, 2026-09-26). */
+@media (pointer: coarse) {
+  .tl-ghost-edit-field {
+    font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
+  }
+}
+.tl-ghost-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tl-ghost-edit-actions button {
+  padding: 6px 14px;
   border-radius: 999px;
   border: 1px solid var(--border-strong);
   background: var(--bg-card);
@@ -2168,9 +2218,36 @@ label.tl-set-row-label {
   font-size: calc(13px * var(--tl-text-scale, 1));
   cursor: pointer;
 }
-.tl-ghost-offer .tl-ghost-cancel-confirm {
+/* Discard sits apart on the left, in the cancel's red. */
+.tl-ghost-edit-actions .tl-ghost-discard {
+  margin-right: auto;
   border-color: var(--danger);
   color: var(--danger);
+}
+.tl-ghost-edit-actions .tl-ghost-save {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+/* While the server is still letting go of the prompt, nothing sends yet. */
+.tl-ghost-edit-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Why only "Send as a new message" is left: Claude had it already, or the
+   box did not answer. */
+.tl-ghost-edit-note {
+  margin: 0;
+  text-align: right;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--danger);
+}
+.tl-ghost-edit-actions .tl-ghost-save:disabled {
+  opacity: 1;
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: default;
 }
 /* The mouse's way: a × beside the bubble on hover or keyboard focus. A touch
    screen swipes or holds instead, so it never shows there. */
@@ -2193,10 +2270,35 @@ label.tl-set-row-label {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
 }
+/* The pencil beside the ×, which takes the prompt out to edit (2026-10-10).
+   Same reveal as the ×; a touch screen holds instead. */
+.tl-ghost-pencil {
+  display: none;
+  flex: none;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tl-ghost-pencil:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
 @media (hover: hover) and (pointer: fine) {
   .tl-row-ghost:hover .tl-ghost-x,
   .tl-ghost-x:focus-visible {
     display: block;
+  }
+  .tl-row-ghost:hover .tl-ghost-pencil,
+  .tl-ghost-pencil:focus-visible {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .tl-row-ghost[data-own-swipe] {
     -webkit-touch-callout: default;

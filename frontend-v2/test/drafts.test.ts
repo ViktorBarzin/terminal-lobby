@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   DRAFTS_KEY,
+  QUEUED_EDITS_KEY,
+  carryDraft,
   loadDraft,
+  loadQueuedEdit,
   pruneDrafts,
   saveDraft,
+  saveQueuedEdit,
   type Draft,
 } from "../src/store/drafts";
 
@@ -134,5 +138,37 @@ describe("pruneDrafts", () => {
   it("is a no-op on an empty store", () => {
     pruneDrafts(["alive"]);
     expect(localStorage.getItem(DRAFTS_KEY)).toBeNull();
+  });
+});
+
+/**
+ * A queued message being edited on this device (QueuedGhost, Viktor
+ * 2026-10-10). It is off the server's queue while the form is open, so this
+ * entry is its only copy, and it rides a reload, a rename and a prune the same
+ * way a composer draft does.
+ */
+describe("queued edits", () => {
+  it("round-trips one session's edit and forgets it on null", () => {
+    saveQueuedEdit("qa", { text: "first", draft: "first, better" });
+    expect(loadQueuedEdit("qa")).toEqual({ text: "first", draft: "first, better" });
+    expect(loadQueuedEdit("other")).toBeNull();
+    saveQueuedEdit("qa", null);
+    expect(loadQueuedEdit("qa")).toBeNull();
+  });
+
+  it("drops a malformed entry", () => {
+    localStorage.setItem(QUEUED_EDITS_KEY, JSON.stringify({ qa: { text: 3, draft: "x" } }));
+    expect(loadQueuedEdit("qa")).toBeNull();
+    localStorage.setItem(QUEUED_EDITS_KEY, "{not json");
+    expect(loadQueuedEdit("qa")).toBeNull();
+  });
+
+  it("follows a rename and is pruned with the session", () => {
+    saveQueuedEdit("old", { text: "first", draft: "first" });
+    carryDraft("old", "new");
+    expect(loadQueuedEdit("old")).toBeNull();
+    expect(loadQueuedEdit("new")).toEqual({ text: "first", draft: "first" });
+    pruneDrafts(["alive"]);
+    expect(loadQueuedEdit("new")).toBeNull();
   });
 });

@@ -856,7 +856,10 @@ of the field and the round button; focused on the phone, and always on a
 desktop, a box with the text on top and "+", the **Model sheet**'s button and
 the round button beneath. Bypass and No ask turn its border the danger colour. A
 watching device's pill reads "Watching" with Take control. The prompts waiting
-behind the turn are drawn as ghost bubbles at the end of the conversation. On a
+behind the turn are drawn as ghost bubbles at the end of the conversation, until
+Claude reads them at its next tool boundary (ADR-0042). A ghost is discarded by a
+sideways swipe or its ×, and press and hold (or its pencil, with a mouse) takes it
+out of the queue into an edit form. On a
 desktop, Up in the empty field takes them all back into the field to edit,
 oldest first with a blank line between them, as Claude Code's own box does; when
 nothing is waiting, Up recalls the last prompt sent.
@@ -875,8 +878,9 @@ C-c, and a second one at an idle prompt exits Claude. Enter in an empty field
 does nothing. A watching device can neither send nor stop. Stop with queued
 messages puts them back in the field as a draft and sends nothing: the server
 takes them back before the interrupt, which would otherwise run them as the
-next turn. session-events holds a prompt sent mid-turn until the turn ends
-(`session-events/held.go`), because nothing takes one back once Claude has it.
+next turn. session-events holds a prompt sent mid-turn (`session-events/held.go`),
+because nothing takes one back once Claude has it, until Claude reads it at the
+turn's next tool boundary or the turn ends (ADR-0042).
 _Avoid_: send button, stop button
 
 **Status line**:
@@ -1099,7 +1103,9 @@ drill-in, the composer sends to that agent instead of the main thread, and the
 message waits as a dimmed bubble in the agent's transcript until the agent
 reads it, at its next tool boundary, or when an idle teammate next runs.
 Finished agents and workflow members are read-only. Distinct from a
-**First prompt** or any prompt, which only ever goes to the main thread.
+**First prompt** or any prompt, which only ever goes to the main thread. A prompt
+sent to the main thread mid-turn reaches Claude at the same kind of boundary
+(ADR-0042), through the mod's `tool.call` hook rather than `$.session.send`.
 _Avoid_: chat with the agent, inject, interrupt (it neither stops the agent's
 current step nor reaches it before that step ends)
 

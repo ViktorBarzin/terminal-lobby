@@ -67,7 +67,8 @@ import { browsingRuns, cardAnchors, type BrowsingRun } from "./browser.logic";
 import { StreamBody, useRowBody } from "./stream-body";
 import { NO_STREAM, streamBody, type StreamState } from "../store/stream";
 import { BrowserCard, type BrowserCardHost } from "./BrowserCard";
-import { QueuedGhost } from "./QueuedGhost";
+import { QueuedEditRow, QueuedGhost, type QueuedEditActions } from "./QueuedGhost";
+import type { OpenQueuedEdit } from "../store/drafts";
 
 const USER_COLLAPSE_CHARS = 600;
 
@@ -150,8 +151,10 @@ const UserRowView: Component<{
  * finishes this turn": the Queued tag says it, as the prototype's ghost does.
  * `data-queued` is what the stylesheet draws the outline from.
  *
- * Each can be cancelled by a swipe, a press and hold, or a × with a mouse
- * (QueuedGhost, 2026-10-09).
+ * Each can be cancelled by a swipe or a × with a mouse (QueuedGhost,
+ * 2026-10-09), or taken out of the queue to edit by a press and hold or a
+ * pencil (2026-10-10). The prompt being edited is no longer queued, so its
+ * form (QueuedEditRow) comes from the store's edit and goes last.
  *
  * Not keyed rows. They are not the transcript's: they come from the queue's own
  * operations (timeline.logic `queuedPrompts`), leave the moment Claude takes
@@ -165,40 +168,76 @@ const GhostRowsView: Component<{
   onOpenPreview?: (path: string) => void;
   /** Cancels one queued prompt (QueuedGhost). */
   onCancel?: (text: string) => Promise<boolean>;
-}> = (props) => (
-  <>
-    <For each={props.queued.slice(0, MAX_QUEUED_SHOWN)}>
-      {(text, i) => (
-        <QueuedGhost
-          text={text}
-          sending={props.sending?.has(i())}
-          onCancel={props.onCancel}
-          lead={
-            <Show when={props.sending?.has(i())}>
-              <SendingSpinner />
-            </Show>
-          }
-        >
-          <div class="tl-bubble-user tl-bubble-ghost" title={text}>
-            <div class="tl-ghost-body">
-              <span class="tl-ghost-tag">{props.sending?.has(i()) ? "Sending" : "Queued"}</span>
-              <pre class="tl-user-text tl-ghost-text">
-                <MessageSegments
-                  segments={segmentPrompt(text)}
-                  me={props.me ?? ""}
-                  onOpen={props.onOpenPreview}
-                />
-              </pre>
+  /** Takes one queued prompt out of the queue to edit (QueuedGhost). */
+  onEditStart?: (text: string) => Promise<boolean>;
+  /** The prompt this device has out in the edit form, and what the form does. */
+  edit?: OpenQueuedEdit | null;
+  editActions?: QueuedEditActions;
+}> = (props) => {
+  // The edit form's box, focused from the ghost's own gesture (QueuedGhost
+  // `focusEdit`). Blurred first when the form's mount already took the focus:
+  // a second focus() on the focused element does nothing, and iOS raises the
+  // keyboard only for one made inside the gesture.
+  let editField: HTMLTextAreaElement | undefined;
+  const focusEdit = () => {
+    if (!editField?.isConnected) return;
+    if (document.activeElement === editField) editField.blur();
+    editField.focus();
+  };
+  return (
+    <>
+      <For each={props.queued.slice(0, MAX_QUEUED_SHOWN)}>
+        {(text, i) => (
+          <QueuedGhost
+            text={text}
+            sending={props.sending?.has(i())}
+            onCancel={props.onCancel}
+            onEditStart={props.onEditStart}
+            focusEdit={focusEdit}
+            lead={
+              <Show when={props.sending?.has(i())}>
+                <SendingSpinner />
+              </Show>
+            }
+          >
+            <div class="tl-bubble-user tl-bubble-ghost" title={text}>
+              <div class="tl-ghost-body">
+                <span class="tl-ghost-tag">{props.sending?.has(i()) ? "Sending" : "Queued"}</span>
+                <pre class="tl-user-text tl-ghost-text">
+                  <MessageSegments
+                    segments={segmentPrompt(text)}
+                    me={props.me ?? ""}
+                    onOpen={props.onOpenPreview}
+                  />
+                </pre>
+              </div>
             </div>
-          </div>
-        </QueuedGhost>
-      )}
-    </For>
-    <Show when={props.queued.length > MAX_QUEUED_SHOWN}>
-      <div class="tl-row tl-ghost-more">+{props.queued.length - MAX_QUEUED_SHOWN} more waiting</div>
-    </Show>
-  </>
-);
+          </QueuedGhost>
+        )}
+      </For>
+      <Show when={props.queued.length > MAX_QUEUED_SHOWN}>
+        <div class="tl-row tl-ghost-more">
+          +{props.queued.length - MAX_QUEUED_SHOWN} more waiting
+        </div>
+      </Show>
+      <Show when={props.editActions}>
+        {(actions) => (
+          <Show when={props.edit}>
+            {(edit) => (
+              <QueuedEditRow
+                edit={edit()}
+                actions={actions()}
+                fieldRef={(el) => {
+                  editField = el;
+                }}
+              />
+            )}
+          </Show>
+        )}
+      </Show>
+    </>
+  );
+};
 
 const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => {
   // The stored reply, or the words so far while Claude is still writing it.
@@ -443,6 +482,14 @@ export const MessagesTimeline: Component<{
   /** Cancels one queued prompt from its ghost; resolves false when it could
    *  not. Absent on a watching device, and the ghosts then offer nothing. */
   onCancelQueued?: (text: string) => Promise<boolean>;
+  /** Takes one queued prompt out of the queue into the edit form; resolves
+   *  false when it could not. Absent on a watching device, like the cancel. */
+  onEditQueuedStart?: (text: string) => Promise<boolean>;
+  /** The prompt this device has out of the queue in its edit form, drawn
+   *  after the ghosts (QueuedEditRow). */
+  queuedEdit?: OpenQueuedEdit | null;
+  /** What that form does with it. The form shows only when this is given. */
+  queuedEditActions?: QueuedEditActions;
   /** The ExitPlanMode call whose plan the docked plan card is showing
    *  (decidePlanDock). Its row shrinks to one line meanwhile. */
   planDocked?: string | null;
@@ -1559,6 +1606,9 @@ export const MessagesTimeline: Component<{
           me={props.me}
           onOpenPreview={props.onOpenPreview}
           onCancel={props.onCancelQueued}
+          onEditStart={props.onEditQueuedStart}
+          edit={props.queuedEdit}
+          editActions={props.queuedEditActions}
         />
       </Show>
       <span class="tl-sr-only tl-timeline-live" aria-live="polite">

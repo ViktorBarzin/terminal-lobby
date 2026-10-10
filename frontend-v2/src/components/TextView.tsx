@@ -70,6 +70,7 @@ import {
 } from "./plan.logic";
 import type { BrowserCardHost } from "./BrowserCard";
 import { MessagesTimeline } from "./MessagesTimeline";
+import type { QueuedEditActions } from "./QueuedGhost";
 import { NO_STREAM, sameShape, withStreaming, type StreamState } from "../store/stream";
 import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork, ClaudeState, SessionTool } from "../types/lobby";
@@ -86,7 +87,7 @@ import { installTextZoom, scaleFor, setTextSize, textSize } from "../mobile/text
 import { lsGet, lsSet } from "../lib/storage";
 import { track } from "../telemetry/track";
 import { Composer, type ComposerSinks } from "./Composer";
-import type { DraftAttachment } from "../store/drafts";
+import type { DraftAttachment, OpenQueuedEdit } from "../store/drafts";
 import { rememberSent, sentPictures } from "../store/sentPictures";
 import { withSentPictures } from "../lib/attachments";
 import type { StopResult } from "../store/session";
@@ -401,6 +402,16 @@ export const TextView: Component<{
   /** Cancel one queued prompt from its ghost bubble (QueuedGhost). Resolves
    *  false when it could not. */
   onCancelQueued?: (text: string) => Promise<boolean>;
+  /** Take one queued prompt out of the queue into the edit form, from its
+   *  ghost bubble (QueuedGhost). Resolves false when it could not. Not
+   *  PromptField's `onEditQueued`, which is Up taking the whole queue back. */
+  onEditQueuedStart?: (text: string) => Promise<boolean>;
+  /** The prompt this device has out in the edit form, or null. */
+  queuedEdit?: Accessor<OpenQueuedEdit | null>;
+  /** Keeps what the edit form holds, so a reload brings it back. */
+  onQueuedEditDraft?: (draft: string) => void;
+  /** Closes the edit form, once what it sent went in (or on Discard). */
+  onQueuedEditEnd?: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
   sendToTerminal?: (bytes: string) => void;
@@ -1495,6 +1506,27 @@ export const TextView: Component<{
     if (ok) landHandedBack("");
     return ok;
   };
+  /**
+   * The edit form for a queued prompt taken out of the queue (QueuedGhost).
+   * Save and Close send through `sendNow`, the composer's own send without its
+   * field-only steps, so the server holds the words while the turn runs and
+   * Claude gets them now once it has ended. The edit ends only when the send
+   * went in; a refused one leaves the form up with what was typed.
+   */
+  const sendFromEdit = async (text: string): Promise<boolean> => {
+    const ok = followed(await sendNow(text));
+    if (ok) props.onQueuedEditEnd?.();
+    return ok;
+  };
+  const queuedEditActions: QueuedEditActions = {
+    onInput: (draft) => props.onQueuedEditDraft?.(draft),
+    onSave: sendFromEdit,
+    onClose: () => {
+      const edit = props.queuedEdit?.();
+      return edit ? sendFromEdit(edit.text) : Promise.resolve(true);
+    },
+    onDiscard: () => props.onQueuedEditEnd?.(),
+  };
   const sendNow = async (text: string): Promise<boolean> => {
     if (refuseWatching()) return false;
     const stopping = handingBack;
@@ -2456,6 +2488,9 @@ export const TextView: Component<{
           queued={ghosts()}
           queuedSending={ghostsSending()}
           onCancelQueued={props.inertReason ? undefined : props.onCancelQueued}
+          onEditQueuedStart={props.inertReason ? undefined : props.onEditQueuedStart}
+          queuedEdit={props.queuedEdit?.() ?? null}
+          queuedEditActions={props.queuedEdit ? queuedEditActions : undefined}
           planDocked={planDocked()?.call ?? null}
           cardDocked={cardUp()}
           planAnswer={(() => {
