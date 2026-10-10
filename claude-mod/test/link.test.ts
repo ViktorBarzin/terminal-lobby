@@ -42,6 +42,7 @@ class FakeServer {
     hello: { status: 200, body: { token: 'tok1', history: false } },
     events: { status: 204, body: null },
     poll: { status: 200, body: { commands: [] } },
+    take: { status: 200, body: { texts: [] } },
   };
   holdPoll = true;
   pollWaiters: ((r: Reply) => void)[] = [];
@@ -49,6 +50,7 @@ class FakeServer {
   route(path: string) {
     if (path.startsWith('/mod/v1/hello')) return 'hello';
     if (path.startsWith('/mod/v1/events')) return 'events';
+    if (path.startsWith('/mod/v1/take-held')) return 'take';
     return 'poll';
   }
 
@@ -602,4 +604,32 @@ test('forgetting the conversation drops the queued acks, summary and failures to
   await clock.advance(2000);
   const events = (server.of('events')[0]?.body as { events: { type: string }[] }).events;
   assert.deepEqual(events.map((e) => e.type), ['row']);
+});
+
+// The held prompts for a tool boundary (session-events/steermain.go).
+test('takeHeld asks with the token and hands back the texts', async () => {
+  const { clock, server, link } = setup();
+  server.replies.take = [{ status: 200, body: { texts: ['one', '  ', 'two', 3] } }];
+  assert.deepEqual(await link.takeHeld(), [], 'before a hello there is no token to ask with');
+  assert.equal(server.of('take').length, 0);
+  link.start();
+  await clock.advance(100);
+  assert.deepEqual(await link.takeHeld(), ['one', 'two']);
+  assert.deepEqual(server.of('take')[0]?.body, { token: 'tok1' });
+});
+
+// A session-events from before the route answers 404 to every take, so the
+// mod stops asking until a new hello: the server may have been upgraded.
+test('takeHeld stops asking a server without the route until the next hello', async () => {
+  const { clock, server, link } = setup();
+  server.replies.take = [{ status: 404, body: null }];
+  link.start();
+  await clock.advance(100);
+  assert.deepEqual(await link.takeHeld(), []);
+  assert.deepEqual(await link.takeHeld(), []);
+  assert.equal(server.of('take').length, 1);
+  link.rehello();
+  await clock.advance(1000);
+  await link.takeHeld();
+  assert.equal(server.of('take').length, 2);
 });

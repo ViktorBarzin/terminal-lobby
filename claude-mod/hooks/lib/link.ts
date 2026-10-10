@@ -58,6 +58,9 @@ export class Link {
   #retryAt = 0;
   #tokenWaiters: (() => void)[] = [];
   #idleWaiters: (() => void)[] = [];
+  // The server answered 404 to a take since the last hello: it predates the
+  // route.
+  #noTake = false;
 
   constructor(deps: LinkDeps) {
     this.#deps = deps;
@@ -95,6 +98,21 @@ export class Link {
     this.#helloAsks++;
     this.#token = null;
     if (this.#started) this.#schedule(0);
+  }
+
+  // The prompts session-events holds behind the running turn, handed over for
+  // the tool boundary the main loop is at (session-events/steermain.go): none
+  // before a hello, and none from a server without the route, which is asked
+  // again after the next hello since a release may have brought it.
+  async takeHeld(): Promise<string[]> {
+    const token = this.#token;
+    if (token === null || this.#stopped || this.#noTake) return [];
+    const reply = await this.#deps.post('/mod/v1/take-held', { token });
+    if (reply.status === 404 && this.#token === token) this.#noTake = true;
+    if (reply.status !== 200) return [];
+    const texts = (reply.body as { texts?: unknown } | null)?.texts;
+    if (!Array.isArray(texts)) return [];
+    return texts.filter((t): t is string => typeof t === 'string' && t.trim() !== '');
   }
 
   // Resolves once everything queued has been posted, or after `ms`.
@@ -201,6 +219,7 @@ export class Link {
     if (covered) this.#queue.drop(covered, KEPT_BY_SNAPSHOT);
     if (resent.length > 0) this.#queue.prepend(...resent);
     this.#token = body.token;
+    this.#noTake = false;
     this.#wakeToken();
   }
 

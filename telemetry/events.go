@@ -297,9 +297,13 @@ var knownEvents = map[string]bool{
 	// Prompts held behind a running turn handed back to the composer
 	// (session-events/held.go): tl.count prompts, tl.via = edit (the Text
 	// view's Up) or stop. Their text is never recorded.
-	"claude.queue_taken":   true,
-	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
-	"claude.state_changed": true, // running/awaiting/done transition (tl.to)
+	"claude.queue_taken": true,
+	// Held prompts delivered into the running turn at a tool boundary
+	// (session-events/steermain.go): tl.count prompts, confirmed by the row
+	// Claude stored. Their text is never recorded.
+	"claude.prompt_steered": true,
+	"claude.answered":       true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
+	"claude.state_changed":  true, // running/awaiting/done transition (tl.to)
 	// A PERSON set the state by hand, correcting a dot the hooks got wrong
 	// (tl.from, tl.to). Its own name rather than claude.state_changed, which
 	// is the hook script's: one says what the conversation did, this one says

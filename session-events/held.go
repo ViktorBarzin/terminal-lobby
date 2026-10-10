@@ -11,6 +11,11 @@ package main
 // under a lock, it works with every mod already running, and the turn's end
 // sends what is left.
 //
+// A held prompt can also reach Claude before the turn ends: the mod takes
+// what is held at the turn's next tool boundary and delivers it into the
+// running turn (steermain.go). Until Claude stores it the prompt is held
+// here as steering, and the file keeps it.
+//
 // Held prompts are written to a file per conversation as well, since this
 // process restarts with every release and a turn can outlast that. Not a tmux
 // option, as most of this service's state is: tmux refuses a command longer
@@ -122,6 +127,13 @@ func (c *modConn) knownLocked() bool {
 	return c.stamps && c.ls != nil && !c.historyOwed && !c.fullOnState
 }
 
+// pendingLocked is every prompt waiting on Claude, oldest first: those the
+// mod took and Claude has not stored, then those held. The file keeps this
+// set, so a restart holds again what nothing confirmed. Called with c.mu held.
+func (c *modConn) pendingLocked() []string {
+	return append(slices.Clone(c.steering), c.held...)
+}
+
 // hold keeps a prompt behind the running main turn and shows it queued. False
 // when no main turn is known to run, or for a slash command, which runs as one
 // and leaves no prompt row to take it off the queue: the caller sends it now.
@@ -139,26 +151,33 @@ func (c *modConn) hold(text string) bool {
 		return false
 	}
 	c.held = append(c.held, text)
-	held, ls, user, sid := slices.Clone(c.held), c.ls, c.user, c.sid
+	pending, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, held)
+	c.hub.files.save(user, sid, pending)
 	ls.fs.Queue(text, c.hub.now().UnixMilli())
 	return true
 }
 
 // takeHeld hands back every held prompt, oldest first, and takes them off the
-// stream's queue.
-func (c *modConn) takeHeld() []string {
+// stream's queue. withSteering takes those the mod took and Claude has not
+// stored as well: a Stop's abort can land before their context does, and the
+// turn's end would then send them after the person stopped it.
+func (c *modConn) takeHeld(withSteering bool) []string {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
 	out, ls, user, sid := c.held, c.ls, c.user, c.sid
+	if withSteering {
+		out = c.pendingLocked()
+		c.steering = nil
+	}
 	c.held = nil
+	pending := c.pendingLocked()
 	c.mu.Unlock()
 	if len(out) == 0 {
 		return []string{}
 	}
-	c.hub.files.save(user, sid, nil)
+	c.hub.files.save(user, sid, pending)
 	if ls != nil {
 		ls.fs.Unqueue(out, c.hub.now().UnixMilli())
 	}
@@ -180,9 +199,9 @@ func (c *modConn) cancelHeld(text string) (string, bool) {
 	}
 	gone := c.held[at]
 	c.held = slices.Delete(slices.Clone(c.held), at, at+1)
-	held, ls, user, sid := slices.Clone(c.held), c.ls, c.user, c.sid
+	pending, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, held)
+	c.hub.files.save(user, sid, pending)
 	if ls != nil {
 		ls.fs.Unqueue([]string{gone}, c.hub.now().UnixMilli())
 	}
@@ -199,9 +218,9 @@ func (c *modConn) putBack(texts []string) {
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
 	c.held = append(slices.Clone(texts), c.held...)
-	held, ls, user, sid := slices.Clone(c.held), c.ls, c.user, c.sid
+	pending, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, held)
+	c.hub.files.save(user, sid, pending)
 	if ls != nil {
 		at := c.hub.now().UnixMilli()
 		for _, t := range texts {
@@ -215,7 +234,7 @@ func (c *modConn) putBack(texts []string) {
 // the history that rebuilt the stream has been folded.
 func (c *modConn) showHeld() {
 	c.mu.Lock()
-	held, ls := slices.Clone(c.held), c.ls
+	held, ls := c.pendingLocked(), c.ls
 	c.mu.Unlock()
 	if ls == nil {
 		return
@@ -229,14 +248,19 @@ func (c *modConn) showHeld() {
 // releaseHeld sends what is held once no main turn runs. Called from apply,
 // under applyMu. The sends wait for acks that arrive through apply, so they go
 // on their own goroutine.
+//
+// What the mod took and no row confirmed goes too, first: its request timed
+// out, or the call it rode on ended before its result was stored. Claude
+// stores the row before the turn ends, and apply folds the mod's events in
+// order, so by the turn's end a delivered prompt has been confirmed.
 func (c *modConn) releaseHeld() {
 	c.mu.Lock()
-	if len(c.held) == 0 || !c.knownLocked() || c.st.turnOpen {
+	if (len(c.held) == 0 && len(c.steering) == 0) || !c.knownLocked() || c.st.turnOpen {
 		c.mu.Unlock()
 		return
 	}
-	out, ls, user, sid := c.held, c.ls, c.user, c.sid
-	c.held = nil
+	out, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
+	c.held, c.steering = nil, nil
 	c.mu.Unlock()
 	c.hub.files.save(user, sid, nil)
 	go c.submitHeld(out, ls)
@@ -287,8 +311,8 @@ func quoteStart(text string) string {
 // in its pane. Called with h.mu held, from dropLocked.
 func (h *modHub) carryLocked(c *modConn) {
 	c.mu.Lock()
-	held, pane, user, sid := c.held, c.pane, c.user, c.sid
-	c.held = nil
+	held, pane, user, sid := c.pendingLocked(), c.pane, c.user, c.sid
+	c.held, c.steering = nil, nil
 	c.mu.Unlock()
 	if len(held) == 0 || pane == "" {
 		return
@@ -328,7 +352,7 @@ func handleUnqueue(rg *registry) http.HandlerFunc {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		out := []string{}
 		if c := rg.mods.conn(osUser, session); c != nil {
-			out = c.takeHeld()
+			out = c.takeHeld(false)
 		}
 		if len(out) > 0 {
 			events.Emit("claude.queue_taken", osUser, telemetry.Attrs{

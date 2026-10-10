@@ -387,6 +387,8 @@ func main() {
 	root.HandleFunc("POST /mod/v1/hello", localhostOnly(rg.mods.handleHello()))
 	root.HandleFunc("POST /mod/v1/events", localhostOnly(rg.mods.handleEvents()))
 	root.HandleFunc("GET /mod/v1/poll", localhostOnly(rg.mods.handlePoll()))
+	// The held prompts, for the mod to deliver at a tool boundary (steermain.go).
+	root.HandleFunc("POST /mod/v1/take-held", localhostOnly(rg.mods.handleTakeHeld()))
 	// agent-api reads and answers a session's dialogs here, through its mod
 	// (internal.go, ADR-0037). Gated to this service's own account on loopback.
 	internal := internalGate{users: mapUsers(*mapPath), self: peerIsSelf}

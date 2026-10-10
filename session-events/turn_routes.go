@@ -460,7 +460,7 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 			// abort that fails puts them back.
 			var took []string
 			if len(body.RestoreQueue) > 0 {
-				took = c.takeHeld()
+				took = c.takeHeld(true)
 			}
 			ack, err := c.send(r.Context(), modCommand{Op: "abort"})
 			if err != nil || !ack.OK {

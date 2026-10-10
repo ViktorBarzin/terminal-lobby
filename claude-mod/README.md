@@ -27,6 +27,11 @@ What it does, in short:
   answer an AskUserQuestion, approve (with words for Claude) or reject a plan
   or a permission, message a subagent. A prompt that fails after its ack is
   reported as `command_failed`.
+- At each main-loop tool boundary, asks session-events for the prompts it
+  holds behind the running turn (`POST /mod/v1/take-held`) and attaches them to
+  the tool's result as context, so a message sent from the Text view mid-turn
+  reaches Claude before its next step, as a typed one does
+  ([ADR-0042](../docs/adr/0042-a-queued-message-steers-the-running-turn.md)).
 - Holds plan approvals and permission prompts in `tool.check` and draws its own
   Approve / Reject dialog, raced against the web answer. A web answer takes the
   terminal dialog off the screen.
@@ -53,6 +58,7 @@ What it does, in short:
 | `hooks/lib/pending.ts` | dialogs waiting on a web answer |
 | `hooks/lib/stamp.ts` | whether session-events has been told where the transcript is |
 | `hooks/lib/summary.ts` | the title request for a lobby-started conversation, and reading the reply |
+| `hooks/lib/steermain.ts` | delivering held prompts into the running turn at a tool boundary, and the lead line session-events finds them by |
 | `hooks/lib/command.ts` | whether a lobby prompt is a slash command to run rather than text to submit, and how text that starts with a path gets past the engine's slash check |
 | `test/*.test.ts` | unit tests for `hooks/lib`; `test/wire.test.ts` checks the events against `testdata/mod-wire/` |
 

@@ -101,6 +101,9 @@ func (n *Normalizer) absorbed(rec Record) []Event {
 	if n.agent {
 		return n.steered(rec)
 	}
+	if texts := transcriptMainSteerTexts(rec); len(texts) > 0 {
+		return n.steeredMain(texts, parseAt(rec.Timestamp))
+	}
 	text, pics, ok := absorbedPrompt(rec)
 	if !ok {
 		return nil

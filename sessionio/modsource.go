@@ -378,6 +378,18 @@ func (f *FileSource) feedRow(ev ModEvent) {
 			return
 		}
 	}
+	// Messages the lobby delivered into the running turn draw as prompts.
+	// Their queued ghosts are session-events' to take away: it knows which
+	// held prompts went out, in full, where the row's copy may be capped.
+	if texts := MainSteerTexts(ev); len(texts) > 0 {
+		f.normMu.Lock()
+		evs := f.norm.steeredMain(texts, ev.T)
+		f.normMu.Unlock()
+		for _, e := range evs {
+			f.appendLive(e)
+		}
+		return
+	}
 	rec := Record{
 		Type:        RecordType(ev.Message.Type),
 		IsMeta:      ev.Message.IsMeta,

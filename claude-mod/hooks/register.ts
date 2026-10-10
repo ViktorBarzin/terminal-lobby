@@ -10,6 +10,7 @@ import { SeenCommands } from './lib/seen.ts';
 import { TranscriptStamp } from './lib/stamp.ts';
 import { SummaryOnce, summaryFrom, summaryRequest } from './lib/summary.ts';
 import { steer } from './lib/steer.ts';
+import { steerInto } from './lib/steermain.ts';
 import { Level } from './lib/level.ts';
 import {
   type CheckResult, type Command, type DialogDeps, Holds, OwnDialogs, holdDecision, ownDialog, planOf, racePlan, raceQuestion,
@@ -420,12 +421,19 @@ export const register: Register = (on) => {
       if (isOwnDialog(questions)) return next(e);
     }
     if (level.toolStarted(e.tool_use_id, e.agentId)) sendLevel();
+    // What the lobby holds behind the main turn rides on this call's result
+    // (lib/steermain.ts), on every path below.
+    const steerMain = <R extends object>(r: R) => steerInto(
+      { take: () => link?.takeHeld() ?? Promise.resolve([]), wait: (ms) => $.clock.sleep(ms) },
+      { toolId: e.tool_use_id, agentId: e.agentId, aborted: next.signal.aborted },
+      r,
+    );
     try {
       if (e.tool === 'AskUserQuestion' && e.agentId === undefined && dialogDeps) {
         try {
           const r = await raceQuestion(dialogDeps, { tool_use_id: e.tool_use_id, questions: e.questions }, () => next(e));
           send(shapeResult(e, r, now()));
-          return r;
+          return await steerMain(r);
         } catch (err) {
           send(shapeResult(e, { isError: true, text: errorText(err) }, now()));
           throw err;
@@ -456,16 +464,16 @@ export const register: Register = (on) => {
         const words = planFeedback.get(e.tool_use_id);
         planFeedback.delete(e.tool_use_id);
         if (words !== undefined && r.deny === undefined) {
-          return { ...r, context: [...(r.context ?? []), planApprovalContext(words)] };
+          return await steerMain({ ...r, context: [...(r.context ?? []), planApprovalContext(words)] });
         }
-        return r;
+        return await steerMain(r);
       }
       const r = await next(e);
       send(shapeResult(e, r, now()));
       // A background agent is listed as soon as its Agent call returns.
       if (e.tool === 'Agent') sendLevel();
       if (e.tool === 'Workflow' && level.workflowLaunched(r.result, now())) sendLevel();
-      return r;
+      return await steerMain(r);
     } finally {
       if (level.toolEnded(e.tool_use_id)) sendLevel();
     }

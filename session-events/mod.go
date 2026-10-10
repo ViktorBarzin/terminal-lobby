@@ -199,6 +199,10 @@ type modConn struct {
 	// held are the lobby's prompts waiting behind the running main turn,
 	// oldest first (held.go).
 	held []string
+	// steering are held prompts the mod took at a tool boundary to deliver
+	// into the running turn, oldest first, until the row Claude stores for
+	// them says they arrived (steermain.go). They are older than held.
+	steering []string
 	// planPolls are the plans whose menu watchPlan is reading off the pane.
 	planPolls map[*modDialog]bool
 }
@@ -815,6 +819,9 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 			bye = true
 		case sessionio.ModRowEvent:
 			c.firstPromptShown(ev, h.now())
+			if n := len(sessionio.MainSteerTexts(ev)); n > 0 {
+				c.confirmSteered(n, fs, h.now().UnixMilli())
+			}
 		case sessionio.ModAgentsEvent:
 			// The engine's own list decides who can be messaged (steer.go).
 			ls.agents.SetEngine(ev.Agents)
