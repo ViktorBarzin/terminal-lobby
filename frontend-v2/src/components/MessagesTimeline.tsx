@@ -1142,8 +1142,15 @@ export const MessagesTimeline: Component<{
   let touching = false;
   let pressing = false;
   let gestureAt = Number.NEGATIVE_INFINITY;
+  /** Whether a finger moved the transcript last, so it may still be gliding
+   *  (see toEnd). A wheel, a mouse button or a scroll key clears it. */
+  let touchedLast = false;
   const gesture = (): void => {
     gestureAt = performance.now();
+  };
+  const notTouch = (): void => {
+    touchedLast = false;
+    gesture();
   };
   const readerScrolling = (): boolean =>
     touching || pressing || performance.now() - gestureAt < GESTURE_MS;
@@ -1166,6 +1173,7 @@ export const MessagesTimeline: Component<{
     // touch goes on.
     const touch = (): void => {
       touching = true;
+      touchedLast = true;
       gesture();
     };
     const untouch = (): void => {
@@ -1175,7 +1183,7 @@ export const MessagesTimeline: Component<{
     const press = (e: PointerEvent): void => {
       if (e.pointerType === "touch") return;
       pressing = true;
-      gesture();
+      notTouch();
     };
     const unpress = (): void => {
       if (!pressing) return;
@@ -1188,10 +1196,10 @@ export const MessagesTimeline: Component<{
       if (!SCROLL_KEYS.has(e.key)) return;
       const t = e.target;
       if (t instanceof HTMLElement && (t.isContentEditable || t.closest(EDITABLE))) return;
-      gesture();
+      notTouch();
     };
     const passive = { passive: true } as const;
-    el.addEventListener("wheel", gesture, passive);
+    el.addEventListener("wheel", notTouch, passive);
     el.addEventListener("touchstart", touch, passive);
     el.addEventListener("touchmove", gesture, passive);
     el.addEventListener("pointerdown", press, passive);
@@ -1201,7 +1209,7 @@ export const MessagesTimeline: Component<{
     window.addEventListener("pointercancel", unpress, passive);
     document.addEventListener("keydown", onKey, true);
     onCleanup(() => {
-      el.removeEventListener("wheel", gesture);
+      el.removeEventListener("wheel", notTouch);
       el.removeEventListener("touchstart", touch);
       el.removeEventListener("touchmove", gesture);
       el.removeEventListener("pointerdown", press);
@@ -1276,10 +1284,37 @@ export const MessagesTimeline: Component<{
    *  (`follow`) and the owner's "Latest" (`registerToEnd`). */
   const toEnd = (): void => {
     setPinned(true);
+    // Pressing it ends whatever scroll the reader had going. The tap's own
+    // touchend marks a gesture, and left standing, the next scroll event of a
+    // glide still running from an earlier flick read as the reader's and let go
+    // of the pin set here (Viktor, iPhone, 2026-10-10).
+    gestureAt = Number.NEGATIVE_INFINITY;
     const el = scroller;
     // A hidden box takes no scroll. The pin is set, so the effect below
     // brings the reader to the live end the moment the timeline shows.
-    if (el && !untrack(() => props.hidden)) stickToBottom(el);
+    if (!el || untrack(() => props.hidden)) return;
+    if (touchedLast) haltGlide(el);
+    stickToBottom(el);
+  };
+  /**
+   * Stop a finger's momentum scroll so the jump to the bottom holds. iOS
+   * carries a glide on through a scrollTop write, and taking the scroller's
+   * overflow away for a committed frame is what ends it. Only after a touch:
+   * a phone's scrollbar takes no width, while a desktop one would go and come
+   * back and rewrap every row.
+   */
+  const haltGlide = (el: HTMLElement): void => {
+    el.style.overflowY = "hidden";
+    const frame =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (cb: () => void) => setTimeout(cb, 16);
+    frame(() =>
+      frame(() => {
+        el.style.overflowY = "";
+        if (untrack(pinned) && !untrack(() => props.hidden)) stickToBottom(el);
+      }),
+    );
   };
   createEffect(on(() => props.follow, toEnd, { defer: true }));
   props.registerToEnd?.(toEnd);
