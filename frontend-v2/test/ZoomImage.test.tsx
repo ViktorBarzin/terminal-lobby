@@ -54,6 +54,27 @@ describe("<ZoomImage>", () => {
     expect(img.getAttribute("alt")).toBe("x.png");
   });
 
+  /**
+   * Panzoom measures a pinch from the stage's top-left and assumes the element
+   * it transforms starts there. The photo is centred, so transforming it
+   * directly zoomed about a fixed point instead of the fingers (measured: the
+   * spot under the pinch moved 279px up wherever the pinch landed). The
+   * transform goes on a layer that fills the stage, and the photo sits inside.
+   */
+  it("transforms a layer that fills the stage, never the photo itself", () => {
+    vi.useFakeTimers();
+    const { stage, img } = mount();
+    const layer = stage.querySelector<HTMLElement>(":scope > .tl-zoom-layer");
+    expect(layer).not.toBeNull();
+    expect(img.parentElement).toBe(layer);
+    tap(img);
+    tap(img);
+    // Panzoom writes the transform on the next animation frame.
+    vi.advanceTimersByTime(50);
+    expect(layer!.style.transform).toMatch(/scale\(2\.5\)/);
+    expect(img.style.transform).toBe("");
+  });
+
   it("dismisses on a tap, once the double-tap window has passed", () => {
     vi.useFakeTimers();
     const { img, onDismiss } = mount();

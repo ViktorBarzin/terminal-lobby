@@ -22,6 +22,14 @@ import { DOUBLE_TAP_MS, createTapTracker } from "./zoom.logic";
  * first tap of a double would close the picture, and it does nothing while
  * zoomed in, where a tap is more often the end of a pan than a request to
  * leave. Escape still closes from any zoom.
+ *
+ * WHAT PANZOOM TRANSFORMS is a layer that fills the stage, not the photo.
+ * Panzoom measures a pinch from the stage's top-left and assumes the element
+ * it transforms starts there; the photo is centred, so transforming it
+ * directly zoomed about a fixed point wherever the fingers were (measured
+ * 2026-10-10: the spot under a pinch moved 279px up, at every position). The
+ * layer starts at the stage's corner, so the spot under the fingers stays
+ * under them, and the photo is centred inside it.
  */
 
 const MAX_SCALE = 8;
@@ -45,6 +53,7 @@ export const ZoomImage: Component<{
   onDismiss?: () => void;
 }> = (props) => {
   let stage!: HTMLDivElement;
+  let layer!: HTMLDivElement;
   let img!: HTMLImageElement;
   let pz: PanzoomObject | undefined;
   let pendingDismiss: ReturnType<typeof setTimeout> | undefined;
@@ -65,6 +74,13 @@ export const ZoomImage: Component<{
     } else {
       setZoomed(true);
     }
+  };
+
+  // Follows the scale live, so the photo's frame drops the moment a pinch
+  // starts rather than when it ends (the stylesheet keys off data-zoomed).
+  const onChange = (e: Event): void => {
+    const scale = (e as CustomEvent<{ scale: number }>).detail?.scale;
+    if (typeof scale === "number") setZoomed(scale > FIT_EPSILON);
   };
 
   const onPointerDown = (e: PointerEvent): void => {
@@ -110,17 +126,21 @@ export const ZoomImage: Component<{
   };
 
   onMount(() => {
-    pz = Panzoom(img, {
+    pz = Panzoom(layer, {
       canvas: true,
       minScale: 1,
       maxScale: MAX_SCALE,
       step: PINCH_STEP,
       panOnlyWhenZoomed: true,
+      // The layer is the stage's size, so this keeps a zoomed photo from being
+      // dragged off into the dark: an edge stops at the stage's edge.
+      contain: "outside",
       // The stylesheet owns the cursor: zoom-out over a lightbox, grab when
       // zoomed. Panzoom would otherwise write `move` inline over both.
       cursor: "",
     });
-    img.addEventListener("panzoomend", settle);
+    layer.addEventListener("panzoomend", settle);
+    layer.addEventListener("panzoomchange", onChange);
     // Native listeners, not JSX ones: Solid delegates those to the document,
     // which Panzoom's stopPropagation on pointerdown never lets them reach, and
     // which is too late to keep a click from the lightbox's own listener.
@@ -137,7 +157,8 @@ export const ZoomImage: Component<{
   onCleanup(() => {
     cancelDismiss();
     pz?.destroy();
-    img?.removeEventListener("panzoomend", settle);
+    layer?.removeEventListener("panzoomend", settle);
+    layer?.removeEventListener("panzoomchange", onChange);
     stage?.removeEventListener("pointerdown", onPointerDown);
     window.removeEventListener("pointerup", onPointerUp);
     window.removeEventListener("pointercancel", onPointerCancel);
@@ -162,13 +183,15 @@ export const ZoomImage: Component<{
 
   return (
     <div ref={stage} class="tl-zoom" data-zoomed={zoomed() ? "on" : undefined}>
-      <img
-        ref={img}
-        src={props.src}
-        alt={props.alt}
-        onError={() => props.onError?.()}
-        draggable={false}
-      />
+      <div ref={layer} class="tl-zoom-layer">
+        <img
+          ref={img}
+          src={props.src}
+          alt={props.alt}
+          onError={() => props.onError?.()}
+          draggable={false}
+        />
+      </div>
     </div>
   );
 };
