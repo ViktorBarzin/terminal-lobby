@@ -232,6 +232,22 @@ describe("editQueuedStart(text): a ghost taken out of the queue to edit", () => 
     expect(await started).toBe(false);
     expect(store.editingQueued()).toEqual({ text: "first", draft: "first, better", status });
     expect(notify).toHaveBeenCalledTimes(1);
+    // What was typed rides a reload, still offered only as a new message.
+    expect(JSON.parse(localStorage.getItem(QUEUED_EDITS_KEY)!)).toEqual({
+      s: { text: "first", draft: "first, better", status },
+    });
+    dispose();
+    const again = mount({});
+    expect(again.store.editingQueued()).toEqual({ text: "first", draft: "first, better", status });
+    again.dispose();
+  });
+
+  it("forgets a refused edit nothing was typed into", async () => {
+    const { store, dispose } = mount({
+      cancelQueued: { status: 200, body: { restored: false, queue: [] } },
+    });
+    expect(await store.editQueuedStart("first")).toBe(false);
+    expect(store.editingQueued()).toBeNull();
     expect(localStorage.getItem(QUEUED_EDITS_KEY)).toBeNull();
     dispose();
   });

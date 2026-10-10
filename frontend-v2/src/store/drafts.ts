@@ -74,6 +74,10 @@ export interface QueuedEdit {
   text: string;
   /** What the form holds now. */
   draft: string;
+  /** Absent while the form holds the message; `refused` or `failed` when
+   *  Claude had it already, or the box never answered, and only what was
+   *  typed can still be sent (OpenQueuedEdit). */
+  status?: "refused" | "failed";
 }
 
 /**
@@ -82,10 +86,10 @@ export interface QueuedEdit {
  *
  *   taking    the request to take it off the queue is out; nothing sends yet
  *   ready     it is off the queue, and only this form holds it (persisted)
- *   refused   Claude had it already; only what was typed can still be sent
- *   failed    the box did not answer, so whether it is still queued is unknown
+ *   refused   Claude had it already; only what was typed can still be sent (persisted)
+ *   failed    the box did not answer, so whether it is still queued is unknown (persisted)
  */
-export interface OpenQueuedEdit extends QueuedEdit {
+export interface OpenQueuedEdit extends Omit<QueuedEdit, "status"> {
   status: "taking" | "ready" | "refused" | "failed";
 }
 
@@ -106,19 +110,28 @@ function writeAll(doc: Record<string, unknown>, key = DRAFTS_KEY): void {
   lsSet(key, JSON.stringify(doc));
 }
 
-/** The edit open for one session on this device, or null. */
+/** The edit open for one session on this device, or null. An entry in a
+ *  state it cannot read is dropped: read back as one the form holds, Close
+ *  would send words Claude may already have. */
 export function loadQueuedEdit(session: string): QueuedEdit | null {
   const rec = readAll(QUEUED_EDITS_KEY)[session];
   if (!rec || typeof rec !== "object") return null;
-  const { text, draft } = rec as Record<string, unknown>;
+  const { text, draft, status } = rec as Record<string, unknown>;
   if (typeof text !== "string" || typeof draft !== "string") return null;
-  return { text, draft };
+  if (status === undefined) return { text, draft };
+  if (status === "refused" || status === "failed") return { text, draft, status };
+  return null;
 }
 
 /** Persist one session's edit, or forget it on null. */
 export function saveQueuedEdit(session: string, edit: QueuedEdit | null): void {
   const doc = readAll(QUEUED_EDITS_KEY);
-  if (edit) doc[session] = { text: edit.text, draft: edit.draft };
+  if (edit)
+    doc[session] = {
+      text: edit.text,
+      draft: edit.draft,
+      ...(edit.status ? { status: edit.status } : {}),
+    };
   else if (session in doc) delete doc[session];
   else return;
   writeAll(doc, QUEUED_EDITS_KEY);

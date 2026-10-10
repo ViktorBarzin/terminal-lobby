@@ -192,7 +192,7 @@ const GhostRowsView: Component<{
             text={text}
             sending={props.sending?.has(i())}
             onCancel={props.onCancel}
-            onEditStart={props.onEditStart}
+            onEditStart={props.edit ? undefined : props.onEditStart}
             focusEdit={focusEdit}
             lead={
               <Show when={props.sending?.has(i())}>

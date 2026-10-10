@@ -1348,22 +1348,26 @@ export function createSessionStore(
     })) === "taken";
 
   /**
-   * The queued prompt open in this device's edit form (QueuedGhost). Only a
-   * `ready` edit is stored, so a reload brings the form back with what was
-   * typed, and a reload mid-request leaves no form for a message the server
-   * still holds.
+   * The queued prompt open in this device's edit form (QueuedGhost). Every
+   * edit but one still being taken out is stored, so a reload brings the form
+   * back with what was typed, refused or not, and a reload mid-request leaves
+   * no form for a message the server still holds.
    */
   const [editingQueued, setEditingQueuedSignal] = createSignal<OpenQueuedEdit | null>(
     untrack(() => {
       const saved = loadQueuedEdit(session());
-      return saved ? { ...saved, status: "ready" as const } : null;
+      return saved ? { ...saved, status: saved.status ?? "ready" } : null;
     }),
   );
   const setEditingQueued = (edit: OpenQueuedEdit | null): void => {
     setEditingQueuedSignal(edit);
-    if (!edit || edit.status === "ready") {
-      saveQueuedEdit(untrack(session), edit && { text: edit.text, draft: edit.draft });
-    }
+    // Not while it is being taken out: a reload then must not leave a form
+    // for a message the server still holds.
+    if (edit?.status === "taking") return;
+    const kept = edit && { text: edit.text, draft: edit.draft };
+    const status =
+      edit?.status === "refused" || edit?.status === "failed" ? edit.status : undefined;
+    saveQueuedEdit(untrack(session), kept && (status ? { ...kept, status } : kept));
   };
 
   /**

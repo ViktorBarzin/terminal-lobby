@@ -177,6 +177,20 @@ describe("taking a queued message out to edit it", () => {
   });
 });
 
+// One message is edited at a time: while a form is open, the other ghosts
+// offer no pencil and a hold on them does nothing, rather than asking the
+// server and being refused. They can still be discarded.
+describe("while a form is open", () => {
+  it("offers no edit on the other ghosts, and keeps their discard", () => {
+    vi.useFakeTimers();
+    const { ghosts, hold, start } = mount({ edit: EDIT, queued: ["second"] });
+    expect(ghosts()[0]!.querySelector(".tl-ghost-pencil")).toBeNull();
+    expect(ghosts()[0]!.querySelector(".tl-ghost-x")).not.toBeNull();
+    hold(0);
+    expect(start).not.toHaveBeenCalled();
+  });
+});
+
 describe("the edit form", () => {
   it("is drawn from the store's edit at the end of the queue, after the ghost has gone", () => {
     const { form, field, setEdit, setQueued, container } = mount();

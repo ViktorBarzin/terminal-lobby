@@ -163,6 +163,21 @@ describe("queued edits", () => {
     expect(loadQueuedEdit("qa")).toBeNull();
   });
 
+  // A form whose message Claude already had keeps only what was typed, to be
+  // sent as a new message. Read back as anything else, Close would send the
+  // old words a second time, so an entry in a state it cannot read is dropped.
+  it("keeps that Claude already had it, and drops an entry in a state it cannot read", () => {
+    saveQueuedEdit("qa", { text: "first", draft: "mine", status: "refused" });
+    expect(loadQueuedEdit("qa")).toEqual({ text: "first", draft: "mine", status: "refused" });
+    saveQueuedEdit("qa", { text: "first", draft: "mine", status: "failed" });
+    expect(loadQueuedEdit("qa")).toEqual({ text: "first", draft: "mine", status: "failed" });
+    localStorage.setItem(
+      QUEUED_EDITS_KEY,
+      JSON.stringify({ qa: { text: "a", draft: "b", status: "taking" } }),
+    );
+    expect(loadQueuedEdit("qa")).toBeNull();
+  });
+
   it("follows a rename and is pruned with the session", () => {
     saveQueuedEdit("old", { text: "first", draft: "first" });
     carryDraft("old", "new");
