@@ -2202,11 +2202,16 @@ label.tl-set-row-label {
     font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
   }
 }
+/* The form opens under the finger that held the ghost, and a press that went
+   on over a button's label started text selection on Android Chrome, which
+   cancelled the touch (2026-10-10). */
 .tl-ghost-edit-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .tl-ghost-edit-actions button {
   padding: 6px 14px;

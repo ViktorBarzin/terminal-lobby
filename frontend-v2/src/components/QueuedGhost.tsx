@@ -32,8 +32,9 @@ import { PenIcon } from "./Icons";
  * take it mid-edit, and the ghost leaves on the queue's own `unqueued` event.
  * The form is drawn from the store's edit at the end of the queue
  * (QueuedEditRow), on this device only. It opens at once, before the server
- * answers, and the gesture that asked (the pointerup ending the hold, or the
- * pencil's click) focuses it: iOS raises the keyboard only for a focus inside
+ * answers, and the gesture that asked (the finger lifting after the hold,
+ * heard on the document since the ghost may be gone by then, or the pencil's
+ * click) focuses it: iOS raises the keyboard only for a focus inside
  * a gesture handler, never from the hold's timer or after a fetch. Nothing
  * sends until the server has let go of it. When it could not, the form closes
  * with a toast, or, if something was typed, keeps it and offers only "Send as
@@ -71,6 +72,34 @@ const SWIPE_TRAIL_PX = 96;
  *  Past this the row still standing is another prompt with the same words. */
 const CANCEL_LINGER_MS = 2_000;
 
+/** Past this a finger still down is not coming back up for this hold. */
+const RELEASE_WAIT_MS = 15_000;
+
+/**
+ * Until the finger that held a ghost lifts, keeps the browser's long-press
+ * menu off the page, then focuses the edit box in that lift: iOS raises the
+ * keyboard only for a focus inside a gesture, and the hold fired from a timer.
+ *
+ * Listened for on the document, not the ghost. Measured on Android Chrome
+ * (2026-10-10): the server let go of the message while the finger was still
+ * down, so the ghost left from under it with its own handlers, the press went
+ * on over the form that took its place, and the browser's long press cancelled
+ * the touch, so no pointerup ever came and the keyboard stayed down.
+ */
+function focusOnRelease(focus: () => void): void {
+  const blockMenu = (e: Event) => e.preventDefault();
+  const lifts = ["pointerup", "touchend", "pointercancel", "touchcancel"] as const;
+  const done = () => {
+    clearTimeout(timer);
+    document.removeEventListener("contextmenu", blockMenu, true);
+    for (const t of lifts) document.removeEventListener(t, done, true);
+    focus();
+  };
+  const timer = setTimeout(done, RELEASE_WAIT_MS);
+  document.addEventListener("contextmenu", blockMenu, true);
+  for (const t of lifts) document.addEventListener(t, done, true);
+}
+
 export const QueuedGhost: Component<{
   text: string;
   sending?: boolean;
@@ -83,7 +112,7 @@ export const QueuedGhost: Component<{
   /** Beside the bubble, before it (the sending spinner). */
   lead?: JSX.Element;
   /** Focuses the edit form's box. Called from the gesture that opened it, the
-   *  pointerup ending a hold or the pencil's click, because iOS raises the
+   *  finger lifting after a hold or the pencil's click, because iOS raises the
    *  keyboard only for a focus inside a gesture handler. */
   focusEdit?: () => void;
   children: JSX.Element;
@@ -97,8 +126,6 @@ export const QueuedGhost: Component<{
   let rowEl: HTMLDivElement | undefined;
   let from: { x: number; y: number } | null = null;
   let axis: "x" | "y" | null = null;
-  /** The hold fired and the finger is still down. */
-  let held = false;
   let holdTimer: ReturnType<typeof setTimeout> | undefined;
   let lingerTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -134,8 +161,9 @@ export const QueuedGhost: Component<{
     holdTimer = setTimeout(() => {
       holdTimer = undefined;
       from = null;
-      held = true;
       setDx(0);
+      const focus = props.focusEdit;
+      focusOnRelease(() => focus?.());
       edit();
     }, GHOST_HOLD_MS);
   };
@@ -158,17 +186,8 @@ export const QueuedGhost: Component<{
     if (axis === "x") setDx(Math.max(-SWIPE_TRAIL_PX, Math.min(SWIPE_TRAIL_PX, mx)));
   };
 
-  // The hold opened the form from a timer, whose focus iOS ignores; lifting
-  // the finger is the gesture that may focus it.
-  const releaseHold = () => {
-    if (!held) return;
-    held = false;
-    props.focusEdit?.();
-  };
-
   const onPointerUp = (e: PointerEvent) => {
     endHold();
-    releaseHold();
     const start = from;
     const claimed = axis === "x";
     from = null;
@@ -181,7 +200,6 @@ export const QueuedGhost: Component<{
 
   const onPointerCancel = () => {
     endHold();
-    releaseHold();
     from = null;
     axis = null;
     setDx(0);
@@ -193,7 +211,7 @@ export const QueuedGhost: Component<{
 
   // A long press on a phone also raises the browser's own menu.
   const onContextMenu = (e: MouseEvent) => {
-    if (ownsGestures() && (holdTimer !== undefined || held)) e.preventDefault();
+    if (ownsGestures() && holdTimer !== undefined) e.preventDefault();
   };
 
   const attach = (el: HTMLDivElement) => {

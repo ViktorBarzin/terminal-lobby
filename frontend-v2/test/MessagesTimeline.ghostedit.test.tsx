@@ -132,6 +132,47 @@ describe("taking a queued message out to edit it", () => {
     expect(document.activeElement).toBe(r.field());
   });
 
+  // Measured on Android Chrome (2026-10-10): the server let go of the message
+  // while the finger was still down, so the ghost left from under it, and its
+  // own pointerup handler went with it. The lift is listened for on the
+  // document instead.
+  it("focuses the form when the finger lifts after the ghost has gone", () => {
+    vi.useFakeTimers();
+    let open!: (edit: OpenQueuedEdit) => void;
+    let drop!: (q: string[]) => void;
+    const start = vi.fn(async (text: string) => {
+      open({ text, draft: text, status: "ready" });
+      drop([]);
+      return true;
+    });
+    const r = mount({ start });
+    open = r.setEdit;
+    drop = r.setQueued;
+    touch(r.bubble(0), "pointerdown");
+    vi.advanceTimersByTime(GHOST_HOLD_MS);
+    expect(r.ghosts().filter((g) => !g.hasAttribute("data-editing"))).toHaveLength(0);
+    const focus = vi.spyOn(r.field()!, "focus");
+    document.dispatchEvent(new Event("touchend", { bubbles: true }));
+    expect(focus).toHaveBeenCalled();
+    expect(document.activeElement).toBe(r.field());
+  });
+
+  // The form opens under the finger, so until it lifts the browser's own
+  // long-press menu is kept off the whole page, not only off the ghost.
+  it("keeps the browser's long-press menu away until the finger lifts", () => {
+    vi.useFakeTimers();
+    const r = mount();
+    touch(r.bubble(0), "pointerdown");
+    vi.advanceTimersByTime(GHOST_HOLD_MS);
+    const during = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(during);
+    expect(during.defaultPrevented).toBe(true);
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch" }));
+    const after = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(after);
+    expect(after.defaultPrevented).toBe(false);
+  });
+
   it("does not ask on a hold that moved, or on a short tap", () => {
     vi.useFakeTimers();
     const { bubble, start } = mount();
