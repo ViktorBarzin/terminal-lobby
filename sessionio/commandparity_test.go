@@ -41,7 +41,7 @@ func tSystem(t *testing.T, uuid, at, subtype, content string) string {
 func tSummary(t *testing.T, uuid, at string) string {
 	return tLine(t, map[string]any{"type": "user", "uuid": uuid, "timestamp": at, "isCompactSummary": true,
 		"isVisibleInTranscriptOnly": true,
-		"message": map[string]any{"role": "user", "content": "This session is being continued from a previous conversation."}})
+		"message":                   map[string]any{"role": "user", "content": "This session is being continued from a previous conversation."}})
 }
 
 // modText is a row the way the mod forwards it: content as text blocks.
