@@ -203,6 +203,11 @@ type modConn struct {
 	// into the running turn, oldest first, until the row Claude stores for
 	// them says they arrived (steermain.go). They are older than held.
 	steering []string
+	// starting is the number of the turn start a prompt sent while idle is
+	// waiting on, 0 when none: until Claude reports the turn, what is sent
+	// next is held for it (held.go). starts numbers them, so a timer only
+	// ends the wait it began.
+	starting, starts int
 	// planPolls are the plans whose menu watchPlan is reading off the pane.
 	planPolls map[*modDialog]bool
 }
@@ -836,6 +841,11 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		w := c.st.apply(ev, h.now())
 		if c.st.state != c.st.written.state {
 			moved = true
+		}
+		if c.st.turnOpen || turnBound(ev) {
+			// The turn a prompt was waiting on started (held.go), even one
+			// that also ended inside this batch.
+			c.starting = 0
 		}
 		c.mu.Unlock()
 		merged = mergeWrites(merged, w)

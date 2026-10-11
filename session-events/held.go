@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"terminal-lobby/sessionio"
@@ -146,7 +147,7 @@ func (c *modConn) hold(text string) bool {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
-	if !c.knownLocked() || !c.st.turnOpen {
+	if !c.knownLocked() || !c.turnAheadLocked() {
 		c.mu.Unlock()
 		return false
 	}
@@ -245,6 +246,62 @@ func (c *modConn) showHeld() {
 	}
 }
 
+// turnStartWait bounds how long a prompt sent while idle holds what follows
+// before its turn starts. Claude reports the turn once its prompt hooks have
+// run (5 seconds measured on 2026-10-11); a prompt that starts no turn lets
+// go of what it held after this.
+var turnStartWait = 20 * time.Second
+
+// turnAheadLocked reports whether a main turn runs or a prompt sent to an idle
+// Claude is about to start one. Called with c.mu held.
+func (c *modConn) turnAheadLocked() bool {
+	return c.st.turnOpen || c.starting != 0
+}
+
+// startingLocked marks a prompt sent to an idle Claude: what the lobby sends
+// next is held for the turn it starts, to be taken at that turn's first tool
+// boundary (steermain.go) instead of waiting behind it in Claude. The wait
+// ends when the turn is reported (apply) or after turnStartWait.
+// Called with c.mu held.
+func (c *modConn) startingLocked() {
+	if c.st.turnOpen {
+		return
+	}
+	c.starts++
+	n := c.starts
+	c.starting = n
+	time.AfterFunc(turnStartWait, func() {
+		c.applyMu.Lock()
+		defer c.applyMu.Unlock()
+		c.mu.Lock()
+		if c.starting == n {
+			c.starting = 0
+		}
+		c.mu.Unlock()
+		c.releaseHeld()
+	})
+}
+
+// turnBound reports whether ev starts or ends a main-thread turn.
+func turnBound(ev sessionio.ModEvent) bool {
+	return ev.AgentID == "" && (ev.Type == sessionio.ModTurnStartEvent || ev.Type == sessionio.ModTurnEndEvent)
+}
+
+// markStarting marks a prompt the mod accepted while no turn ran (startingLocked).
+// Not a slash command: it may run without a model turn (/clear, /model).
+func (c *modConn) markStarting(text string) {
+	if strings.HasPrefix(strings.TrimSpace(text), "/") {
+		return
+	}
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.knownLocked() {
+		c.startingLocked()
+	}
+}
+
 // releaseHeld sends what is held once no main turn runs. Called from apply,
 // under applyMu. The sends wait for acks that arrive through apply, so they go
 // on their own goroutine.
@@ -255,12 +312,13 @@ func (c *modConn) showHeld() {
 // order, so by the turn's end a delivered prompt has been confirmed.
 func (c *modConn) releaseHeld() {
 	c.mu.Lock()
-	if (len(c.held) == 0 && len(c.steering) == 0) || !c.knownLocked() || c.st.turnOpen {
+	if (len(c.held) == 0 && len(c.steering) == 0) || !c.knownLocked() || c.turnAheadLocked() {
 		c.mu.Unlock()
 		return
 	}
 	out, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
 	c.held, c.steering = nil, nil
+	c.startingLocked()
 	c.mu.Unlock()
 	c.hub.files.save(user, sid, nil)
 	go c.submitHeld(out, ls)

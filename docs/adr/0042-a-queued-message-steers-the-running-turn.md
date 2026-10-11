@@ -77,6 +77,17 @@ so by a turn's end a delivered message has been confirmed. Confirmation counts
 messages rather than matching text, because the row's copy of a long paste is
 capped.
 
+A turn counts as running from the moment the mod accepts the prompt that
+starts it, not from the turn start Claude reports. Claude reports the turn
+only after its prompt hooks have run, and on 2026-10-11 that took 5 seconds:
+a message sent in that gap went to Claude as an ordinary prompt and waited
+behind the whole turn. So once the mod accepts a prompt sent while Claude is
+idle, or the held prompts a turn's end sends, session-events holds what
+follows for that turn, to be taken at its first tool boundary. The wait ends
+when the turn is reported, or after 20 seconds if none is, so a prompt that
+starts no turn does not keep later messages held. A slash command does not
+start the wait, since `/clear` or `/model` runs without a model turn.
+
 The edit form takes a message out of session-events' queue through the
 existing `cancel-queued` route and sends the result through `POST /prompt`, so
 Claude cannot take a message while it is being edited. An edited message goes
