@@ -56,20 +56,13 @@ Other local commands, measured the same way:
   checks the events match.
 
 ```mermaid
-sequenceDiagram
-  participant T as transcript
-  participant C as Claude
-  participant M as mod
-  participant S as session-events
-  C->>M: "/compact"
-  M->>S: turn opens
-  C->>T: summary, receipt
-  Note over C,M: no append
-  M->>S: compacting on, off
-  S->>T: read new rows
-  T-->>S: summary, receipt
-  Note over S: turn settled
-  Note over S: 5 s miss: settle
+flowchart TD
+  A["/compact row<br/>opens a turn"] --> C["summary, receipt<br/>go to the file only"]
+  C --> D["mod: compacting<br/>on, then off"]
+  D --> E["session-events<br/>reads the new rows"]
+  E --> F{"receipt<br/>in 5 s?"}
+  F -- yes --> G["marker,<br/>settled"]
+  F -- no --> H["settled,<br/>logged"]
 ```
 
 ## Changes
