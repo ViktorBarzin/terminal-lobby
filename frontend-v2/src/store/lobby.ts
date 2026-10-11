@@ -715,7 +715,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     const was = prev.find((s) => s.owner === sel.owner && s.name === sel.name);
     // A tab opened from an invite link never saw the old name listed; the
     // link's id stands in for the row it would have matched.
-    const id = was?.id ?? (sel.name === urlSelection?.name && sel.owner === urlSelection.owner ? urlSelection.id : undefined);
+    const id =
+      was?.id ??
+      (sel.name === urlSelection?.name && sel.owner === urlSelection.owner
+        ? urlSelection.id
+        : undefined);
     if (!id) return undefined;
     return next.find((s) => s.owner === sel.owner && s.id === id)?.name;
   }

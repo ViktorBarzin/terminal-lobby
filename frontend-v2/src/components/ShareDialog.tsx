@@ -235,7 +235,9 @@ export const ShareDialog: Component<{
           <div class="tl-schelp-scroll">
             {/* Other accounts on this box, who may open the session live
                 (ADR-0043). Any session of yours; a public link needs Claude. */}
-            <Show when={session()}>{(s) => <SharePeople name={s().name} me={props.me} id={s().id} />}</Show>
+            <Show when={session()}>
+              {(s) => <SharePeople name={s().name} me={props.me} id={s().id} />}
+            </Show>
             <Show when={!session() || canLink(session() ?? {})}>
               <Group title="Public links">
                 <Show

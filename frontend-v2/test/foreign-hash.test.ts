@@ -4,8 +4,16 @@ import { foreignHash, parseForeignHash } from "../src/lib/foreign-hash";
 describe("the foreign-session hash", () => {
   it("reads name and owner, with or without the session id", () => {
     expect(parseForeignHash("#fix-auth@emo")).toEqual({ name: "fix-auth", owner: "emo" });
-    expect(parseForeignHash("#fix-auth@emo!$202")).toEqual({ name: "fix-auth", owner: "emo", id: "$202" });
-    expect(parseForeignHash("fix-auth@emo!%24202")).toEqual({ name: "fix-auth", owner: "emo", id: "$202" });
+    expect(parseForeignHash("#fix-auth@emo!$202")).toEqual({
+      name: "fix-auth",
+      owner: "emo",
+      id: "$202",
+    });
+    expect(parseForeignHash("fix-auth@emo!%24202")).toEqual({
+      name: "fix-auth",
+      owner: "emo",
+      id: "$202",
+    });
   });
 
   it("ignores an id that is not one, and refuses what names no owner", () => {
