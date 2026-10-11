@@ -7160,10 +7160,18 @@ body.tl-kb-up {
     font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
   }
 }
+/* Every option's preview, stacked in one cell: the box keeps the tallest
+   one's height, so pointing at a row never moves the rows. */
+.tl-qcard-previews {
+  display: grid;
+  margin: 8px 4px 0;
+}
 /* The preview Claude gave the option in focus: a code snippet or an ASCII
    mockup, so it keeps its own line breaks and scrolls rather than wraps. */
 .tl-qcard-preview {
-  margin: 8px 4px 0;
+  grid-area: 1 / 1;
+  min-width: 0;
+  margin: 0;
   padding: 8px 10px;
   max-height: calc(12px * 1.4 * 10 * var(--tl-text-scale, 1));
   overflow: auto;
@@ -7174,6 +7182,9 @@ body.tl-kb-up {
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
   white-space: pre;
+}
+.tl-qcard-preview[aria-hidden="true"] {
+  visibility: hidden;
 }
 /* A finger anywhere, a tablet included: every row is a 40px target. */
 @media (pointer: coarse) {

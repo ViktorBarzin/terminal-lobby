@@ -189,13 +189,13 @@ export const QuestionCard: Component<{
     onCleanup(() => document.removeEventListener("keydown", onKey));
   });
 
-  /** The preview on show: the option in focus, else the first chosen one that
-   *  has a preview, else the first option that has one. */
-  const preview = createMemo((): string => {
-    const opts = question()?.options ?? [];
-    const f = opts.find((o) => o.label === focused() && o.preview);
-    if (f) return f.preview!;
-    return (opts.find((o) => chosen(o) && o.preview) ?? opts.find((o) => o.preview))?.preview ?? "";
+  /** The options that have a preview. */
+  const previewed = createMemo(() => (question()?.options ?? []).filter((o) => o.preview));
+  /** The option whose preview is on show: the one in focus, else the first
+   *  chosen one that has a preview, else the first that has one. */
+  const shownPreview = createMemo((): string | undefined => {
+    const opts = previewed();
+    return (opts.find((o) => o.label === focused()) ?? opts.find(chosen) ?? opts[0])?.label;
   });
 
   const nextLabel = () => (last() ? "Submit" : "Next");
@@ -315,8 +315,24 @@ export const QuestionCard: Component<{
                 onSend={advance}
               />
             </div>
-            <Show when={preview()}>
-              <pre class="tl-qcard-preview">{preview()}</pre>
+            {/* Every preview is drawn in one grid cell and all but one are
+                hidden, so the box is the tallest preview's height whichever
+                shows. Sized to the one on show, the box grew and shrank as the
+                pointer crossed the rows, which moved the rows under the
+                pointer, which picked another preview: a loop. */}
+            <Show when={previewed().length > 0}>
+              <div class="tl-qcard-previews">
+                <For each={previewed()}>
+                  {(o) => (
+                    <pre
+                      class="tl-qcard-preview"
+                      aria-hidden={o.label === shownPreview() ? undefined : "true"}
+                    >
+                      {o.preview}
+                    </pre>
+                  )}
+                </For>
+              </div>
             </Show>
             <Show when={props.state === "connecting"}>
               <div class="tl-qcard-hint">Connecting to the question…</div>

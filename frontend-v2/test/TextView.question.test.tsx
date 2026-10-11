@@ -413,9 +413,33 @@ describe("a held call", () => {
       ],
     };
     const v = mount([held([withPreview, fruits])]);
-    await waitFor(() => expect(v.text(".tl-qcard-preview")).toBe("RED BOX"));
+    const shown = ".tl-qcard-preview:not([aria-hidden])";
+    await waitFor(() => expect(v.text(shown)).toBe("RED BOX"));
     fireEvent.focus(v.option("Blue")!);
-    expect(v.text(".tl-qcard-preview")).toBe("BLUE BOX");
+    expect(v.text(shown)).toBe("BLUE BOX");
+  });
+
+  // The box takes the tallest preview's height whichever one shows, so
+  // pointing at a row never moves the rows: when it did, the row under the
+  // pointer changed, which changed the preview, which moved the rows again.
+  it("draws every preview in one box, showing only the one in focus", async () => {
+    const withPreview = {
+      ...colour,
+      options: [
+        { label: "Red", description: "", preview: "RED" },
+        { label: "Blue", description: "", preview: "BLUE\nTALL\nBOX" },
+        { label: "Green", description: "" },
+      ],
+    };
+    const v = mount([held([withPreview, fruits])]);
+    const all = () => [...v.container.querySelectorAll<HTMLElement>(".tl-qcard-previews > .tl-qcard-preview")];
+    await waitFor(() => expect(all().map((p) => p.textContent)).toEqual(["RED", "BLUE\nTALL\nBOX"]));
+    const hidden = () => all().map((p) => p.getAttribute("aria-hidden"));
+    expect(hidden()).toEqual([null, "true"]);
+    fireEvent.pointerEnter(v.option("Blue")!);
+    expect(hidden()).toEqual(["true", null]);
+    fireEvent.pointerEnter(v.option("Green")!);
+    expect(hidden()).toEqual(["true", null]);
   });
 
   it("picks with keys 1-9 while the focus is in the Text view", async () => {
