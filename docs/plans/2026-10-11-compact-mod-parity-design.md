@@ -1,7 +1,5 @@
 # /compact settles in the Text view on the mod path
 
-Status: approved, 2026-10-11
-
 ## Problem
 
 In the Text view, a `/compact` keeps its Working row after the compaction has
