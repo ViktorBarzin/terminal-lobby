@@ -121,12 +121,11 @@ describe("<SessionCard> — setting the status by hand", () => {
   });
 
   it("offers nothing on somebody else's session", () => {
-    // The whole ⋯ menu is hidden for a foreign row: correcting a state is an
-    // action on the owner's session, and this card cannot even rename it.
+    // A guest's menu holds only what a guest may do (ADR-0043): correcting a
+    // state is the owner's, so no Status rows even where the menu opens.
     const { container, unmount } = openMenu(
       session("theirs", { state: "running", owner: "emo", access: "ro" }),
     );
-    expect(container.querySelector(".tl-card-actions")).toBeNull();
     expect(statusRows(container)).toHaveLength(0);
     unmount();
   });

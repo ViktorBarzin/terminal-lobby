@@ -7,7 +7,7 @@
  * Error carrying the server's own text when it sent one ("unknown or unmapped
  * guest", "no such running session"), which is written for a person.
  */
-import { apiUrl } from "./config";
+import { apiUrl, withOwner } from "./config";
 import { fetchWithDeadline } from "./http";
 
 export type ShareMode = "ro" | "rw";
@@ -65,4 +65,29 @@ export async function removeShare(owner: string, name: string, guest: string): P
  *  gets past the server's access check. */
 export function inviteUrl(origin: string, owner: string, name: string): string {
   return `${origin}/#${name}@${owner}`;
+}
+
+/** A /sessions/{name}… route on someone else's session, for a guest: tmux-api
+ *  runs it in the owner's server once its access check lets the caller in. */
+function guestSessionUrl(owner: string, name: string, rest = ""): string {
+  return withOwner(apiUrl(`/sessions/${encodeURIComponent(name)}${rest}`), owner);
+}
+
+/** A driving guest kills the owner's session. The owner is pushed who did it,
+ *  and brings it back from Restore if they want it; there is no undo here,
+ *  since a restore would land in the guest's own account. */
+export async function guestKill(owner: string, name: string): Promise<void> {
+  const res = await fetchWithDeadline(guestSessionUrl(owner, name), { method: "DELETE" });
+  if (!res.ok && res.status !== 404) return fail(res, "kill");
+}
+
+/** A driving guest retitles the owner's session, which renames it as well
+ *  (ADR-0022). The share follows the rename server-side. */
+export async function guestRetitle(owner: string, name: string, title: string): Promise<void> {
+  const res = await fetchWithDeadline(guestSessionUrl(owner, name, "/title"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) return fail(res, "rename");
 }

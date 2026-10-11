@@ -173,6 +173,12 @@ var knownEvents = map[string]bool{
 	// -- sharing ------------------------------------------------------------
 	"share.granted": true, // (tl.kind = ro|rw)
 	"share.revoked": true,
+	// A guest on someone else's session (ADR-0043), emitted by session-events
+	// under the GUEST: guest is a write or a stream opened there (tl.to the
+	// owner, tl.mode ro|rw), prompt_sent a prompt the guest sent from the
+	// composer, whose own claude.prompt_sent is under the owner.
+	"share.guest":       true,
+	"share.prompt_sent": true,
 	// Public links (tmux-api/links.go, ADR-0039): a bearer URL to one session
 	// for someone with no account. Emitted under the OWNER, since a visitor has
 	// no identity. created carries tl.mode and the lifetime in tl.kind;

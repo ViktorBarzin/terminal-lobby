@@ -287,6 +287,13 @@ src/
     links-api.ts         tmux-api's public-links routes: list, create (the
                          token comes back once), revoke one, and the session
                          bar's Stop, which revokes every link on a session
+    shares-api.ts        tmux-api's named-share routes for the People half of
+                         the Share dialog (list, invite, change, remove), the
+                         lobby URL that opens a session for its guests, and a
+                         driving guest's kill and retitle with ?owner=
+    session-owner.ts     The context naming a session's owner when it is not
+                         yours, read by the parts of the Text view that build
+                         their own session-events URLs (ADR-0043)
     mode-api.ts          Putting a session in a permission mode from the model
                          sheet: the same POST /model route with a `mode` in the
                          body, since a new prefix would need the IngressRoute
@@ -583,6 +590,10 @@ src/
     share-dialog.ts      Which session the Share dialog is open for. Held
                          outside the card, which remounts on a rename and would
                          take a once-only link URL with it
+    presence.ts          The presence socket for an open session: who else has
+                         it open, each person's live draft, and who sent each
+                         prompt, plus the context the Text view reads it from
+                         (ADR-0043)
     watchmode.ts         Per-session/per-device Watch mode (attach read-only).
                          A lens (acting as another user) defaults to watching
                          and keeps its choices under the target's own keys, so
@@ -1004,6 +1015,16 @@ src/
     links.logic.ts       PURE public-link rules: who is offered Share…, which
                          lifetimes a mode allows, expiry and visitor wording,
                          the /s/#token URL
+    SharePeople.tsx      The Share dialog's People half: who may open this
+                         session, Watch or Drive, invite, remove, and the link
+                         that opens it for them (ADR-0043)
+    copy-text.ts         Copy to the clipboard, falling back to selecting the
+                         field, for the Share dialog's two URLs
+    presence.logic.ts    PURE presence rules: the others present, the bar's
+                         "emo here", typing versus a resting draft, and which
+                         message each sender record labels
+    DraftPeeks.tsx       What the others on a shared session are typing, live,
+                         above the composer
     SettingsPanel.tsx    Settings overlay: the shell only — the category
                          rail, which page is showing, and the dialog contract
                          (aria-modal, a wrapping Tab trap, Escape, focus back

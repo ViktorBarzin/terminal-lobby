@@ -42,6 +42,8 @@ import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
 import { ACT_AS } from "../lib/config";
 import { canShare } from "./links.logic";
+import { guestKill, guestRetitle, removeShare } from "../lib/shares-api";
+import { toasts } from "../store/toast";
 import { openShare } from "../store/share-dialog";
 
 /**
@@ -513,7 +515,7 @@ export const SessionCard: Component<{
   const beginRename = (e?: Event) => {
     // Nor a title, on a session that is leaving: the double-click reaches here
     // from the row itself, and the ⋯ menu's Rename is hidden while it dies.
-    if (foreign() || killing()) return;
+    if ((foreign() && !guestDrives()) || killing()) return;
     e?.stopPropagation();
     releaseHold = props.store.hold();
     setEditing(true);
@@ -534,7 +536,50 @@ export const SessionCard: Component<{
     // to know: the poll brings the new name back and the selection follows it
     // by session id. An empty one clears the title, handing the session back to
     // whatever summary lands next; the name stays where it is.
-    if (next !== titleDraft()) await props.store.rename(s().name, next);
+    if (next === titleDraft()) return;
+    const owner = s().owner;
+    if (foreign() && owner) {
+      // Someone else's session, which a driving guest may retitle (ADR-0043).
+      try {
+        await guestRetitle(owner, s().name, next);
+      } catch (err) {
+        toasts.push({ kind: "error", message: `Could not rename ${owner}'s session: ${(err as Error).message}` });
+      }
+      await props.store.refresh();
+      return;
+    }
+    await props.store.rename(s().name, next);
+  };
+
+  // ---- a guest's actions (ADR-0043) ----
+  /** Shared with you to drive: you may rename and kill, but not share onward. */
+  const guestDrives = () => foreign() && s().access === "rw";
+  /** Reached through a share rather than a project, so there is a grant of
+   *  yours to give back. */
+  const guestLeaves = () => foreign() && !s().project;
+  const guestKillSession = async () => {
+    menu.close();
+    const owner = s().owner;
+    if (!owner) return;
+    if (!window.confirm(`Kill ${owner}'s session ${label()}? ${owner} will be told it was you.`)) return;
+    try {
+      await guestKill(owner, s().name);
+    } catch (err) {
+      toasts.push({ kind: "error", message: `Could not kill ${owner}'s session: ${(err as Error).message}` });
+    }
+    await props.store.refresh();
+  };
+  const leave = async () => {
+    menu.close();
+    const owner = s().owner;
+    const me = props.store.me();
+    if (!owner || !me) return;
+    try {
+      await removeShare(owner, s().name, me);
+    } catch (err) {
+      toasts.push({ kind: "error", message: `Could not leave ${owner}'s session: ${(err as Error).message}` });
+    }
+    await props.store.refresh();
   };
 
   // ---- actions ----
@@ -1029,7 +1074,7 @@ export const SessionCard: Component<{
       {/* Nothing in the menu applies to a session that is leaving: Rename, the
           three Attach as rows and Move to are all about a session you are
           going to work in, and Kill is the thing already in flight. */}
-      <Show when={!foreign() && !killing()}>
+      <Show when={(!foreign() || guestDrives() || guestLeaves()) && !killing()}>
         <button
           class="tl-card-actions"
           aria-label="Session actions"
@@ -1072,7 +1117,38 @@ export const SessionCard: Component<{
       {/* `!killing()` covers the one path that dims a card with its menu open:
           the kill came from somewhere else while this row's popup was up, from
           the sidebar's Delete, the kill chord or the palette. */}
-      <Show when={menu.open() && !killing()}>
+      {/* A session shared with you: only what a guest may do. Kill asks
+          first, unlike your own sessions' kill, because there is no undo
+          for it here and the session is somebody else's. */}
+      <Show when={menu.open() && !killing() && foreign()}>
+        <div
+          class="tl-menu tl-menu-placed"
+          role="menu"
+          ref={menu.popup}
+          style={menu.style()}
+          onClick={stopMenuClick}
+          onKeyDown={stopMenuActivationKey}
+        >
+          <Show when={guestDrives()}>
+            <button class="tl-menu-item" role="menuitem" onClick={() => beginRename()}>
+              Rename
+            </button>
+            <button
+              class="tl-menu-item tl-menu-danger"
+              role="menuitem"
+              onClick={() => void guestKillSession()}
+            >
+              Kill…
+            </button>
+          </Show>
+          <Show when={guestLeaves()}>
+            <button class="tl-menu-item" role="menuitem" onClick={() => void leave()}>
+              Leave
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <Show when={menu.open() && !killing() && !foreign()}>
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}

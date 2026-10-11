@@ -8817,7 +8817,7 @@ body.tl-kb-up {
   display: flex;
   align-items: center;
   gap: 2px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -8856,7 +8856,7 @@ body.tl-kb-up {
 .tl-draft-peek-text {
   margin: 4px 0 0;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-primary);

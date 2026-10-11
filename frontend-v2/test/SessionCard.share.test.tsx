@@ -6,9 +6,8 @@ import type { Session } from "../src/types/lobby";
 import type { LobbyStore } from "../src/store/lobby";
 
 /**
- * Share… on the sidebar card's ⋯ menu, in an ordinary tab: offered on your own
- * session running Claude, not on one somebody shared with you or a plain
- * shell, and it opens the app-wide dialog for the session by tmux's id. The lens case is in
+ * Share… on the sidebar card's ⋯ menu, in an ordinary tab: offered on any
+ * session of your own, not on one somebody shared with you, and it opens the app-wide dialog for the session by tmux's id. The lens case is in
  * SessionCard.lens.test.tsx, which mocks `?as=`.
  */
 
@@ -66,17 +65,16 @@ describe("<SessionCard> Share…", () => {
   });
 
   it("is not offered on a session shared with you", () => {
-    // A foreign card draws no ⋯ at all today; if it ever gains one, Share…
-    // must still stay off it.
+    // A guest's menu has Rename, Kill and Leave; Share… stays off it.
     const { container } = card(session({ owner: "emo", access: "rw" }));
     const actions = container.querySelector<HTMLButtonElement>("button.tl-card-actions");
     if (actions) fireEvent.click(actions);
     expect(shareItem(container)).toBeUndefined();
   });
 
-  it("is not offered on a plain shell, which has no conversation to share", () => {
+  it("is offered on a plain shell too, whose dialog has People and no public link", () => {
     const { container } = card(session({ owner: "wizard", tool: "shell" }));
     openMenu(container);
-    expect(shareItem(container)).toBeUndefined();
+    expect(shareItem(container)).toBeDefined();
   });
 });

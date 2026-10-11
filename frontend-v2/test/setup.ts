@@ -102,3 +102,33 @@ if (typeof Element !== "undefined") {
     });
   }
 }
+
+/**
+ * An inert WebSocket, for components that open one as a side effect of
+ * mounting: the presence socket every on-screen SessionView holds (ADR-0043).
+ *
+ * jsdom's own WebSocket cannot run here. The browser export condition this
+ * config resolves with gives it `ws`'s browser stub, which rejects with "ws
+ * does not work in the browser" after the test has moved on, and vitest fails
+ * the run on that unhandled rejection. This one never connects and never
+ * fires. A test that drives a socket stubs its own with `vi.stubGlobal`.
+ */
+class InertWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: unknown }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(readonly url: string) {}
+  send(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+}
+globalThis.WebSocket = InertWebSocket as unknown as typeof WebSocket;
