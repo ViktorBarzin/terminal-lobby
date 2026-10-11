@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
-import { SLIDE_MS } from "../src/components/timeline.logic";
+import { SLIDE_MAX_MS as SLIDE_MS } from "../src/components/timeline.logic";
 import type { Event } from "../src/types/events";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({

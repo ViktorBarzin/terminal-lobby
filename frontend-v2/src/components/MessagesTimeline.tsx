@@ -23,9 +23,8 @@ import {
   MAX_QUEUED_SHOWN,
   sameRow,
   scrollTopAfterPrepend,
-  slideFrom,
+  slideMs,
   slideTop,
-  SLIDE_MS,
   statusText,
   visibleRows,
   type ContinuationRow,
@@ -740,11 +739,25 @@ export const MessagesTimeline: Component<{
     readerRow = null;
     if (!el || !row || !row.isConnected) return false;
     const target = Math.max(0, row.offsetTop - readerOffset);
-    if (target !== el.scrollTop) {
-      selfScrollTop = target;
-      el.scrollTop = target;
-    }
+    if (target !== el.scrollTop) putBack(el, target);
     return true;
+  };
+  /**
+   * Move the view by what landed above the reader, marked as this component's
+   * own scroll so its event is not read as the reader asking for more.
+   *
+   * Near the top, once a finger has lifted, the glide is stopped first. iOS
+   * carries a glide on through a scrollTop write, and a window lands at the top
+   * just as the flick that reached for it arrives there: the glide undid the
+   * write, the reader stayed at the top, and its next scroll event asked for
+   * another window (Viktor, 2026-10-11: "anchored to the top ... triggers more
+   * and more loading"). A finger still down is a drag, and taking the overflow
+   * from under it would end the drag.
+   */
+  const putBack = (el: HTMLElement, target: number): void => {
+    if (touchedLast && !touching && el.scrollTop <= EARLIER_TRIGGER_PX) haltGlide(el);
+    selfScrollTop = target;
+    el.scrollTop = target;
   };
 
   // Every change to the events, while the reader is scrolled up: the row is
@@ -815,7 +828,8 @@ export const MessagesTimeline: Component<{
       return;
     }
     if (holdReader() || !anchor) return;
-    el.scrollTop = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
+    const target = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
+    if (target !== el.scrollTop) putBack(el, target);
   };
 
   createEffect(() => {
@@ -1372,42 +1386,57 @@ export const MessagesTimeline: Component<{
       if (touchedLast) haltGlide(el);
       // The slide starts before the pin is set: setting it runs the effect
       // that follows the transcript, which would jump to the end first.
-      if (slide) slideToEnd(el);
-      else stickToBottom(el);
+      if (slide && slideToEnd(el)) {
+        // Pinned here, so "Latest" goes and the transcript is followed, but
+        // the store hears it on landing (see slideToEnd).
+        writePinned(true);
+        return;
+      }
+      stickToBottom(el);
     }
     setPinned(true);
   };
   /**
-   * Ease the view down to the live end over SLIDE_MS, so the reader sees which
-   * way the transcript went rather than having the screen replaced. The end is
-   * read again every frame: a reply streaming in moves it. Scroll events from
-   * the slide's own writes are ignored, and the pin's other writers stand back
-   * until it lands. A reader who asked the system for less motion gets the jump.
+   * Ease the view from where the reader is down to the live end, so they see
+   * which way the transcript went rather than having the screen replaced.
+   * False when it jumped instead: a reader who asked the system for less
+   * motion, or nothing to cover.
+   *
+   * The end is read again every frame: a reply streaming in moves it. Scroll
+   * events from the slide's own writes are ignored, and the pin's other writers
+   * stand back until it lands.
+   *
+   * The store is told the reader is at the end only on landing. It trims the
+   * transcript to its last turns when it hears that, and told at the press it
+   * took the turns the reader had paged in out from under the slide, so the
+   * view jumped to whatever then sat at its scrollTop before the first frame.
    */
-  const slideToEnd = (el: HTMLElement): void => {
-    const from = slideFrom(el.scrollTop, endOf(el), el.clientHeight);
+  const slideToEnd = (el: HTMLElement): boolean => {
+    const from = el.scrollTop;
     const still =
       typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (still || typeof requestAnimationFrame !== "function" || endOf(el) - from < 1) {
-      stickToBottom(el);
-      return;
-    }
-    el.scrollTop = from;
+    if (still || typeof requestAnimationFrame !== "function" || endOf(el) - from < 1) return false;
+    const duration = slideMs(endOf(el) - from);
     sliding = true;
     let start: number | undefined;
+    const land = (): void => {
+      sliding = false;
+      setPinned(true);
+    };
     const step = (now: number): void => {
       if (!sliding) return;
       if (untrack(() => props.hidden)) {
-        sliding = false;
+        land();
         return;
       }
       start ??= now;
       const elapsed = now - start;
-      el.scrollTop = slideTop(from, endOf(el), elapsed);
-      if (elapsed >= SLIDE_MS) sliding = false;
+      el.scrollTop = slideTop(from, endOf(el), elapsed, duration);
+      if (elapsed >= duration) land();
       else slideFrame = requestAnimationFrame(step);
     };
     slideFrame = requestAnimationFrame(step);
+    return true;
   };
   /**
    * Stop a finger's momentum scroll so the jump to the bottom holds. iOS
@@ -1552,10 +1581,7 @@ export const MessagesTimeline: Component<{
         // Marked only when the write actually MOVES anything: nothing was
         // inserted above (a failed load, an empty window) means no event of ours
         // is coming, and claiming one would swallow the reader's next scroll.
-        if (compensated !== el.scrollTop) {
-          selfScrollTop = compensated;
-          el.scrollTop = compensated;
-        }
+        if (compensated !== el.scrollTop) putBack(el, compensated);
       }
       setLoadingEarlier(false);
     }
@@ -1587,6 +1613,12 @@ export const MessagesTimeline: Component<{
     }
     selfScrollTop = null;
     if (!props.hasEarlier || loadingEarlier()) return;
+    // The last window's rows are still mounting a chunk per frame, behind the
+    // reader. Until they are up nothing above has moved, so a reader still at
+    // the top is the same reach that loaded them, not a new one: each scroll
+    // event of that gesture fetched another window (measured on 2026-10-11:
+    // three in 183ms, and the reader landed 5,051px down once they mounted).
+    if (filling()) return;
     if (el.scrollTop > EARLIER_TRIGGER_PX) return;
     void loadEarlier();
   };

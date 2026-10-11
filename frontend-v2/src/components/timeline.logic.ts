@@ -2841,29 +2841,32 @@ export function scrollTopAfterPrepend(
   return scrollTop + insertedAbove;
 }
 
-/** How long "Latest" takes to slide the transcript down to its live end. */
-export const SLIDE_MS = 360;
-/** How many screens of transcript the slide shows passing by at most. */
-const SLIDE_LEAD_SCREENS = 1.5;
+/** The longest "Latest" takes to slide the transcript down to its live end. */
+export const SLIDE_MAX_MS = 1000;
+const SLIDE_MIN_MS = 300;
+/** How much longer the slide takes per pixel it covers. */
+const SLIDE_MS_PER_PX = 0.06;
 
 /**
- * Where the slide to the live end starts. A reader a long way up jumps to a
- * screen and a half short of the end first: easing through tens of thousands
- * of pixels in a third of a second reads as a blur, not as motion.
+ * How long the slide to the live end takes for `distance` pixels: 300ms for a
+ * screen or so, growing with the way to go so a long one still reads as motion,
+ * and never more than a second.
  */
-export function slideFrom(scrollTop: number, end: number, viewport: number): number {
-  return Math.max(scrollTop, end - viewport * SLIDE_LEAD_SCREENS);
+export function slideMs(distance: number): number {
+  return Math.min(SLIDE_MAX_MS, SLIDE_MIN_MS + Math.max(0, distance) * SLIDE_MS_PER_PX);
 }
 
 /**
- * Where the slide sits `elapsed` ms in. Eases out, so it leaves quickly and
- * settles onto the end. `to` is read again every frame by the caller, since a
- * reply streaming in moves the end while the slide runs.
+ * Where the slide sits `elapsed` ms into a slide of `duration` ms. Eases in
+ * and out, so it visibly leaves from where the reader is and settles onto the
+ * end. `to` is read again every frame by the caller, since a reply streaming
+ * in moves the end while the slide runs.
  */
-export function slideTop(from: number, to: number, elapsed: number): number {
-  if (elapsed >= SLIDE_MS) return to;
-  const t = Math.max(0, elapsed) / SLIDE_MS;
-  return from + (to - from) * (1 - (1 - t) ** 3);
+export function slideTop(from: number, to: number, elapsed: number, duration: number): number {
+  if (elapsed >= duration) return to;
+  const t = Math.max(0, elapsed) / duration;
+  const eased = t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2;
+  return from + (to - from) * eased;
 }
 
 /**
