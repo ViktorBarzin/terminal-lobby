@@ -310,6 +310,11 @@ var knownEvents = map[string]bool{
 	"claude.prompt_steered": true,
 	"claude.answered":       true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
 	"claude.state_changed":  true, // running/awaiting/done transition (tl.to)
+	// A permission prompt the mod is holding (session-events/permissionasked.go):
+	// tl.tool, tl.tool_id, tl.agent, and tl.reason = Claude Code's own words for
+	// why the call needs approval, capped at 200 runes. Never the command or
+	// other tool input; tl.tool_id finds the call in the transcript.
+	"claude.permission_asked": true,
 	// A PERSON set the state by hand, correcting a dot the hooks got wrong
 	// (tl.from, tl.to). Its own name rather than claude.state_changed, which
 	// is the hook script's: one says what the conversation did, this one says

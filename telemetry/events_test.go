@@ -14,6 +14,7 @@ import (
 func TestEmittedNamesAreCatalogued(t *testing.T) {
 	emitted := []struct{ name, site string }{
 		{"claude.answered", "session-events/main.go POST /keys and POST /answer-text"},
+		{"claude.permission_asked", "session-events/permissionasked.go, a permission prompt the mod holds"},
 		{"file.attached", "clipboard-upload/main.go, an attachment under the size cap"},
 		{"session.grid_repinned", "tmux-api/repair_grid_pins.go, the stale-pin sweep"},
 		{"skill.edited", "skills-api/handlers.go, the skill editor's write"},

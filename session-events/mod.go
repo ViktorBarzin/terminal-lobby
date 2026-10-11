@@ -854,6 +854,8 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 			}
 		case sessionio.ModCommandFailedEvent:
 			c.commandFailed(ev)
+		case sessionio.ModPermissionEvent:
+			c.permissionAsked(ev)
 		}
 		fs.Feed(ev)
 		c.mu.Lock()
