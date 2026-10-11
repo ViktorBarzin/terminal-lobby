@@ -160,7 +160,24 @@ Server state in the share store; the owner grants, the owner or guest removes.
 Pinned to one session by its `session_id` and `session_created`, so a grant
 ends with its session rather than passing to the next session that takes the
 same name (2026-10-06). The lobby has no screen for named shares since the
-vanilla lobby went; they are made through `POST /shares`.
+vanilla lobby went; they are made through `POST /shares`. Designed 2026-10-11
+(ADR-0043): made from the People half of **Share…**, and the same access check
+covers the terminal, the Text view and the composer, so a read-write guest
+drives through every surface.
+
+**Guest**:
+The account a **Share** names, or a project **Member** reaching a session they
+do not own. Watches or drives at the share's **Attach mode**, always as the
+**Owner**. May rename, answer and kill, but cannot share the session onward.
+Prompts a guest sends from the composer carry the guest's name as their sender.
+_Avoid_: collaborator, participant, invitee, visitor (a visitor holds a **Link**)
+
+**Present**:
+Has the session open in a lobby tab right now, terminal or Text view, by
+heartbeat. Covers the owner's own devices and every **Guest**. The session bar
+names who is present; the composer says who else is typing.
+_Avoid_: online, attached (attached means a tmux client), viewing (the
+anonymous count on a **Link**)
 
 **Link** (public link):
 A URL, `/s/#<token>`, that shows one session's Claude conversation to
