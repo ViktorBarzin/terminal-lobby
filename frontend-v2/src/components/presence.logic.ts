@@ -83,9 +83,31 @@ const MATCH_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 const norm = (s: string): string => s.trim();
 
+/** How many distinct colours messages are drawn in (app.css `[data-who]`). */
+export const SENDER_COLORS = 6;
+
 /**
- * Which message each sender record belongs to, as row key → the sender's
- * name. Empty until someone other than the owner has sent, so a session
+ * Each person's colour on a session, as an index into the palette (ADR-0043).
+ * The owner first, then everyone who has sent in the order they first did,
+ * then anyone present who has not sent yet, by account name. Every screen on
+ * the session sees the same records and the same people, so they all agree.
+ */
+export function sessionColors(
+  owner: string,
+  senders: readonly SenderRecord[],
+  people: readonly PresencePerson[],
+): Map<string, number> {
+  const order: string[] = [owner];
+  const add = (user: string) => {
+    if (user && !order.includes(user)) order.push(user);
+  };
+  for (const s of [...senders].sort((a, b) => a.at - b.at)) add(s.user);
+  for (const user of [...new Set(people.map((p) => p.user))].sort()) add(user);
+  return new Map(order.map((user, i) => [user, i % SENDER_COLORS]));
+}
+
+/**
+ * Which message each sender record belongs to, as row key → the record. Empty until someone other than the owner has sent, so a session
  * nobody shared reads as it always has.
  *
  * A record matches a message with the same words sent no more than
@@ -97,8 +119,8 @@ export function attributeSenders(
   rows: readonly AttributableRow[],
   senders: readonly SenderRecord[],
   owner: string,
-): Map<string, string> {
-  const out = new Map<string, string>();
+): Map<string, SenderRecord> {
+  const out = new Map<string, SenderRecord>();
   if (!senders.some((s) => s.user !== owner)) return out;
   const used = new Set<number>();
   for (const row of rows) {
@@ -109,7 +131,7 @@ export function attributeSenders(
       if (row.at !== undefined && (s.at > row.at + 60_000 || row.at - s.at > MATCH_WINDOW_MS))
         continue;
       used.add(i);
-      out.set(row.key, s.name);
+      out.set(row.key, s);
       break;
     }
   }

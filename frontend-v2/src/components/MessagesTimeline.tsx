@@ -15,7 +15,7 @@ import {
   type Setter,
 } from "solid-js";
 import { usePresence } from "../store/presence";
-import { attributeSenders } from "./presence.logic";
+import { attributeSenders, sessionColors } from "./presence.logic";
 import type { Event } from "../types/events";
 import { diag } from "../telemetry/diag";
 import {
@@ -87,8 +87,9 @@ const SendingSpinner: Component = () => (
 
 const UserRowView: Component<{
   row: UserRow;
-  /** Who sent it, on a session someone else has sent into (ADR-0043). */
-  sender?: string;
+  /** Who sent it and their colour, on a session someone other than its
+   *  owner has sent into (ADR-0043). */
+  sender?: { name: string; color: number };
   /** effective OS user — decides whether a store path is ours to fetch. */
   me?: string;
   /** the session, whose transcript holds the prompt's pasted pictures. */
@@ -114,10 +115,16 @@ const UserRowView: Component<{
       <Show when={props.row.steer && props.row.sending}>
         <span class="tl-steer-wait">Waiting for the agent to read it</span>
       </Show>
-      <Show when={props.sender}>
-        <span class="tl-user-sender">{props.sender}</span>
-      </Show>
-      <div class="tl-bubble-user">
+      {/* Who sent it is the bubble's colour (ADR-0043); the presence chip is
+          the key. The name is the tooltip, and read out before the text. */}
+      <div
+        class="tl-bubble-user"
+        data-who={props.sender?.color}
+        title={props.sender ? `Sent by ${props.sender.name}` : undefined}
+      >
+        <Show when={props.sender}>
+          {(who) => <span class="tl-sr-only">{who().name}: </span>}
+        </Show>
         {/* Still a <pre>: the message's own whitespace is significant, and an
             <img>/<button> is phrasing content, so substituting a path in place
             costs the surrounding text nothing. */}
@@ -581,9 +588,15 @@ export const MessagesTimeline: Component<{
    */
   const presenceView = usePresence();
   const senders = createMemo(() => {
-    if (!presenceView) return new Map<string, string>();
+    const out = new Map<string, { name: string; color: number }>();
+    if (!presenceView) return out;
+    const records = presenceView.presence.senders();
     const users = derived().flatMap((r) => (r.kind === "user" && !r.steer ? [r] : []));
-    return attributeSenders(users, presenceView.presence.senders(), presenceView.owner);
+    const byRow = attributeSenders(users, records, presenceView.owner);
+    if (byRow.size === 0) return out;
+    const colors = sessionColors(presenceView.owner, records, presenceView.presence.people());
+    for (const [key, rec] of byRow) out.set(key, { name: rec.name, color: colors.get(rec.user) ?? 0 });
+    return out;
   });
   /**
    * The Browsing runs, and which row each run's card is drawn after.

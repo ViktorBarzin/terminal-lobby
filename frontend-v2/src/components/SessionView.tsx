@@ -89,7 +89,7 @@ import { watchStale } from "../telemetry/stale";
 import { effectiveTier } from "../diagnostics/connection";
 import { SessionOwnerProvider } from "../lib/session-owner";
 import { createPresence, PresenceProvider } from "../store/presence";
-import { othersPresent, presentLabel } from "./presence.logic";
+import { othersPresent, presentLabel, sessionColors } from "./presence.logic";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -490,13 +490,25 @@ export const SessionView: Component<{
   const presence = createPresence({ session, owner: foreignOwner, active: onScreen });
   const presenceView = {
     presence,
-    owner: foreignOwner ?? props.me?.() ?? "",
+    // Read live: `me` can still be loading when the view mounts, and an empty
+    // owner would make every sender look like a guest.
+    get owner() {
+      return foreignOwner ?? props.me?.() ?? "";
+    },
     get me() {
       return props.me?.() ?? "";
     },
   };
-  /** The bar's "emo here", empty while you are alone. */
-  const present = createMemo(() => presentLabel(othersPresent(presence.people(), props.me?.())));
+  /** Who else is here, each in the colour their messages are drawn in, so
+   *  the chip is the key to the bubbles (ADR-0043). Empty while you are alone. */
+  const others = createMemo(() => {
+    const colors = sessionColors(presenceView.owner, presence.senders(), presence.people());
+    return othersPresent(presence.people(), props.me?.()).map((p) => ({
+      p,
+      color: colors.get(p.user) ?? 0,
+    }));
+  });
+  const present = createMemo(() => presentLabel(others().map((o) => o.p)));
   /**
    * This view is the one the KEYSTROKES are going to.
    *
@@ -1719,8 +1731,15 @@ export const SessionView: Component<{
               anonymous link count beside it. */}
             <Show when={present()}>
               <span class="tl-bar-present" role="status" title={present()}>
-                <span class="tl-bar-present-dot" aria-hidden="true" />
-                <span class="tl-bar-present-text">{present()}</span>
+                <span class="tl-sr-only">{present()}</span>
+                <For each={others()}>
+                  {(o) => (
+                    <span class="tl-bar-present-who" aria-hidden="true">
+                      <span class="tl-bar-present-dot" data-who={o.color} />
+                      {o.p.mode === "ro" ? `${o.p.name} (watching)` : o.p.name}
+                    </span>
+                  )}
+                </For>
               </span>
             </Show>
             <Show when={linkViewers()}>

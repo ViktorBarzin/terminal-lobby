@@ -1,6 +1,6 @@
 import { createMemo, Index, Show, type Component } from "solid-js";
 import { usePresence } from "../store/presence";
-import { draftState, othersPresent } from "./presence.logic";
+import { draftState, othersPresent, sessionColors } from "./presence.logic";
 
 /**
  * What the other people on a shared session are typing, live, above the
@@ -14,8 +14,9 @@ export const DraftPeeks: Component = () => {
   const drafting = createMemo(() => {
     if (!view) return [];
     const now = view.presence.serverNow();
+    const colors = sessionColors(view.owner, view.presence.senders(), view.presence.people());
     return othersPresent(view.presence.people(), view.me)
-      .map((p) => ({ p, state: draftState(p, now) }))
+      .map((p) => ({ p, state: draftState(p, now), color: colors.get(p.user) ?? 0 }))
       .filter((d) => d.state !== "none");
   });
   return (
@@ -26,7 +27,7 @@ export const DraftPeeks: Component = () => {
             dots) each time. */}
         <Index each={drafting()}>
           {(d) => (
-            <div class="tl-draft-peek" data-state={d().state}>
+            <div class="tl-draft-peek" data-state={d().state} data-who={d().color}>
               <span class="tl-draft-peek-who">
                 {d().p.name}
                 <span class="tl-draft-peek-what">

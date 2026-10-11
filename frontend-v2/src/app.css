@@ -8808,19 +8808,42 @@ body.tl-kb-up {
 }
 
 /* ---- shared driving (ADR-0043) -------------------------------------------
-   Who sent a message, once someone other than the owner has sent into the
-   session: a small name beside the bubble, like the steer wait above. */
-.tl-user-sender {
-  flex: none;
-  margin-bottom: 10px;
-  font-size: 0.75em;
-  color: var(--text-muted);
-  white-space: nowrap;
+   Who sent a message is its colour, once someone other than the owner has
+   sent into the session (presence.logic sessionColors). Six hues that read on
+   the dark and the light themes alike, each tinting the theme's own bubble and
+   edging it, so a theme keeps its look. The same `data-who` colours a live
+   draft and the presence chip's dot, which is the key. */
+:root {
+  --tl-who-0: #4c8dff;
+  --tl-who-1: #e0a43a;
+  --tl-who-2: #3fb68b;
+  --tl-who-3: #b07be6;
+  --tl-who-4: #e5706a;
+  --tl-who-5: #2bb3c0;
+}
+[data-who="0"] {
+  --tl-who: var(--tl-who-0);
+}
+[data-who="1"] {
+  --tl-who: var(--tl-who-1);
+}
+[data-who="2"] {
+  --tl-who: var(--tl-who-2);
+}
+[data-who="3"] {
+  --tl-who: var(--tl-who-3);
+}
+[data-who="4"] {
+  --tl-who: var(--tl-who-4);
+}
+[data-who="5"] {
+  --tl-who: var(--tl-who-5);
+}
+.tl-bubble-user[data-who] {
+  background: color-mix(in srgb, var(--tl-who) 22%, var(--bubble));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tl-who) 55%, transparent);
 }
 
-/* What the others on the session are typing, above the composer: one block
-   per person, name first, the draft read-only and capped at four lines so it
-   cannot push the conversation away. */
 .tl-draft-peeks {
   display: flex;
   flex-direction: column;
@@ -8840,6 +8863,13 @@ body.tl-kb-up {
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   min-width: 0;
+}
+.tl-draft-peek[data-who] {
+  border-color: color-mix(in srgb, var(--tl-who) 60%, transparent);
+  background: color-mix(in srgb, var(--tl-who) 8%, transparent);
+}
+.tl-draft-peek[data-who] .tl-draft-peek-dots span {
+  background: var(--tl-who);
 }
 .tl-draft-peek[data-state="resting"] {
   opacity: 0.7;

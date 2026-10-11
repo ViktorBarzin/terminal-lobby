@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   attributeSenders,
   draftState,
+  SENDER_COLORS,
+  sessionColors,
   othersPresent,
   presentLabel,
   type PresencePerson,
@@ -85,8 +87,8 @@ describe("attributeSenders", () => {
       [rec("hello", 900, "wizard", "vbarzin"), rec("check the release", 4_800, "emo")],
       "wizard",
     );
-    expect(got.get("u1")).toBe("vbarzin");
-    expect(got.get("u2")).toBe("emo");
+    expect(got.get("u1")?.name).toBe("vbarzin");
+    expect(got.get("u2")?.user).toBe("emo");
     expect(got.has("u3")).toBe(false);
   });
 
@@ -100,8 +102,8 @@ describe("attributeSenders", () => {
       [rec("yes", 900, "emo"), rec("yes", 59_000, "wizard")],
       "wizard",
     );
-    expect(got.get("u1")).toBe("emo");
-    expect(got.get("u2")).toBe("wizard");
+    expect(got.get("u1")?.user).toBe("emo");
+    expect(got.get("u2")?.user).toBe("wizard");
   });
 
   it("ignores a record from long before the message", () => {
@@ -111,6 +113,39 @@ describe("attributeSenders", () => {
 
   it("matches across trailing whitespace", () => {
     const rows = [{ key: "u1", body: "hello\n", at: 1_000 }];
-    expect(attributeSenders(rows, [rec("  hello", 900, "emo")], "wizard").get("u1")).toBe("emo");
+    expect(attributeSenders(rows, [rec("  hello", 900, "emo")], "wizard").get("u1")?.user).toBe("emo");
+  });
+});
+
+describe("sessionColors", () => {
+  const rec = (user: string, at: number): SenderRecord => ({ text: "x", at, user, name: user });
+
+  it("gives the owner the first colour, then senders in the order they first sent", () => {
+    const got = sessionColors("wizard", [rec("emo", 5), rec("bob", 9), rec("emo", 12)], []);
+    expect(got.get("wizard")).toBe(0);
+    expect(got.get("emo")).toBe(1);
+    expect(got.get("bob")).toBe(2);
+  });
+
+  it("colours someone present who has not sent yet after everyone who has", () => {
+    const got = sessionColors(
+      "wizard",
+      [rec("emo", 5)],
+      [person({ id: "1", user: "zed" }), person({ id: "2", user: "ann" }), person({ id: "3", user: "emo" })],
+    );
+    expect([got.get("wizard"), got.get("emo"), got.get("ann"), got.get("zed")]).toEqual([0, 1, 2, 3]);
+  });
+
+  it("is the same on every screen, whoever is looking", () => {
+    const senders = [rec("emo", 5), rec("wizard", 7)];
+    const people = [person({ id: "a", user: "wizard" }), person({ id: "b", user: "emo" })];
+    expect([...sessionColors("wizard", senders, people)]).toEqual([
+      ...sessionColors("wizard", [...senders], [...people].reverse()),
+    ]);
+  });
+
+  it("wraps round the palette past its last colour", () => {
+    const many = Array.from({ length: SENDER_COLORS + 1 }, (_, i) => rec(`u${i}`, i));
+    expect(sessionColors("owner", many, []).get(`u${SENDER_COLORS - 1}`)).toBe(0);
   });
 });

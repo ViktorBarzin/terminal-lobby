@@ -1960,14 +1960,21 @@
   color: var(--text-primary);
   white-space: nowrap;
 }
+.tl-bar-present {
+  overflow: hidden;
+}
+/* One name per person, each after a dot in their message colour (app.css
+   [data-who]), so the chip is the key to the coloured bubbles. */
+.tl-bar-present-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
 .tl-bar-present-dot {
   flex: none;
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--state-done);
-}
-.tl-bar-present-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: var(--tl-who, var(--state-done));
 }
