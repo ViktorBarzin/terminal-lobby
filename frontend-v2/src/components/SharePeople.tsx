@@ -1,6 +1,13 @@
 import { For, Show, createMemo, createSignal, onMount, type Component } from "solid-js";
 import { listUsers } from "../lib/lobby-api";
-import { createShare, inviteUrl, listShares, removeShare, type ShareMode, type ShareView } from "../lib/shares-api";
+import {
+  createShare,
+  inviteUrl,
+  listShares,
+  removeShare,
+  type ShareMode,
+  type ShareView,
+} from "../lib/shares-api";
 import { copyText } from "./copy-text";
 import { Group, Row } from "./settings/controls";
 
@@ -48,7 +55,9 @@ export const SharePeople: Component<{
   });
 
   const mine = createMemo(() =>
-    (shares() ?? []).filter((s) => s.owner === props.me && s.name === props.name).sort((a, b) => a.guest.localeCompare(b.guest)),
+    (shares() ?? [])
+      .filter((s) => s.owner === props.me && s.name === props.name)
+      .sort((a, b) => a.guest.localeCompare(b.guest)),
   );
   /** Everyone who could still be invited: not you, not already in. */
   const candidates = createMemo(() => {
@@ -88,10 +97,15 @@ export const SharePeople: Component<{
 
   return (
     <Group title="People">
-      <Show when={shares() !== null} fallback={<div class="tl-set-hint tl-set-hint-static">Loading…</div>}>
+      <Show
+        when={shares() !== null}
+        fallback={<div class="tl-set-hint tl-set-hint-static">Loading…</div>}
+      >
         <Show
           when={mine().length > 0}
-          fallback={<div class="tl-set-hint tl-set-hint-static">Only you can open this session.</div>}
+          fallback={
+            <div class="tl-set-hint tl-set-hint-static">Only you can open this session.</div>
+          }
         >
           <For each={mine()}>
             {(s) => (

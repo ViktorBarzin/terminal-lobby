@@ -33,12 +33,19 @@ const TYPING_MS = 4000;
  * other devices are you, not company. When an account has several tabs, the
  * one holding a draft speaks for it.
  */
-export function othersPresent(people: readonly PresencePerson[], me: string | undefined): PresencePerson[] {
+export function othersPresent(
+  people: readonly PresencePerson[],
+  me: string | undefined,
+): PresencePerson[] {
   const byUser = new Map<string, PresencePerson>();
   for (const p of people) {
     if (p.user === me) continue;
     const seen = byUser.get(p.user);
-    if (!seen || (!seen.draft && p.draft) || (seen.mode === "ro" && p.mode === "rw" && !seen.draft)) {
+    if (
+      !seen ||
+      (!seen.draft && p.draft) ||
+      (seen.mode === "ro" && p.mode === "rw" && !seen.draft)
+    ) {
       byUser.set(p.user, p);
     }
   }
@@ -49,7 +56,10 @@ export function othersPresent(people: readonly PresencePerson[], me: string | un
 export function presentLabel(others: readonly PresencePerson[]): string {
   if (others.length === 0) return "";
   const names = others.map((p) => (p.mode === "ro" ? `${p.name} (watching)` : p.name));
-  const shown = names.length > 3 ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more` : names.join(", ");
+  const shown =
+    names.length > 3
+      ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`
+      : names.join(", ");
   return `${shown} here`;
 }
 
@@ -96,7 +106,8 @@ export function attributeSenders(
     for (const [i, s] of senders.entries()) {
       if (used.has(i)) continue;
       if (norm(s.text) !== body) continue;
-      if (row.at !== undefined && (s.at > row.at + 60_000 || row.at - s.at > MATCH_WINDOW_MS)) continue;
+      if (row.at !== undefined && (s.at > row.at + 60_000 || row.at - s.at > MATCH_WINDOW_MS))
+        continue;
       used.add(i);
       out.set(row.key, s.name);
       break;

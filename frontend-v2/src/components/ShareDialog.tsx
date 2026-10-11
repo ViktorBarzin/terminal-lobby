@@ -123,7 +123,6 @@ export const LinkRow: Component<{
   );
 };
 
-
 /**
  * The Share dialog (docs/plans/2026-10-06-public-links-design.md, "What the
  * owner sees"): the session's public links and a form for a new one.
@@ -238,114 +237,116 @@ export const ShareDialog: Component<{
                 (ADR-0043). Any session of yours; a public link needs Claude. */}
             <Show when={session()}>{(s) => <SharePeople name={s().name} me={props.me} />}</Show>
             <Show when={!session() || canLink(session() ?? {})}>
-            <Group title="Public links">
-              <Show
-                when={links() !== null}
-                fallback={<div class="tl-set-hint tl-set-hint-static">Loading…</div>}
-              >
+              <Group title="Public links">
                 <Show
-                  when={mine().length > 0}
-                  fallback={
-                    <div class="tl-set-hint tl-set-hint-static">
-                      No public links to this session.
+                  when={links() !== null}
+                  fallback={<div class="tl-set-hint tl-set-hint-static">Loading…</div>}
+                >
+                  <Show
+                    when={mine().length > 0}
+                    fallback={
+                      <div class="tl-set-hint tl-set-hint-static">
+                        No public links to this session.
+                      </div>
+                    }
+                  >
+                    <For each={mine()}>
+                      {(l) => <LinkRow link={l} now={now()} onRevoke={(id) => void revoke(id)} />}
+                    </For>
+                  </Show>
+                </Show>
+                <Show when={error()}>
+                  <div class="tl-set-hint tl-set-hint-static">{error()}</div>
+                </Show>
+              </Group>
+
+              <Show when={created()}>
+                {(url) => (
+                  <Group title="Your new link">
+                    <div class="tl-share-url">
+                      <input
+                        ref={urlEl}
+                        class="tl-share-url-field"
+                        type="text"
+                        readOnly
+                        value={url()}
+                        aria-label="Link URL"
+                        onFocus={(e) => e.currentTarget.select()}
+                      />
+                      <button
+                        type="button"
+                        class="tl-set-btn tl-set-btn-go"
+                        onClick={() => void copy()}
+                      >
+                        Copy
+                      </button>
                     </div>
+                    <div class="tl-set-note">
+                      Copy it now; it can't be shown again.
+                      <Show when={copied()}> {copied()}.</Show>
+                    </div>
+                  </Group>
+                )}
+              </Show>
+
+              <Group title="New link">
+                <Show
+                  when={session()}
+                  fallback={
+                    <div class="tl-set-hint tl-set-hint-static">This session has ended.</div>
                   }
                 >
-                  <For each={mine()}>
-                    {(l) => <LinkRow link={l} now={now()} onRevoke={(id) => void revoke(id)} />}
-                  </For>
-                </Show>
-              </Show>
-              <Show when={error()}>
-                <div class="tl-set-hint tl-set-hint-static">{error()}</div>
-              </Show>
-            </Group>
-
-            <Show when={created()}>
-              {(url) => (
-                <Group title="Your new link">
-                  <div class="tl-share-url">
+                  <div class="tl-set-note">
+                    Anyone with the link reads this conversation as it happens, and after the
+                    session ends, until the link expires or you revoke it. Tool output is included.
+                    Nobody can type into the session through it.
+                  </div>
+                  <Row label="Lifetime">
+                    <div class="tl-set-seg" role="radiogroup" aria-label="Lifetime">
+                      <For each={LINK_TTLS}>
+                        {(t) => (
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={ttl() === t}
+                            classList={{ active: ttl() === t }}
+                            onClick={() => setTtl(t)}
+                          >
+                            {TTL_LABELS[t]}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Row>
+                  <Row label="Note" labelFor="tl-share-note">
                     <input
-                      ref={urlEl}
-                      class="tl-share-url-field"
+                      id="tl-share-note"
+                      class="tl-share-note-field"
                       type="text"
-                      readOnly
-                      value={url()}
-                      aria-label="Link URL"
-                      onFocus={(e) => e.currentTarget.select()}
+                      maxLength={80}
+                      placeholder="Only you see this"
+                      value={note()}
+                      onInput={(e) => setNote(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void create();
+                      }}
                     />
+                  </Row>
+                  <div class="tl-share-actions">
                     <button
                       type="button"
                       class="tl-set-btn tl-set-btn-go"
-                      onClick={() => void copy()}
+                      disabled={busy()}
+                      onClick={() => void create()}
                     >
-                      Copy
+                      Create link
                     </button>
                   </div>
-                  <div class="tl-set-note">
-                    Copy it now; it can't be shown again.
-                    <Show when={copied()}> {copied()}.</Show>
-                  </div>
-                </Group>
-              )}
-            </Show>
-
-            <Group title="New link">
-              <Show
-                when={session()}
-                fallback={<div class="tl-set-hint tl-set-hint-static">This session has ended.</div>}
-              >
-                <div class="tl-set-note">
-                  Anyone with the link reads this conversation as it happens, and after the session
-                  ends, until the link expires or you revoke it. Tool output is included. Nobody can
-                  type into the session through it.
-                </div>
-                <Row label="Lifetime">
-                  <div class="tl-set-seg" role="radiogroup" aria-label="Lifetime">
-                    <For each={LINK_TTLS}>
-                      {(t) => (
-                        <button
-                          type="button"
-                          role="radio"
-                          aria-checked={ttl() === t}
-                          classList={{ active: ttl() === t }}
-                          onClick={() => setTtl(t)}
-                        >
-                          {TTL_LABELS[t]}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Row>
-                <Row label="Note" labelFor="tl-share-note">
-                  <input
-                    id="tl-share-note"
-                    class="tl-share-note-field"
-                    type="text"
-                    maxLength={80}
-                    placeholder="Only you see this"
-                    value={note()}
-                    onInput={(e) => setNote(e.currentTarget.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void create();
-                    }}
-                  />
-                </Row>
-                <div class="tl-share-actions">
-                  <button
-                    type="button"
-                    class="tl-set-btn tl-set-btn-go"
-                    disabled={busy()}
-                    onClick={() => void create()}
-                  >
-                    Create link
-                  </button>
-                </div>
-              </Show>
-              <Show when={status()}>
-                <div class="tl-set-hint tl-set-hint-static">{status()}</div>
-              </Show>
-            </Group>
+                </Show>
+                <Show when={status()}>
+                  <div class="tl-set-hint tl-set-hint-static">{status()}</div>
+                </Show>
+              </Group>
             </Show>
           </div>
           <div class="tl-restore-footer">

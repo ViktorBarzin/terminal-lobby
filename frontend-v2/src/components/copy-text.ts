@@ -4,7 +4,10 @@
  * works in both cases. When neither does, the text is left selected so a
  * keyboard copy is one keystroke away.
  */
-export async function copyText(text: string, field: HTMLInputElement | undefined): Promise<boolean> {
+export async function copyText(
+  text: string,
+  field: HTMLInputElement | undefined,
+): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;

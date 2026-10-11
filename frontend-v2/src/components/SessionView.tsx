@@ -1976,78 +1976,80 @@ export const SessionView: Component<{
           ref={textSection}
         >
           <SessionOwnerProvider value={foreignOwner}>
-          <PresenceProvider value={presenceView}>
-          <TextView
-            onScreen={onScreen()}
-            textShown={mode() === "text"}
-            onLiveState={setTextLive}
-            parked={store.parked()}
-            events={store.events}
-            rows={rows}
-            background={props.background}
-            claudeState={props.claudeState}
-            agents={store.agents}
-            tool={props.tool}
-            pending={pending()}
-            onSend={send}
-            onStop={stop}
-            onUnqueue={store.unqueue}
-            onCancelQueued={store.cancelQueued}
-            onEditQueuedStart={store.editQueuedStart}
-            queuedEdit={store.editingQueued}
-            onQueuedEditDraft={store.setQueuedDraft}
-            onQueuedEditEnd={store.endQueuedEdit}
-            onResolve={resolve}
-            sendToTerminal={coarse() ? sendBytesToPty : undefined}
-            onOpenPreview={(path) => void preview.open(path)}
-            onKeys={store.answer}
-            onPane={store.pane}
-            onAnswer={store.answerOne}
-            notify={props.notify}
-            onCommands={store.commands}
-            pendingPrompts={store.pendingPrompts}
-            opening={store.opening()}
-            onLoadFull={store.fullResult}
-            onLoadEarlier={async () => {
-              await store.loadEarlier();
-            }}
-            hasEarlier={store.hasEarlier()}
-            onPinned={store.setPinnedToBottom}
-            pinned={store.pinned()}
-            onOpenTerminal={() => setMode("terminal")}
-            stream={store.stream}
-            noMod={store.noMod()}
-            claudeExited={store.claudeExited()}
-            starting={store.starting()}
-            sessionState={store.state()}
-            onListDir={listDir}
-            session={session()}
-            me={props.me?.() ?? ""}
-            harness={modelHarness(props.tool?.())}
-            onSetModel={setModel}
-            suspended={() => props.suspended?.() ?? false}
-            // A shell has no transcript, and session-events registers only
-            // Claude's (a Codex stream answers 404).
-            noTranscript={
-              props.tool?.() === "shell"
-                ? "shell"
-                : props.tool?.() === "codex"
-                  ? "codex"
-                  : undefined
-            }
-            onSetMode={(m) => setSessionMode({ session: session(), owner: foreignOwner, mode: m })}
-            stampedModel={piReading()}
-            modelOffer={piOffer()}
-            onAttach={attachFiles}
-            inertReason={inertReason()}
-            // The line's Take control: the same toggle the header's Watch
-            // button flips, offered where the line says this device is only
-            // watching.
-            onTakeControl={watchOnlyShare() ? undefined : () => toggleWatch()}
-            register={(api) => (composer = api)}
-            browser={browserCards}
-          />
-          </PresenceProvider>
+            <PresenceProvider value={presenceView}>
+              <TextView
+                onScreen={onScreen()}
+                textShown={mode() === "text"}
+                onLiveState={setTextLive}
+                parked={store.parked()}
+                events={store.events}
+                rows={rows}
+                background={props.background}
+                claudeState={props.claudeState}
+                agents={store.agents}
+                tool={props.tool}
+                pending={pending()}
+                onSend={send}
+                onStop={stop}
+                onUnqueue={store.unqueue}
+                onCancelQueued={store.cancelQueued}
+                onEditQueuedStart={store.editQueuedStart}
+                queuedEdit={store.editingQueued}
+                onQueuedEditDraft={store.setQueuedDraft}
+                onQueuedEditEnd={store.endQueuedEdit}
+                onResolve={resolve}
+                sendToTerminal={coarse() ? sendBytesToPty : undefined}
+                onOpenPreview={(path) => void preview.open(path)}
+                onKeys={store.answer}
+                onPane={store.pane}
+                onAnswer={store.answerOne}
+                notify={props.notify}
+                onCommands={store.commands}
+                pendingPrompts={store.pendingPrompts}
+                opening={store.opening()}
+                onLoadFull={store.fullResult}
+                onLoadEarlier={async () => {
+                  await store.loadEarlier();
+                }}
+                hasEarlier={store.hasEarlier()}
+                onPinned={store.setPinnedToBottom}
+                pinned={store.pinned()}
+                onOpenTerminal={() => setMode("terminal")}
+                stream={store.stream}
+                noMod={store.noMod()}
+                claudeExited={store.claudeExited()}
+                starting={store.starting()}
+                sessionState={store.state()}
+                onListDir={listDir}
+                session={session()}
+                me={props.me?.() ?? ""}
+                harness={modelHarness(props.tool?.())}
+                onSetModel={setModel}
+                suspended={() => props.suspended?.() ?? false}
+                // A shell has no transcript, and session-events registers only
+                // Claude's (a Codex stream answers 404).
+                noTranscript={
+                  props.tool?.() === "shell"
+                    ? "shell"
+                    : props.tool?.() === "codex"
+                      ? "codex"
+                      : undefined
+                }
+                onSetMode={(m) =>
+                  setSessionMode({ session: session(), owner: foreignOwner, mode: m })
+                }
+                stampedModel={piReading()}
+                modelOffer={piOffer()}
+                onAttach={attachFiles}
+                inertReason={inertReason()}
+                // The line's Take control: the same toggle the header's Watch
+                // button flips, offered where the line says this device is only
+                // watching.
+                onTakeControl={watchOnlyShare() ? undefined : () => toggleWatch()}
+                register={(api) => (composer = api)}
+                browser={browserCards}
+              />
+            </PresenceProvider>
           </SessionOwnerProvider>
         </section>
         <section

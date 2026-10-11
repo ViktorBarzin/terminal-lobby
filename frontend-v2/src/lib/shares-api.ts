@@ -39,7 +39,11 @@ export async function listShares(): Promise<ShareView[]> {
 }
 
 /** POST /shares: invite `guest` to your session `name`, or change their mode. */
-export async function createShare(body: { name: string; guest: string; mode: ShareMode }): Promise<void> {
+export async function createShare(body: {
+  name: string;
+  guest: string;
+  mode: ShareMode;
+}): Promise<void> {
   const res = await fetchWithDeadline(apiUrl("/shares"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

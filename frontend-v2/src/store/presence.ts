@@ -1,4 +1,11 @@
-import { createContext, createEffect, createSignal, onCleanup, useContext, type Accessor } from "solid-js";
+import {
+  createContext,
+  createEffect,
+  createSignal,
+  onCleanup,
+  useContext,
+  type Accessor,
+} from "solid-js";
 import { presenceUrl } from "../lib/config";
 import type { WebSocketLike } from "../lib/browser-stream";
 import { wsScheme } from "../terminal/wire";

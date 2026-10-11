@@ -44,7 +44,10 @@ const share = (over: Partial<ShareView>): ShareView => ({
 
 describe("SharePeople", () => {
   it("lists who may open this session, and not another session's guests", async () => {
-    stubApi([share({}), share({ name: "other", guest: "bob" }), share({ owner: "emo", guest: "viktor" })], []);
+    stubApi(
+      [share({}), share({ name: "other", guest: "bob" }), share({ owner: "emo", guest: "viktor" })],
+      [],
+    );
     render(() => <SharePeople name="auth" me="viktor" />);
     await screen.findByText("emo");
     expect(screen.queryByText("bob")).toBeNull();
@@ -86,7 +89,9 @@ describe("SharePeople", () => {
   it("offers the session's link once someone has access", async () => {
     stubApi([share({})], []);
     render(() => <SharePeople name="auth" me="viktor" />);
-    const field = (await screen.findByLabelText("Session link for the people above")) as HTMLInputElement;
+    const field = (await screen.findByLabelText(
+      "Session link for the people above",
+    )) as HTMLInputElement;
     expect(field.value).toMatch(/\/#auth@viktor$/);
   });
 });

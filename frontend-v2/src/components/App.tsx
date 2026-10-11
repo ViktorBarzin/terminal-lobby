@@ -3281,7 +3281,14 @@ export const App: Component = () => {
       {/* The Share dialog, once for the app rather than inside the card that
           opens it: see store/share-dialog.ts. */}
       <Show when={shareTarget()}>
-        {(t) => <ShareDialog target={t()} me={store.me()} sessions={() => store.sessions} onClose={closeShare} />}
+        {(t) => (
+          <ShareDialog
+            target={t()}
+            me={store.me()}
+            sessions={() => store.sessions}
+            onClose={closeShare}
+          />
+        )}
       </Show>
 
       <Show when={palette.isOpen()}>

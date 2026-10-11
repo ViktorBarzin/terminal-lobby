@@ -77,7 +77,11 @@ describe("createPresence", () => {
     s.open();
     s.frame({ t: "hello", id: "me1" });
     s.frame({ t: "senders", senders: [{ text: "a", at: 1, user: "emo", name: "emo" }] });
-    s.frame({ t: "room", now: Date.now() + 5000, people: [{ id: "me1", user: "wizard", name: "w", mode: "rw" }] });
+    s.frame({
+      t: "room",
+      now: Date.now() + 5000,
+      people: [{ id: "me1", user: "wizard", name: "w", mode: "rw" }],
+    });
     expect(p.myId()).toBe("me1");
     expect(p.people()).toHaveLength(1);
     expect(p.senders()).toHaveLength(1);

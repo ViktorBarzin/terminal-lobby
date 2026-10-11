@@ -38,9 +38,12 @@ describe("presentLabel", () => {
   it("names who is here and who only watches", () => {
     expect(presentLabel([])).toBe("");
     expect(presentLabel([person({ id: "1", user: "emo" })])).toBe("emo here");
-    expect(presentLabel([person({ id: "1", user: "emo" }), person({ id: "2", user: "bob", mode: "ro" })])).toBe(
-      "emo, bob (watching) here",
-    );
+    expect(
+      presentLabel([
+        person({ id: "1", user: "emo" }),
+        person({ id: "2", user: "bob", mode: "ro" }),
+      ]),
+    ).toBe("emo, bob (watching) here");
     const many = ["a", "b", "c", "d"].map((u) => person({ id: u, user: u }));
     expect(presentLabel(many)).toBe("a, b and 2 more here");
   });
@@ -49,13 +52,22 @@ describe("presentLabel", () => {
 describe("draftState", () => {
   it("is typing while the draft is moving, a draft once it rests, and nothing when empty", () => {
     expect(draftState(person({ id: "1", user: "emo" }), 10_000)).toBe("none");
-    expect(draftState(person({ id: "1", user: "emo", draft: "x", draftAt: 9_000 }), 10_000)).toBe("typing");
-    expect(draftState(person({ id: "1", user: "emo", draft: "x", draftAt: 1_000 }), 10_000)).toBe("resting");
+    expect(draftState(person({ id: "1", user: "emo", draft: "x", draftAt: 9_000 }), 10_000)).toBe(
+      "typing",
+    );
+    expect(draftState(person({ id: "1", user: "emo", draft: "x", draftAt: 1_000 }), 10_000)).toBe(
+      "resting",
+    );
   });
 });
 
 describe("attributeSenders", () => {
-  const rec = (text: string, at: number, user: string, name = user): SenderRecord => ({ text, at, user, name });
+  const rec = (text: string, at: number, user: string, name = user): SenderRecord => ({
+    text,
+    at,
+    user,
+    name,
+  });
 
   it("labels nothing while only the owner has ever sent", () => {
     const rows = [{ key: "u1", body: "hello", at: 1000 }];
@@ -83,7 +95,11 @@ describe("attributeSenders", () => {
       { key: "u1", body: "yes", at: 1_000 },
       { key: "u2", body: "yes", at: 60_000 },
     ];
-    const got = attributeSenders(rows, [rec("yes", 900, "emo"), rec("yes", 59_000, "wizard")], "wizard");
+    const got = attributeSenders(
+      rows,
+      [rec("yes", 900, "emo"), rec("yes", 59_000, "wizard")],
+      "wizard",
+    );
     expect(got.get("u1")).toBe("emo");
     expect(got.get("u2")).toBe("wizard");
   });
