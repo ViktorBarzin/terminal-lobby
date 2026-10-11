@@ -35,6 +35,12 @@ func TestMain(m *testing.M) {
 	// The public-link store, so no test reads or writes the box's real
 	// links.json.
 	linkStoreInstance = newLinkStore(filepath.Join(dir, "links.json"))
+	// A guest's watch attach rewraps the owner's tmux bindings
+	// (sessionio.GuardReadOnly). Run for real, it reaches the tmux server of
+	// whoever runs the suite and rewrites their live bindings, and on a runner
+	// with no tmux server it fails the attach. The tests that are about the
+	// guard install their own.
+	guardReadOnly = func(string) error { return nil }
 	// tmux-user-attach posts each claim to session-events (POST /hooks/claimed).
 	// The suite runs the real script, and on a deployed box localhost:7685 is
 	// the LIVE service, so the post goes to a port nothing listens on instead.
