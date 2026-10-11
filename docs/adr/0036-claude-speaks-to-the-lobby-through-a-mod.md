@@ -91,7 +91,14 @@ mod row also maps its `name` to the record's subtype and its text blocks to the
 record's content, so a system row such as `/model`'s receipt or `/clear`'s
 reads as it does in the file, and a receipt written as a system row settles an
 open turn the same way a user-row receipt does, on both paths, while still
-drawing nothing of its own.
+drawing nothing of its own. `/clear` needs one more step: Claude writes the
+command's own rows as the first records of the new transcript, but the mod
+sends them on the old conversation's link, so the new conversation's history
+arrives empty and names no row. A device that sent the `/clear` kept standing
+in for it, and the session bar read "working". When a history is empty and
+names no row, session-events now replays whatever the transcript holds
+(`FileSource.ReplayFreshConversation`), reading once without waiting, since a
+brand-new session has no file yet.
 
 **session-events is the server, the mod is the client.** A mod cannot listen on
 a socket. It POSTs events and long-polls for commands over loopback HTTP. Each

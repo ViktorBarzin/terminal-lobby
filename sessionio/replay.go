@@ -51,7 +51,48 @@ func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Durat
 	if err != nil {
 		return err
 	}
+	f.replayRecords(recs, running)
+	return nil
+}
 
+var errEmptyTranscript = errors.New("replay: the transcript holds no records")
+
+// ReplayFreshConversation rebuilds the log from whatever the transcript holds,
+// for a conversation whose history came empty and names no row. That is a
+// conversation /clear has just started: the CLI writes the command's own rows
+// as the new transcript's first records, while the mod sends them on the old
+// conversation's link (measured 2026-10-11, mod 0.6.0 on 2.1.296), so without
+// this the /clear a device is standing in for never arrives in the new log.
+//
+// It reads once and does not wait: a brand-new session has no file yet, and
+// its log must not wait on one. On error the log is untouched.
+func (f *FileSource) ReplayFreshConversation(running bool) error {
+	if f.mod == nil {
+		return errors.New("replay: not a mod source")
+	}
+	path := f.Path()
+	if path == "" {
+		return errNoTranscript
+	}
+	lines, _, err := f.reader.ReadFrom(path, 0)
+	if err != nil {
+		return err
+	}
+	var recs []Record
+	for _, ln := range lines {
+		if rec, ok := DecodeRecord([]byte(ln)); ok {
+			recs = append(recs, rec)
+		}
+	}
+	if len(recs) == 0 {
+		return errEmptyTranscript
+	}
+	f.replayRecords(recs, running)
+	return nil
+}
+
+// replayRecords feeds transcript records read for a rebuild into an empty log.
+func (f *FileSource) replayRecords(recs []Record, running bool) {
 	f.normMu.Lock()
 	defer f.normMu.Unlock()
 	var evs []Event
@@ -110,7 +151,6 @@ func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Durat
 		delete(f.subs, id)
 		close(ch)
 	}
-	return nil
 }
 
 // readToBarrier reads the transcript's records up to and including the

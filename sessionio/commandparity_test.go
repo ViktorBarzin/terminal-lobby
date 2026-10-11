@@ -161,7 +161,11 @@ func parityCases() []parityCase {
 		},
 		{
 			// Measured on 2.1.296 (2026-10-11): the engine appends all three
-			// rows, the receipt as a system row and empty.
+			// rows, the receipt as a system row and empty. They travel on the
+			// old conversation's link while the file files them under the new
+			// one, so the new log gets them from ReplayFreshConversation
+			// (session-events TestEmptyHistoryReplaysAFreshConversation);
+			// either way the same Normalizer reads them.
 			name: "/clear",
 			lines: func(t *testing.T) []string {
 				return []string{
