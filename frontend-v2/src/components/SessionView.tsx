@@ -346,6 +346,9 @@ export const SessionView: Component<{
   /** Somebody else's session: every session-events call names its owner, and
    *  runs as them (ADR-0043). Fixed for the view's life, like its session. */
   const foreignOwner = props.owner && props.owner !== props.me?.() ? props.owner : undefined;
+  /** Why a guest cannot attach a file: the store is per account, so an upload
+   *  lands under the guest, where the owner's agent cannot read it. */
+  const guestNoUploads = `Files and pictures cannot be attached in ${foreignOwner}'s session: they would be stored under your account, where ${foreignOwner}'s Claude cannot read them.`;
   const store = createSessionStore(session, {
     notify: props.notify,
     autoStart: false,
@@ -1271,8 +1274,13 @@ export const SessionView: Component<{
    * same work at a different moment: it holds its files until the session it is
    * creating exists (clipboard/attach.ts).
    */
-  const attachFiles = (files: File[]): Promise<DraftAttachment[]> =>
-    uploadAttachments(files, session(), { notify: props.notify });
+  const attachFiles = (files: File[]): Promise<DraftAttachment[]> => {
+    if (foreignOwner) {
+      props.notify?.(guestNoUploads, "warning");
+      return Promise.resolve([]);
+    }
+    return uploadAttachments(files, session(), { notify: props.notify });
+  };
 
   const resolve = (reqId: string, d: PermissionDecision) => void store.resolvePermission(reqId, d);
 
@@ -1428,6 +1436,14 @@ export const SessionView: Component<{
 
   const image = installImageClipboard({
     session,
+    // A guest's paste would be stored under the guest (attachFiles above).
+    ...(foreignOwner
+      ? {
+          upload: async () => {
+            throw new Error(guestNoUploads);
+          },
+        }
+      : {}),
     tileBox,
     /**
      * Take focus when a drop lands in this tile and focus is elsewhere.

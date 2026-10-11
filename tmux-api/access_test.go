@@ -67,11 +67,13 @@ func TestSessionAccess(t *testing.T) {
 			owner: "alice", caller: "bob", want: want{"", ""},
 		},
 		{
-			name: "a project member at the project's mode",
+			// Any member can set a project to rw, so it must not let one member
+			// drive another's session: a project only ever watches.
+			name: "a project member watches even in an rw project",
 			project: &GlobalProject{ID: "p1", Name: "P", AttachMode: "rw",
 				Members:  []Member{{OSUser: "alice"}, {OSUser: "bob"}},
 				Sessions: []SessionRef{{Owner: "alice", Name: "main"}}},
-			owner: "alice", caller: "bob", want: want{"rw", "project"},
+			owner: "alice", caller: "bob", want: want{"ro", "project"},
 		},
 		{
 			name: "a project with no mode set watches",
@@ -88,12 +90,12 @@ func TestSessionAccess(t *testing.T) {
 			owner: "alice", caller: "bob", want: want{"", ""},
 		},
 		{
-			name:  "a read-only share loses to a read-write project",
-			share: &Share{Owner: "alice", Name: "main", Guest: "bob", Mode: "ro", SessionID: "$1", SessionCreated: 1000},
+			name:  "a read-write share wins over a project's watch",
+			share: &Share{Owner: "alice", Name: "main", Guest: "bob", Mode: "rw", SessionID: "$1", SessionCreated: 1000},
 			project: &GlobalProject{ID: "p1", Name: "P", AttachMode: "rw",
 				Members:  []Member{{OSUser: "alice"}, {OSUser: "bob"}},
 				Sessions: []SessionRef{{Owner: "alice", Name: "main"}}},
-			owner: "alice", caller: "bob", want: want{"rw", "project"},
+			owner: "alice", caller: "bob", want: want{"rw", "share"},
 		},
 		{name: "an administrator", admin: true, owner: "alice", caller: "bob", want: want{"rw", "admin"}},
 	}
@@ -202,6 +204,10 @@ func TestInternalAttachProjectMember(t *testing.T) {
 	withAdmins(t, "")
 	withInternalToken(t, "tok")
 	stubSessionExists(t, true)
+	oldPin, oldGuard := pinGrid, guardReadOnly
+	pinGrid = func(string, string) error { return nil }
+	guardReadOnly = func(string) error { return nil }
+	t.Cleanup(func() { pinGrid, guardReadOnly = oldPin, oldGuard })
 	seedProject(t, GlobalProject{ID: "p1", Name: "P", AttachMode: "rw",
 		Members:  []Member{{OSUser: "alice"}, {OSUser: "bob"}},
 		Sessions: []SessionRef{{Owner: "alice", Name: "main"}}})
@@ -213,8 +219,21 @@ func TestInternalAttachProjectMember(t *testing.T) {
 	}
 	var got struct{ Mode string }
 	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if got.Mode != "rw" {
-		t.Fatalf("mode %q, want rw", got.Mode)
+	if got.Mode != "ro" {
+		t.Fatalf("mode %q, want ro: a project only watches", got.Mode)
+	}
+}
+
+// A rename onto a name whose earlier session left a share row behind keeps
+// the guest's grant: the dead session's row goes, the live one moves.
+func TestRenameSharesDropsADeadSessionsRow(t *testing.T) {
+	swapShareStore(t)
+	seedShareRow(t, Share{Owner: "alice", Name: "b", Guest: "bob", Mode: "ro", SessionID: "$9", SessionCreated: 10})
+	seedShareRow(t, Share{Owner: "alice", Name: "a", Guest: "bob", Mode: "rw", SessionID: "$1", SessionCreated: 1000})
+	renameShares("alice", "a", "b")
+	ss, _ := shareStoreInstance.load()
+	if len(ss.Shares) != 1 || ss.Shares[0].Name != "b" || ss.Shares[0].SessionID != "$1" || ss.Shares[0].Mode != "rw" {
+		t.Fatalf("shares after rename: %+v", ss.Shares)
 	}
 }
 

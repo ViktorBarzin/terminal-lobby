@@ -69,6 +69,7 @@ func TestGuestRefusals(t *testing.T) {
 		{"an owner on top of act-as", http.MethodGet, "/events/main?owner=" + me + "&as=" + other, http.StatusBadRequest},
 		{"the act-as target named as owner is the Lens", http.MethodGet, "/events/main?owner=" + other + "&as=" + other, http.StatusOK},
 		{"a malformed owner", http.MethodGet, "/events/main?owner=a%20b", http.StatusBadRequest},
+		{"an escaped slash in the session", http.MethodPost, "/prompt/main%2Fother?owner=" + other, http.StatusBadRequest},
 		{"your own name is your own session", http.MethodPost, "/prompt/main?owner=" + me, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

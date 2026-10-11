@@ -36,8 +36,8 @@ var errBadAccessRef = errors.New("invalid owner, session or caller")
 //   - Your own session: rw.
 //   - An administrator: rw, which a Lens then declines by always watching.
 //   - A share row for this caller, pinned to the session holding the name now.
-//   - Membership of a project listing the session, at the project's attach
-//     mode, "" counting as ro.
+//   - Membership of a project listing the session, which only ever watches
+//     (projectAccessMode).
 //
 // A share and a project can both apply; the wider one wins, as it does in the
 // sidebar's foreignRefsFor.
@@ -81,42 +81,45 @@ func liveShareMode(owner, name, caller string) (string, error) {
 		if sh.Owner != owner || sh.Name != name || sh.Guest != caller {
 			continue
 		}
-		// Read only once a row matches: it forks tmux.
+		// Read only once a row matches: it forks tmux. A row for an earlier
+		// session of this name can sit beside the live one until the sweep
+		// prunes it (a rename can leave both), so a mismatch moves on.
 		current, live, lerr := liveByName(owner, name)
-		if lerr != nil || !live || sh.SessionID != current.ID || sh.SessionCreated != current.Created {
+		if lerr != nil || !live {
 			return "", nil
+		}
+		if sh.SessionID != current.ID || sh.SessionCreated != current.Created {
+			continue
 		}
 		return sh.Mode, nil
 	}
 	return "", nil
 }
 
-// projectAccessMode is the widest attach mode any project gives caller over
-// owner's session: caller and owner both members, the session listed in it.
+// projectAccessMode is what project membership gives caller over owner's
+// session: "ro" when caller and owner are both members of a project listing
+// it, "" otherwise.
+//
+// Watching only, whatever the project's attach mode (Viktor, 2026-10-11).
+// Projects are co-equal, so any member may set the mode or add a member, and
+// a project-wide rw would let one member drive another's session as them
+// without that owner agreeing. Driving takes a Share the owner made.
 func projectAccessMode(owner, name, caller string) (string, error) {
 	ps, err := projectStoreInstance.load()
 	if err != nil {
 		return "", err
 	}
-	mode := ""
 	for _, p := range ps.Projects {
 		if !projectMember(p, caller) {
 			continue
 		}
 		for _, s := range p.Sessions {
-			if s.Owner != owner || s.Name != name {
-				continue
-			}
-			m := p.AttachMode
-			if m == "" {
-				m = projectAttachRO
-			}
-			if m == shareModeRW || mode == "" {
-				mode = m
+			if s.Owner == owner && s.Name == name {
+				return projectAttachRO, nil
 			}
 		}
 	}
-	return mode, nil
+	return "", nil
 }
 
 // handleInternalAccess answers sessionAccess for session-events, which runs on

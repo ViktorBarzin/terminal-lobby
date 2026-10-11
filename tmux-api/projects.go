@@ -303,7 +303,8 @@ func foreignRefsFor(caller string, ps ProjectSet, ss ShareSet) []visibleRef {
 			continue
 		}
 		for _, s := range p.Sessions {
-			upsert(s.Owner, s.Name, p.AttachMode, p.Name)
+			// Membership watches; driving takes a share (projectAccessMode).
+			upsert(s.Owner, s.Name, projectAttachRO, p.Name)
 		}
 	}
 	for _, sh := range ss.Shares {

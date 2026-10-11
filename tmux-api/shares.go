@@ -475,8 +475,12 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 			for i := range ss.Shares {
 				sh := ss.Shares[i]
 				if sh.Owner == body.Owner && sh.Name == body.Name && sh.Guest == body.Guest {
-					if !isLive || sh.SessionID != current.ID || sh.SessionCreated != current.Created {
+					if !isLive {
 						return errShareNotFound
+					}
+					// A stale row for an earlier session of this name: look on.
+					if sh.SessionID != current.ID || sh.SessionCreated != current.Created {
+						continue
 					}
 					ss.Shares[i].ClientTty = body.Tty
 					mode = sh.Mode
@@ -489,9 +493,9 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 			logAndFail(w, "record attach failed: %v", err)
 			return
 		}
-		// A project member reaches the session at the project's attach mode
-		// with no share row, and the wider of the two wins (sessionAccess).
-		// Only a share records a tty, so only a share's revoke detaches.
+		// A project member watches the session with no share row, and the
+		// wider of the two wins (sessionAccess). Only a share records a tty,
+		// so only a share's revoke detaches.
 		pmode, perr := projectAccessMode(body.Owner, body.Name, body.Guest)
 		if perr != nil {
 			logAndFail(w, "project access for attach failed: %v", perr)

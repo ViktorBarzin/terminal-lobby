@@ -27,10 +27,12 @@ Projects and sessions can be **shared with other users on the same machine**
   sent, each message says who sent it. Removing someone (or a guest leaving)
   detaches their terminal at once and ends their Text view within 5 seconds. A
   grant is pinned to the session it was made for and ends with it (ADR-0043).
-  A watcher cannot switch to the owner's other sessions with tmux's `prefix (`,
-  `prefix )` or `prefix L`; an account that rebinds one of those keys in its
-  own `~/.tmux.conf` keeps its binding, and its watchers can then switch with
-  that key.
+  A watcher cannot switch to the owner's other sessions or detach the owner's
+  clients: on each watch attach, every tmux binding that switches sessions or
+  detaches others is wrapped so it works only for read-write clients. A guest
+  cannot attach files; the store is per account and the owner's Claude could
+  not read them. Project membership lets members watch each other's sessions
+  in the project; driving always takes a share from the session's owner.
 - **Share a session's conversation with anyone** from its `⋯` menu →
   **Share…**, which makes a public link: a URL that works with no account,
   for 1 hour, 24 hours, 7 days or until revoked. Whoever holds it reads the

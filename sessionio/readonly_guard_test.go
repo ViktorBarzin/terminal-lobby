@@ -54,6 +54,24 @@ func TestReadOnlyClientSwitchesSessionsWithoutTheGuard(t *testing.T) {
 	}
 }
 
+// pressBTab types prefix then Shift-Tab, which tmux reads as BTab.
+func pressBTab(t *testing.T, c *client) {
+	t.Helper()
+	press(t, c, "\x1b[Z")
+}
+
+// The same gap through a binding of the account's own, and proof the key
+// reaches tmux: unguarded, prefix BTab moves a watcher.
+func TestReadOnlyClientSwitchesThroughAnOwnBinding(t *testing.T) {
+	_, _, sock := guardServer(t)
+	run(t, sock, "bind-key", "-T", "prefix", "BTab", "switch-client", "-t", "=other")
+	c := attach(t, sock, "demo", 100, 30, "-r")
+	pressBTab(t, c)
+	if got := clientSession(t, sock); got != "other" {
+		t.Fatalf("unguarded, prefix BTab left the watcher on %q; the key may not be arriving", got)
+	}
+}
+
 func TestGuardReadOnlyKeepsAWatcherWhereItIs(t *testing.T) {
 	in, osUser, sock := guardServer(t)
 	if err := in.GuardReadOnly(osUser); err != nil {
@@ -80,40 +98,69 @@ func TestGuardReadOnlyLeavesADriverItsKeys(t *testing.T) {
 	}
 }
 
-// A key the account bound to something of its own is theirs; the guard only
-// wraps tmux's defaults. Run twice, it changes nothing the second time.
-func TestGuardReadOnlyOnlyWrapsTheDefaults(t *testing.T) {
+// A binding of the account's own that switches is wrapped as well, in any
+// table: oh-my-tmux's prefix BTab, a root key into a custom table and a
+// switch-client there, and detach-client -a, which would kick the owner's
+// clients. A binding that does something else is left alone, and a second
+// run changes nothing.
+func TestGuardReadOnlyCoversTheAccountsOwnBindings(t *testing.T) {
 	in, osUser, sock := guardServer(t)
-	run(t, sock, "bind-key", "-T", "prefix", "L", "display-message", "mine")
+	// `\;` keeps the second command inside the binding; a bare ";" in argv
+	// would end bind-key there.
+	run(t, sock, "bind-key", "-T", "prefix", "BTab", "switch-client", "-t", "=other", `\;`, "display-message", "hi there")
+	run(t, sock, "bind-key", "-T", "root", "M-x", "switch-client", "-T", "foo")
+	run(t, sock, "bind-key", "-T", "foo", "y", "switch-client", "-t", "=other")
+	run(t, sock, "bind-key", "-T", "prefix", "X", "detach-client", "-a")
+	run(t, sock, "bind-key", "-T", "prefix", "M", "display-message", "mine")
 	for i := 0; i < 2; i++ {
 		if err := in.GuardReadOnly(osUser); err != nil {
-			t.Fatalf("GuardReadOnly: %v", err)
+			t.Fatalf("GuardReadOnly run %d: %v", i+1, err)
 		}
 	}
-	out, err := exec.Command("tmux", "-L", sock, "list-keys", "-T", "prefix").Output()
+	out, err := exec.Command("tmux", "-L", sock, "list-keys").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	keys := string(out)
-	if !strings.Contains(keys, "display-message mine") {
-		t.Fatalf("the account's own L binding was replaced:\n%s", keys)
+	for _, want := range []string{
+		`BTab if-shell -F 1 { switch-client -t =other ; display-message "hi there" }`,
+		`M-x if-shell -F 1 { switch-client -T foo }`,
+		`y if-shell -F 1 { switch-client -t =other }`,
+		`X if-shell -F 1 { detach-client -a }`,
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(keys), " "), want) {
+			t.Errorf("not wrapped: %s", want)
+		}
 	}
-	if n := strings.Count(keys, "if-shell"); n != 2 {
-		t.Fatalf("%d wrapped bindings, want 2:\n%s", n, keys)
+	if !strings.Contains(keys, "display-message mine") || strings.Contains(keys, "{ display-message mine }") {
+		t.Errorf("a binding that does not switch was changed:\n%s", keys)
+	}
+	if strings.Contains(keys, "if-shell -F 1 { if-shell") {
+		t.Errorf("wrapped twice:\n%s", keys)
+	}
+	// And it holds: a watcher presses prefix BTab and stays put.
+	c := attach(t, sock, "demo", 100, 30, "-r")
+	pressBTab(t, c)
+	if got := clientSession(t, sock); got != "demo" {
+		t.Fatalf("after prefix BTab the watcher is on %q, want demo", got)
 	}
 }
 
-func TestParseDefaultSwitchBinding(t *testing.T) {
+func TestWrapForReadOnly(t *testing.T) {
 	for line, want := range map[string]string{
-		`bind-key    -T prefix       (                      switch-client -p`:                 "(",
-		`bind-key -r -T prefix       )                      switch-client -n`:                 ")",
-		`bind-key    -T prefix       L                      switch-client -l`:                 "L",
-		`bind-key    -T prefix       )                      if-shell -F 1 "switch-client -n"`: "",
-		`bind-key    -T prefix       d                      detach-client`:                    "",
-		`bind-key    -T prefix       L                      display-message mine`:              "",
+		`bind-key    -T prefix       (                      switch-client -p`:                          `bind-key    -T prefix       ( if-shell -F 1 { switch-client -p }`,
+		`bind-key -r -T prefix       )                      switch-client -n`:                          `bind-key -r -T prefix       ) if-shell -F 1 { switch-client -n }`,
+		`bind-key    -T prefix       BTab                   switch-client -l \; display-message "a b"`: `bind-key    -T prefix       BTab if-shell -F 1 { switch-client -l ; display-message "a b" }`,
+		`bind-key    -T prefix       \"                     switch-client -n`:                          `bind-key    -T prefix       \" if-shell -F 1 { switch-client -n }`,
+		`bind-key    -T prefix       X                      detach-client -a`:                          `bind-key    -T prefix       X if-shell -F 1 { detach-client -a }`,
+		`bind-key    -T prefix       d                      detach-client`:                             "",
+		`bind-key    -T prefix       )                      if-shell -F 1 { switch-client -n }`:        "",
+		`bind-key    -T prefix       )                      if-shell -F 1 "switch-client -n"`:          "",
+		`bind-key    -T prefix       L                      display-message mine`:                      "",
+		``: "",
 	} {
-		if got := defaultSwitchKey(line); got != want {
-			t.Errorf("%q: %q, want %q", line, got, want)
+		if got := wrapForReadOnly(line); got != want {
+			t.Errorf("%q:\n got %q\nwant %q", line, got, want)
 		}
 	}
 }

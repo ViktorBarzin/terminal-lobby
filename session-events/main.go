@@ -192,6 +192,7 @@ func main() {
 	// Each prompt the session takes is recorded with who sent it, which the
 	// presence socket below hands every tab on the session (presence.go).
 	presence := newPresenceHub(sendersDir(*heldDir))
+	presence.ident = tmuxSessionIdent(injector.Command)
 	web.Handle("POST /prompt/{session}", presence.recordingSenders(handlePrompt(rg, injector)))
 	// Who has the session open, and what each of them is typing: a WebSocket
 	// per tab, under /events/ so the ingress already routes it (ADR-0043).

@@ -2,64 +2,81 @@ package sessionio
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
-// readOnlyGuardKeys are tmux's default bindings that switch the client to
-// another session, with the command each one runs.
-var readOnlyGuardKeys = map[string]string{
-	"(": "switch-client -p",
-	")": "switch-client -n",
-	"L": "switch-client -l",
-}
-
 // GuardReadOnly stops a read-only client leaving the session it was attached
-// to (ADR-0043).
+// to, or detaching anyone else's client (ADR-0043).
 //
-// tmux applies read-only to the client, not the session, and lets a read-only
-// client run any binding whose command is switch-client or detach-client. With
-// the defaults, a guest watching one session can press prefix ( or ) and land
-// in the owner's other sessions. A binding whose command is if-shell is refused
-// for a read-only client and runs normally for a read-write one, so wrapping
-// the three defaults keeps them for drivers and takes them from watchers.
-// Measured on tmux 3.4 (readonly_guard_test.go).
+// tmux applies read-only to the client, not the session. A read-only client
+// may still run a binding whose every command is one tmux marks as safe for
+// it, and switch-client and detach-client are two of them. With tmux's
+// defaults a guest watching one session can press prefix ( or ) and land in
+// the owner's other sessions, and an account's own config can add more: on
+// this box oh-my-tmux binds prefix BTab to switch-client -l.
 //
-// /etc/tmux.conf carries the same bindings for servers started after it was
-// installed. This covers the servers already running, and is called on every
-// read-only attach. Only a key still bound to its default is rewrapped, so an
-// account's own binding for one of these keys is left as it is, and a second
-// call changes nothing.
+// A binding whose command is if-shell is refused for a read-only client and
+// runs normally for a read-write one. So every binding, in every key table,
+// that runs switch-client, or detach-client with any flag (-a would detach the
+// owner's own clients), is rewrapped as `if-shell -F 1 { … }`: drivers keep
+// the key, watchers lose it. Plain detach-client, which only leaves, is left
+// alone. Measured on tmux 3.4 (readonly_guard_test.go).
+//
+// The rewrapped bindings go back through `source-file -` rather than one
+// bind-key per key, so tmux's own escaping of keys and arguments, as list-keys
+// prints it, is read by the parser that wrote it. Called on every guest's
+// read-only attach; a binding already wrapped is not wrapped again.
 func (in *Injector) GuardReadOnly(osUser string) error {
-	out, err := in.Command(osUser, "list-keys", "-T", "prefix").Output()
+	out, err := in.Command(osUser, "list-keys").Output()
 	if err != nil {
 		return fmt.Errorf("guard read-only: list-keys: %w", err)
 	}
+	var conf strings.Builder
 	for _, line := range strings.Split(string(out), "\n") {
-		key := defaultSwitchKey(line)
-		if key == "" {
-			continue
+		if w := wrapForReadOnly(line); w != "" {
+			conf.WriteString(w)
+			conf.WriteByte('\n')
 		}
-		if o, err := in.Command(osUser, "bind-key", "-T", "prefix", key,
-			"if-shell", "-F", "1", readOnlyGuardKeys[key]).CombinedOutput(); err != nil {
-			return fmt.Errorf("guard read-only: bind %s: %v: %s", key, err, strings.TrimSpace(string(o)))
-		}
+	}
+	if conf.Len() == 0 {
+		return nil
+	}
+	cmd := in.Command(osUser, "source-file", "-")
+	cmd.Stdin = strings.NewReader(conf.String())
+	if o, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("guard read-only: source-file: %v: %s", err, strings.TrimSpace(string(o)))
 	}
 	return nil
 }
 
-// defaultSwitchKey is the key a list-keys line binds when that line is one of
-// readOnlyGuardKeys at its default command, and "" for any other line.
-func defaultSwitchKey(line string) string {
-	f := strings.Fields(line)
-	for i := 0; i+2 < len(f); i++ {
-		if f[i] != "-T" || f[i+1] != "prefix" {
-			continue
-		}
-		key, cmd := f[i+2], strings.Join(f[i+3:], " ")
-		if want, ok := readOnlyGuardKeys[key]; ok && cmd == want {
-			return key
-		}
+// bindLineRe splits a list-keys line into everything up to the key, and the
+// command. The key and the table never hold a space as list-keys prints them.
+var bindLineRe = regexp.MustCompile(`^(bind-key(?:\s+-r)?(?:\s+-N\s+"(?:[^"\\]|\\.)*")?\s+-T\s+\S+\s+\S+)\s+(.*)$`)
+
+// wrapForReadOnly is the config line that rebinds one list-keys line with its
+// command wrapped in if-shell, or "" when the line needs nothing.
+//
+// list-keys separates the commands of one binding with ` \; `; inside braces
+// the separator is ` ; ` (the `\;` form is a parse error there, measured).
+func wrapForReadOnly(line string) string {
+	m := bindLineRe.FindStringSubmatch(strings.TrimRight(line, " \t"))
+	if m == nil {
 		return ""
 	}
-	return ""
+	cmds := strings.Split(m[2], ` \; `)
+	hit := false
+	for _, c := range cmds {
+		f := strings.Fields(c)
+		if len(f) == 0 {
+			continue
+		}
+		if f[0] == "switch-client" || (f[0] == "detach-client" && len(f) > 1) {
+			hit = true
+		}
+	}
+	if !hit {
+		return ""
+	}
+	return m[1] + " if-shell -F 1 { " + strings.Join(cmds, " ; ") + " }"
 }

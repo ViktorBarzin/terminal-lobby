@@ -72,10 +72,10 @@ if-shell '[ "$(id -un)" = wizard ]' {
 # and land in the owner's other sessions. tmux refuses an if-shell binding
 # from a read-only client and runs it for a read-write one, so these keep the
 # three keys for whoever is driving and take them from watchers. Measured on
-# tmux 3.4 (sessionio/readonly_guard_test.go). tmux-api applies the same
-# wrapping to an already-running server on each guest's watch attach
-# (sessionio.GuardReadOnly), and leaves a key alone when the account bound it
-# to something of its own. Keep this in step with readOnlyGuardKeys there.
+# tmux 3.4 (sessionio/readonly_guard_test.go). These cover tmux's defaults
+# for servers started after this file. On each guest's watch attach, tmux-api
+# wraps every switching binding in the owner's running server, in every table,
+# the account's own included (sessionio.GuardReadOnly).
 bind-key -T prefix ( if-shell -F 1 "switch-client -p"
 bind-key -T prefix ) if-shell -F 1 "switch-client -n"
 bind-key -T prefix L if-shell -F 1 "switch-client -l"

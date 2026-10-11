@@ -5,12 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,18 +94,24 @@ type presenceRoom struct {
 type presenceHub struct {
 	mu    sync.Mutex
 	rooms map[string]*presenceRoom
-	// dir holds one senders file per (owner, session); "" keeps them in
-	// memory only.
-	dir  string
-	sent map[string][]senderRecord
-	now  func() time.Time
+	// dir holds one senders file per session; "" keeps them in memory only
+	// (the tests), in mem.
+	dir string
+	mem map[string][]senderRecord
+	// ident names the session a sender record belongs to: tmux's session id
+	// and creation time, which a rename keeps and no later session of the
+	// same name shares. Records keyed by the name would carry one session's
+	// prompts to the next one that takes the name, and lose them at a rename.
+	ident func(owner, session string) (string, error)
+	now   func() time.Time
 }
 
 func newPresenceHub(dir string) *presenceHub {
 	return &presenceHub{
 		rooms: map[string]*presenceRoom{},
 		dir:   dir,
-		sent:  map[string][]senderRecord{},
+		mem:   map[string][]senderRecord{},
+		ident: func(owner, session string) (string, error) { return owner + "." + session, nil },
 		now:   time.Now,
 	}
 }
@@ -143,7 +153,9 @@ func (h *presenceHub) handle() http.HandlerFunc {
 		key := roomKey(owner, session)
 		hello, _ := json.Marshal(presenceFrame{T: "hello", ID: c.person.ID})
 		c.out <- hello
-		h.join(owner, session, c)
+		// "" when the session cannot be named (it has gone): no records.
+		ident, _ := h.ident(owner, session)
+		h.join(owner, session, ident, c)
 		defer h.leave(key, c)
 
 		done := make(chan struct{})
@@ -205,11 +217,11 @@ func (h *presenceHub) writeLoop(r *http.Request, conn *websocket.Conn, c *presen
 
 // join adds c to its room. The senders snapshot goes out under the same lock
 // recordSender takes, so a send cannot land between the snapshot and the join.
-func (h *presenceHub) join(owner, session string, c *presenceConn) {
+func (h *presenceHub) join(owner, session, ident string, c *presenceConn) {
 	key := roomKey(owner, session)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if recs := h.loadSendersLocked(owner, session); len(recs) > 0 {
+	if recs := h.loadSendersLocked(ident); len(recs) > 0 {
 		b, _ := json.Marshal(presenceFrame{T: "senders", Senders: recs})
 		c.out <- b
 	}
@@ -286,15 +298,20 @@ func offer(ch chan []byte, b []byte) {
 // recordSender notes who sent a prompt into owner's session, and tells every
 // socket on it.
 func (h *presenceHub) recordSender(owner, session, text, user, name string) {
+	ident, err := h.ident(owner, session)
+	if err != nil {
+		log.Printf("presence: cannot name %s/%s to record its sender: %v", owner, session, err)
+		return
+	}
 	rec := senderRecord{Text: text, At: h.now().UnixMilli(), User: user, Name: name}
 	key := roomKey(owner, session)
 	h.mu.Lock()
-	recs := append(h.loadSendersLocked(owner, session), rec)
+	defer h.mu.Unlock()
+	recs := append(h.loadSendersLocked(ident), rec)
 	if len(recs) > maxSenderRecords {
 		recs = recs[len(recs)-maxSenderRecords:]
 	}
-	h.sent[key] = recs
-	h.saveSendersLocked(owner, session, recs)
+	h.saveSendersLocked(ident, recs)
 	if room := h.rooms[key]; room != nil {
 		b, _ := json.Marshal(presenceFrame{T: "senders", Senders: []senderRecord{rec}})
 		for c := range room.conns {
@@ -306,38 +323,46 @@ func (h *presenceHub) recordSender(owner, session, text, user, name string) {
 			}
 		}
 	}
-	h.mu.Unlock()
 }
 
-// senders is every record kept for owner's session, oldest first.
+// senders is every record kept for owner's session as it is now, oldest
+// first.
 func (h *presenceHub) senders(owner, session string) []senderRecord {
+	ident, err := h.ident(owner, session)
+	if err != nil {
+		return nil
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	recs := h.loadSendersLocked(owner, session)
-	return append([]senderRecord(nil), recs...)
+	return append([]senderRecord(nil), h.loadSendersLocked(ident)...)
 }
 
-func (h *presenceHub) sendersPath(owner, session string) string {
-	return filepath.Join(h.dir, owner+"."+session+".json")
-}
+// identRe is the shape a sender file's name may take.
+var identRe = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$`)
 
-func (h *presenceHub) loadSendersLocked(owner, session string) []senderRecord {
-	key := roomKey(owner, session)
-	if recs, ok := h.sent[key]; ok {
-		return recs
+// loadSendersLocked reads one session's records. Read from disk each time
+// rather than cached: a send and a connect are both rare, and a cache keyed by
+// every session anyone ever opened would only grow.
+func (h *presenceHub) loadSendersLocked(ident string) []senderRecord {
+	if !identRe.MatchString(ident) {
+		return nil
+	}
+	if h.dir == "" {
+		return h.mem[ident]
 	}
 	var recs []senderRecord
-	if h.dir != "" && guestOwnerRe.MatchString(owner) && guestOwnerRe.MatchString(session) {
-		if raw, err := os.ReadFile(h.sendersPath(owner, session)); err == nil {
-			_ = json.Unmarshal(raw, &recs)
-		}
+	if raw, err := os.ReadFile(filepath.Join(h.dir, ident+".json")); err == nil {
+		_ = json.Unmarshal(raw, &recs)
 	}
-	h.sent[key] = recs
 	return recs
 }
 
-func (h *presenceHub) saveSendersLocked(owner, session string, recs []senderRecord) {
-	if h.dir == "" || !guestOwnerRe.MatchString(owner) || !guestOwnerRe.MatchString(session) {
+func (h *presenceHub) saveSendersLocked(ident string, recs []senderRecord) {
+	if !identRe.MatchString(ident) {
+		return
+	}
+	if h.dir == "" {
+		h.mem[ident] = recs
 		return
 	}
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
@@ -345,13 +370,32 @@ func (h *presenceHub) saveSendersLocked(owner, session string, recs []senderReco
 		return
 	}
 	b, _ := json.Marshal(recs)
-	tmp := h.sendersPath(owner, session) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	path := filepath.Join(h.dir, ident+".json")
+	if err := os.WriteFile(path+".tmp", b, 0o600); err != nil {
 		log.Printf("presence: senders write: %v", err)
 		return
 	}
-	if err := os.Rename(tmp, h.sendersPath(owner, session)); err != nil {
+	if err := os.Rename(path+".tmp", path); err != nil {
 		log.Printf("presence: senders rename: %v", err)
+	}
+}
+
+// tmuxSessionIdent is presenceHub.ident in production: the owner, tmux's
+// session id without its `$`, and the session's creation time. The pair is
+// unique for the life of the box (ADR-0039 pins shares and links the same
+// way), and a rename keeps it.
+func tmuxSessionIdent(cmd func(osUser string, args ...string) *exec.Cmd) func(owner, session string) (string, error) {
+	return func(owner, session string) (string, error) {
+		out, err := cmd(owner, "display-message", "-p", "-t", "="+session+":", "#{session_id}-#{session_created}").Output()
+		if err != nil {
+			return "", err
+		}
+		id := strings.TrimPrefix(strings.TrimSpace(string(out)), "$")
+		ident := owner + "." + id
+		if !identRe.MatchString(ident) {
+			return "", fmt.Errorf("unexpected session id %q", id)
+		}
+		return ident, nil
 	}
 }
 

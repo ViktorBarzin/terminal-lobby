@@ -172,7 +172,9 @@ do not own. Watches or drives at the share's **Attach mode**, always as the
 Prompts a guest sends from the composer carry the guest's name as their sender.
 A guest's kill asks first and has no undo (a restore would land in the
 guest's own account); the owner is pushed who did it. A guest who came in
-through a share can leave it.
+through a share can leave it. A project **Member** is a guest who only
+watches: driving takes a **Share** from the owner (ADR-0043). A guest cannot
+attach files.
 _Avoid_: collaborator, participant, invitee, visitor (a visitor holds a **Link**)
 
 **Present**:
@@ -204,7 +206,9 @@ nobody), invite
 
 **Attach mode**:
 How a viewer may attach a session that isn't theirs: **ro** (watch) or **rw**
-(drive, i.e. run as the owner). Set per-share, or blanket per shared project.
+(drive, i.e. run as the owner). Set per-share. A shared project's blanket mode
+is capped at **ro** since 2026-10-11 (ADR-0043): any member may change it, so it
+cannot be the owner's consent to be driven.
 Server-side and per-share — it is the **ceiling** on what an attach may get,
 not what a given client asked for. A **Lens** attach has no share row at all:
 administering the box is the authorization and the ceiling is **rw**, which the

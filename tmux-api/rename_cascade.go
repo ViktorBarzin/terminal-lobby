@@ -172,6 +172,20 @@ func renameProjectRefs(osUser, oldName, newName string) {
 func renameShares(osUser, oldName, newName string) {
 	err := shareStoreInstance.update(func(ss *ShareSet) error {
 		changed := false
+		// A row already under the new name belongs to a session that has
+		// ended (tmux just gave this one the name), waiting for the sweep to
+		// prune it. Left in place, it would collide with the renamed row and
+		// the store would refuse the whole rewrite, leaving the guest's grant
+		// under a name nothing answers to.
+		kept := ss.Shares[:0]
+		for _, sh := range ss.Shares {
+			if sh.Owner == osUser && sh.Name == newName {
+				changed = true
+				continue
+			}
+			kept = append(kept, sh)
+		}
+		ss.Shares = kept
 		for i := range ss.Shares {
 			if ss.Shares[i].Owner == osUser && ss.Shares[i].Name == oldName {
 				ss.Shares[i].Name = newName

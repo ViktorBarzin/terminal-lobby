@@ -506,24 +506,27 @@ func TestProjectNameOf(t *testing.T) {
 
 // The caller sees foreign sessions via projects they belong to (blanket mode)
 // and via direct shares; own sessions, non-member projects, and shares to others
-// are excluded; rw beats ro when both apply.
+// are excluded; rw beats ro when both apply. A project only ever gives watch,
+// whatever its attach mode (ADR-0043): driving needs a share from the owner.
 func TestForeignRefsFor(t *testing.T) {
 	ps := ProjectSet{Version: 1, Projects: []GlobalProject{
 		{ID: "p1", Name: "shared", AttachMode: "rw",
 			Members:  []Member{{OSUser: "wizard"}, {OSUser: "bob"}},
-			Sessions: []SessionRef{{Owner: "wizard", Name: "mine"}, {Owner: "bob", Name: "theirs"}}},
+			Sessions: []SessionRef{{Owner: "wizard", Name: "mine"}, {Owner: "bob", Name: "theirs"}, {Owner: "bob", Name: "watched"}}},
 		{ID: "p2", Name: "secret", AttachMode: "rw",
 			Members:  []Member{{OSUser: "bob"}},
 			Sessions: []SessionRef{{Owner: "bob", Name: "hidden"}}},
 	}}
 	ss := ShareSet{Version: 1, Shares: []Share{
 		{Owner: "carol", Name: "direct", Guest: "wizard", Mode: "ro"},
-		{Owner: "bob", Name: "theirs", Guest: "wizard", Mode: "ro"}, // also project(rw) -> rw wins
+		{Owner: "bob", Name: "theirs", Guest: "wizard", Mode: "rw"}, // a share's rw beats the project's watch
 		{Owner: "bob", Name: "other", Guest: "carol", Mode: "rw"},   // not for caller
+		{Owner: "bob", Name: "also", Guest: "nobody", Mode: "rw"},   // not for caller
 	}}
 	got := foreignRefsFor("wizard", ps, ss)
 	want := []visibleRef{
 		{Owner: "bob", Name: "theirs", Access: "rw", Project: "shared"},
+		{Owner: "bob", Name: "watched", Access: "ro", Project: "shared"},
 		{Owner: "carol", Name: "direct", Access: "ro", Project: ""},
 	}
 	if !reflect.DeepEqual(got, want) {

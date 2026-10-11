@@ -102,8 +102,11 @@ func guestTarget(r *http.Request, eff, real string) (owner, mode string, status 
 		// be a third account nobody asked about.
 		return "", "", http.StatusBadRequest
 	}
+	// An escaped path is refused: the mux matches {session} on the escaped
+	// form, so `a%2Fb` would reach the handler as "a/b" while sessionOf, which
+	// reads the decoded path, checked "a". No session name needs escaping.
 	session := sessionOf(r.URL.Path)
-	if !guestOwnerRe.MatchString(owner) || session == "" || strings.HasPrefix(session, "_") {
+	if r.URL.RawPath != "" || !guestOwnerRe.MatchString(owner) || session == "" || strings.HasPrefix(session, "_") {
 		return "", "", http.StatusBadRequest
 	}
 	mode, err := guestAccess(r.Context(), owner, session, real)

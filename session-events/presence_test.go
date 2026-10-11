@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,4 +249,33 @@ func TestRecordingSendersOnlyRecordsWhatWasSent(t *testing.T) {
 	if len(got) != 1 || got[0].Text != "hello" || got[0].User != "bob" || got[0].Name != "emo" {
 		t.Fatalf("records %+v", got)
 	}
+}
+
+// Records belong to one session, not to a name: a later session that takes
+// the name starts with none, so a guest invited to it never sees the earlier
+// one's prompts. A rename keeps them, since the identity does not change.
+func TestPresenceSendersBelongToOneSession(t *testing.T) {
+	hub := newPresenceHub(t.TempDir())
+	ids := map[string]string{"main": "alice.1-1000"}
+	hub.ident = func(owner, session string) (string, error) {
+		id, ok := ids[session]
+		if !ok {
+			return "", errors.New("no such session")
+		}
+		return id, nil
+	}
+	hub.recordSender("alice", "main", "first life", "alice", "a")
+	// Renamed: same identity under a new name.
+	ids = map[string]string{"renamed": "alice.1-1000"}
+	if got := hub.senders("alice", "renamed"); len(got) != 1 {
+		t.Fatalf("after a rename %+v", got)
+	}
+	// Killed, and a new session takes the old name.
+	ids = map[string]string{"main": "alice.2-2000"}
+	if got := hub.senders("alice", "main"); len(got) != 0 {
+		t.Fatalf("a new session of the same name inherited %+v", got)
+	}
+	// A session that cannot be named records nothing.
+	ids = map[string]string{}
+	hub.recordSender("alice", "gone", "x", "alice", "a")
 }
