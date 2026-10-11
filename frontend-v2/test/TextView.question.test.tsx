@@ -432,8 +432,12 @@ describe("a held call", () => {
       ],
     };
     const v = mount([held([withPreview, fruits])]);
-    const all = () => [...v.container.querySelectorAll<HTMLElement>(".tl-qcard-previews > .tl-qcard-preview")];
-    await waitFor(() => expect(all().map((p) => p.textContent)).toEqual(["RED", "BLUE\nTALL\nBOX"]));
+    const all = () => [
+      ...v.container.querySelectorAll<HTMLElement>(".tl-qcard-previews > .tl-qcard-preview"),
+    ];
+    await waitFor(() =>
+      expect(all().map((p) => p.textContent)).toEqual(["RED", "BLUE\nTALL\nBOX"]),
+    );
     const hidden = () => all().map((p) => p.getAttribute("aria-hidden"));
     expect(hidden()).toEqual([null, "true"]);
     fireEvent.pointerEnter(v.option("Blue")!);
