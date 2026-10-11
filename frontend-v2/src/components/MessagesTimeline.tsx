@@ -595,7 +595,8 @@ export const MessagesTimeline: Component<{
     const byRow = attributeSenders(users, records, presenceView.owner);
     if (byRow.size === 0) return out;
     const colors = sessionColors(presenceView.owner, records, presenceView.presence.people());
-    for (const [key, rec] of byRow) out.set(key, { name: rec.name, color: colors.get(rec.user) ?? 0 });
+    for (const [key, rec] of byRow)
+      out.set(key, { name: rec.name, color: colors.get(rec.user) ?? 0 });
     return out;
   });
   /**
