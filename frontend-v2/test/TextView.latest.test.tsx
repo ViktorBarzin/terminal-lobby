@@ -21,6 +21,16 @@ import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { AnswerResponse } from "../src/lib/answer-api";
 import type { Event } from "../src/types/events";
+import { SLIDE_MS } from "../src/components/timeline.logic";
+
+/** Frames are held, never run on their own. `pressLatest` plays the ones the
+ *  press queued, so the slide to the end lands. */
+const frames: FrameRequestCallback[] = [];
+function pressLatest(button: Element) {
+  frames.length = 0;
+  fireEvent.click(button);
+  for (const ms of [0, SLIDE_MS]) frames.splice(0).forEach((f) => f(ms));
+}
 
 const g = globalThis as unknown as { EventSource: unknown };
 const realES = g.EventSource;
@@ -78,7 +88,7 @@ function mount(initial: Event[]) {
     addEventListener(): void {}
     removeEventListener(): void {}
   };
-  vi.stubGlobal("requestAnimationFrame", () => 1);
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
   vi.stubGlobal("cancelAnimationFrame", () => {});
   const [events, setEvents] = createSignal<Event[]>(initial);
   const applied: AnswerResponse = { applied: true, done: true };
@@ -178,7 +188,7 @@ describe("the Latest band", () => {
   it("takes the reader to the latest message and goes away", async () => {
     const v = mount(DONE_TURN);
     v.scrollUp();
-    fireEvent.click(v.latest()!);
+    pressLatest(v.latest()!);
     expect(v.geom.top).toBe(700);
     await waitFor(() => expect(v.band()).toBeNull());
   });
