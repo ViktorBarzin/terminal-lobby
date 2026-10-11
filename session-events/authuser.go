@@ -109,8 +109,26 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 				"tl.to": eff, "tl.client": "text", "tl.session": sessionOf(r.URL.Path),
 			})
 		}
+		// A guest names the owner of a session shared with them (guest.go).
+		owner, mode, status := guestTarget(r, eff, real)
+		if status != 0 {
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
 		w.Header().Del("Cache-Control")
-		ctx := context.WithValue(r.Context(), osUserKey, eff)
+		ctx := r.Context()
+		if owner != "" {
+			eff = owner
+			auditGuest(r, real, owner, mode)
+			ctx = context.WithValue(ctx, guestModeKey, mode)
+			if isGuestStream(r) {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				defer cancel()
+				go watchGuestGrant(ctx, cancel, owner, sessionOf(r.URL.Path), real, mode)
+			}
+		}
+		ctx = context.WithValue(ctx, osUserKey, eff)
 		ctx = context.WithValue(ctx, realOSUserKey, real)
 		ctx = context.WithValue(ctx, displayNameKey, displayNameOf(id))
 		next.ServeHTTP(w, r.WithContext(ctx))

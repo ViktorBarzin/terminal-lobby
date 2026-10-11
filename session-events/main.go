@@ -188,7 +188,14 @@ func main() {
 	web.HandleFunc("POST /events/{session}/agents/{agent}/message", rg.handleSteer())
 	// Typing a prompt into the session: the harness decides what "ready" means,
 	// and a suspended session or a pi trust question refuses (turn_routes.go).
-	web.HandleFunc("POST /prompt/{session}", handlePrompt(rg, injector))
+	//
+	// Each prompt the session takes is recorded with who sent it, which the
+	// presence socket below hands every tab on the session (presence.go).
+	presence := newPresenceHub(sendersDir(*heldDir))
+	web.Handle("POST /prompt/{session}", presence.recordingSenders(handlePrompt(rg, injector)))
+	// Who has the session open, and what each of them is typing: a WebSocket
+	// per tab, under /events/ so the ingress already routes it (ADR-0043).
+	web.HandleFunc("GET /events/{session}/presence", presence.handle())
 	// Up in the Text view: the prompts held behind the running turn, handed
 	// back to edit (held.go).
 	web.HandleFunc("POST /prompt/{session}/unqueue", handleUnqueue(rg))

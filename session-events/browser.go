@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,43 +122,6 @@ var watchOnlyMessages = map[string]bool{
 	"selectTab":   true,
 }
 
-// browserSharesPath is tmux-api's share store. This service runs as the same
-// OS user and only reads it. A var only as a test seam.
-var browserSharesPath = "/var/lib/tmux-api/shares.json"
-
-// browserShare is one row of that store, the fields this file reads.
-type browserShare struct {
-	Owner string `json:"owner"`
-	Name  string `json:"name"`
-	Guest string `json:"guest"`
-	Mode  string `json:"mode"`
-}
-
-// shareModeFor answers the share row for (owner, name, guest): "ro", "rw", or
-// "" when there is none. A missing store is no shares at all, which is every
-// single-user install.
-func shareModeFor(path, owner, name, guest string) (string, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	var set struct {
-		Shares []browserShare `json:"shares"`
-	}
-	if err := json.Unmarshal(raw, &set); err != nil {
-		return "", fmt.Errorf("corrupt share store: %w", err)
-	}
-	for _, sh := range set.Shares {
-		if sh.Owner == owner && sh.Name == name && sh.Guest == guest {
-			return sh.Mode, nil
-		}
-	}
-	return "", nil
-}
-
 // browserAccess is what one request may do with one session's browser.
 type browserAccess struct {
 	// owner is the OS user the session and its host belong to.
@@ -183,10 +147,9 @@ var errNotShared = errors.New("not shared")
 // (tmux-api handleInternalAttach), from the caller and the session's owner.
 //
 //   - Your own session: rw.
-//   - Someone else's: the share row's mode, and no row is a refusal. Project
-//     membership is not consulted, because the terminal's attach does not
-//     consult it either, and watching the browser must not reach further than
-//     watching the terminal.
+//   - Someone else's: tmux-api's access check, the one the terminal's attach
+//     makes, so a share and a project membership both count, and watching
+//     the browser reaches exactly as far as watching the terminal (ADR-0043).
 //   - A Lens (?as=, so eff differs from real) only watches, whatever the
 //     ceiling. The Lens watches every terminal it attaches, and its browser
 //     view follows the same rule.
@@ -503,7 +466,8 @@ func dialBridge(osUser, sock string) (io.ReadWriteCloser, error) {
 type browserRelay struct {
 	// opts reads the session's options, as the session's owner.
 	opts stampReader
-	// shares answers a share row's mode (shareModeFor over the store).
+	// shares answers the caller's mode on someone else's session: tmux-api's
+	// access check (guest.go), which covers shares and projects alike.
 	shares func(owner, name, guest string) (string, error)
 	// dial opens a connection to a host socket belonging to owner.
 	dial func(owner, sock string) (io.ReadWriteCloser, error)
@@ -530,7 +494,9 @@ func newBrowserRelay(opts stampReader, self string) *browserRelay {
 	return &browserRelay{
 		opts: opts,
 		shares: func(owner, name, guest string) (string, error) {
-			return shareModeFor(browserSharesPath, owner, name, guest)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return guestAccess(ctx, owner, name, guest)
 		},
 		// Your own user's socket is dialled directly; anyone else's only
 		// through a bridge running as them, because the socket is 0600.

@@ -89,28 +89,6 @@ func TestResolveBrowserAccessPassesAShareStoreFailureOn(t *testing.T) {
 	}
 }
 
-func TestShareModeForReadsTmuxAPIsStore(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "shares.json")
-	if mode, err := shareModeFor(path, "bob", "x", "alice"); err != nil || mode != "" {
-		t.Fatalf("missing store: mode %q err %v, want no share and no error", mode, err)
-	}
-	doc := `{"version":1,"shares":[{"owner":"bob","name":"x","guest":"alice","mode":"ro","clientTty":"/dev/pts/3"}]}`
-	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if mode, err := shareModeFor(path, "bob", "x", "alice"); err != nil || mode != "ro" {
-		t.Fatalf("mode %q err %v, want ro", mode, err)
-	}
-	if mode, _ := shareModeFor(path, "bob", "x", "carol"); mode != "" {
-		t.Fatalf("another guest got %q", mode)
-	}
-	os.WriteFile(path, []byte("{"), 0o600)
-	if _, err := shareModeFor(path, "bob", "x", "alice"); err == nil {
-		t.Fatal("a corrupt store must be an error")
-	}
-}
-
 // --- the filter ---------------------------------------------------------------
 
 func TestFilterViewerMessage(t *testing.T) {
