@@ -72,7 +72,7 @@ flowchart TD
 | compaction catch-up | `CompactionEnded` spots the true-to-false edge; `CatchUpCompaction` reads the transcript from the newest main-thread user or assistant row in the log, takes user and system rows up to the receipt (manual) or the summary (inside a turn), skips rows already in the log by uuid, and settles a `/compact` turn left open | `sessionio/compactcatchup.go`, `session-events/mod.go` |
 | system rows on the mod path | `feedRow` maps the mod's `name` to the record's subtype and its text blocks to the record's content | `sessionio/modsource.go` |
 | receipts as system rows | a `<local-command-stdout>` in a `system/local_command` row settles an open turn like a user-row receipt, on both paths; it still draws nothing, since its reading arrives as its own record | `sessionio/normalize.go` |
-| `/clear` in the new conversation | found in the live check: the `/clear` rows travel on the old conversation's link while the file files them under the new one, after the attachment the mod names as the new history's last row, so the rebuild stopped short of them and the session bar kept reading "working" for the `/clear` the device sent. The replay now takes the run of local-command rows right after its barrier | `sessionio/replay.go`, `session-events/mod.go` |
+| `/clear` in the new conversation | found in the live check: the `/clear` rows travel on the old conversation's link while the file files them under the new one, after the attachment the mod names as the new history's last row, so the rebuild stopped short of them and the session bar kept reading "working" for the `/clear` the device sent. The replay now takes the run of local-command rows right after its barrier | `sessionio/replay.go` |
 | parity guard | each command's transcript lines and mod events produce the same events, and no turn stays open | `sessionio/commandparity_test.go` |
 | docs | ADR-0036 amended; Compaction marker and Command receipt added to the glossary | `docs/adr/0036-…`, `CONTEXT.md` |
 
@@ -81,9 +81,14 @@ cannot add to a restart's load.
 
 ## Verification
 
-After the release reaches the box, a scratch session runs `/compact`, `/model`
-and `/clear` in the lobby's Text view. Each has to end with no Working row,
-and `/compact` has to show the compaction marker and the receipt.
+Checked on 0.119.5 (2026-10-11) in a scratch session through the lobby's Text
+view, sent from the composer:
+
+| command | result |
+|---|---|
+| `/compact` | settles about 2 s after sending; the session reads idle; the compaction marker and "Compacted (ctrl+o to see full summary)" are drawn |
+| `/clear` | the session reads idle; the new conversation opens with the `/clear`; no Working row |
+| `/model` | not run live: it opens Claude's picker in the terminal. Its rows were captured from the engine and are covered by the parity test |
 
 ## Open questions
 
