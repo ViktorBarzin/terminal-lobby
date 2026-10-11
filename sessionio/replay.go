@@ -89,6 +89,9 @@ func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Durat
 	for _, rec := range recs {
 		if rec.UUID != "" {
 			f.mod.rows[rec.UUID] = true
+			if !rec.IsSidechain && (rec.Type == RecordUser || rec.Type == RecordAssistant) {
+				f.mod.lastMain = rec.UUID
+			}
 		}
 	}
 	f.mod.opened = opened

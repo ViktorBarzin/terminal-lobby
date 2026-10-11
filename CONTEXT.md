@@ -1211,6 +1211,24 @@ the origin `auto-continuation`, and the text view draws it as a rule reading
 the approval carried, in place of that message.
 _Avoid_: continuation message, auto prompt (it is not a prompt anyone sent)
 
+**Compaction marker**:
+The rule the text view draws where a conversation was compacted, in place of
+the summary record Claude writes there. The record is user-role and flagged
+`isCompactSummary`; drawn as a message it read as an enormous prompt nobody
+typed and opened a turn around it. On the mod path the engine does not send
+that record, so session-events reads it from the transcript once the mod
+reports the compaction over (ADR-0036).
+_Avoid_: compaction message, summary bubble
+
+**Command receipt**:
+The `<local-command-stdout>` record Claude writes when a slash command it
+answers itself (`/compact`, `/model`, `/effort`, `/clear`) has finished: the
+command's printed output, drawn as a muted status line. It is also what
+settles the turn the command's own record opened, since the model is never
+called and no reply ends it. Claude writes it as a user row or as a system row
+with the subtype `local_command`, depending on the command; both settle.
+_Avoid_: command output, stdout row
+
 ### Data used
 
 **Data used**:

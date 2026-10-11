@@ -265,6 +265,11 @@ type modState struct {
 	// FeedHistory). Held across chunks; a live row clears it. Guarded by
 	// normMu.
 	answered bool
+	// compacting is the last level's compacting flag (CompactionEnded).
+	compacting bool
+	// lastMain is the uuid of the newest main-thread row in the log, where a
+	// compaction catch-up starts reading the transcript.
+	lastMain string
 }
 
 // NewModSource builds a source fed by the mod. transcript is the file Claude
@@ -373,6 +378,11 @@ func (f *FileSource) feedRow(ev ModEvent) {
 		f.mu.Lock()
 		seen := f.mod.rows[ev.UUID]
 		f.mod.rows[ev.UUID] = true
+		// Only a user or assistant row: those the file holds under the same
+		// uuid, where a notice or a snapshot may never be written.
+		if t := ev.Message.Type; !seen && ev.AgentID == "" && (t == "user" || t == "assistant") {
+			f.mod.lastMain = ev.UUID
+		}
 		f.mu.Unlock()
 		if seen {
 			return
@@ -399,6 +409,12 @@ func (f *FileSource) feedRow(ev ModEvent) {
 		Timestamp:   rfc3339(ev.T),
 		Origin:      ev.Origin,
 		Message:     Message{Role: ev.Message.Role, Content: ev.Message.Content},
+	}
+	// A system row names its kind where the file has a subtype, and carries
+	// its text as blocks where the file has a string.
+	if rec.Type == RecordSystem {
+		rec.Subtype = ev.Message.Name
+		rec.Content = blockText(rec.Blocks())
 	}
 	blocks := rec.Blocks()
 	// A stored block of the reply supersedes what streamed for it.

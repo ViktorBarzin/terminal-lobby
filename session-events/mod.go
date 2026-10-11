@@ -755,6 +755,22 @@ func rebuildLog(name string, fs *sessionio.FileSource, final sessionio.ModEvent,
 	fs.FeedHistory(msgs, final.Running)
 }
 
+// compactWait bounds how long a compaction catch-up waits for the rows the
+// compaction wrote to reach the transcript.
+var compactWait = 5 * time.Second
+
+// catchUpCompaction draws the rows a compaction wrote to the transcript, which
+// the engine never hands the mod (sessionio/compactcatchup.go). A miss is
+// logged: the /compact turn is settled with no marker.
+func catchUpCompaction(name string, fs *sessionio.FileSource, running bool) {
+	replaySlots <- struct{}{}
+	got, err := fs.CatchUpCompaction(running, compactWait)
+	<-replaySlots
+	if err != nil {
+		log.Printf("mod %s: compaction catch-up: %v (drew %d rows, settled the turn itself: %v)", name, err, got.Rows, got.Settled)
+	}
+}
+
 // apply feeds a batch of events to the session: the log, the dialogs and the
 // tmux options. The option writes are merged across the batch so a burst of
 // events costs one tmux call.
@@ -833,6 +849,9 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		case sessionio.ModLevelEvent:
 			ls.agents.SetEngine(ev.Agents)
 			state = true
+			if fs.CompactionEnded(ev) {
+				go catchUpCompaction(c.user+"/"+c.sessionName(), fs, ev.Running)
+			}
 		case sessionio.ModCommandFailedEvent:
 			c.commandFailed(ev)
 		}

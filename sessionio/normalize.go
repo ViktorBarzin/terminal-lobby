@@ -300,43 +300,7 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 	// (see harness.go). A shape with nothing worth reading earns no row.
 	if role == "user" {
 		if line, settles, ok := harnessRow(blockText(blocks)); ok {
-			var out []Event
-			// A `/model` or `/effort` receipt is the only source that reports a
-			// change the moment it happens: the assistant records that name
-			// either are written by a TURN, so until the session takes one they
-			// all still report what the change replaced (see MetaModel).
-			//
-			// One event for the pair, because that is what a reader is shown
-			// and each receipt speaks for only half of it.
-			moved := false
-			if m, ok := ModelFromReceipt(line); ok && !SameModel(m, n.model.Model) {
-				n.model.Model, moved = m, true
-			}
-			if e, ok := EffortFromReceipt(line); ok && e != n.model.Effort {
-				n.model.Effort, moved = e, true
-			}
-			if moved {
-				e := n.emit(KindMeta, at)
-				now := n.model
-				e.Meta, e.Model = MetaModel, &now
-				out = append(out, e)
-			}
-			if line != "" {
-				e := n.emit(KindState, at)
-				e.Body = line
-				out = append(out, e)
-			}
-			// A slash command the CLI answered itself is over when its receipt
-			// lands, and the turn the command's own record opened has to end
-			// with it — nothing else ever will, since the model was never
-			// called (see harnessRow). For /compact the receipt arrives 2.5
-			// minutes later, so the turn stays open for as long as the
-			// compaction actually runs, which is honest.
-			if settles && !n.turnDone && !sub {
-				n.turnDone, n.doneMsg = true, ""
-				out = append(out, n.emit(KindTurnEnd, at))
-			}
-			return out
+			return n.harnessLine(line, settles, sub, at)
 		}
 	}
 
@@ -592,6 +556,48 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 	return out
 }
 
+// harnessLine draws a record harnessRow claimed: the muted status line, a
+// model or effort a receipt reports, and the end of the turn a receipt settles.
+func (n *Normalizer) harnessLine(line string, settles, sub bool, at int64) []Event {
+	var out []Event
+	// A `/model` or `/effort` receipt is the only source that reports a
+	// change the moment it happens: the assistant records that name
+	// either are written by a TURN, so until the session takes one they
+	// all still report what the change replaced (see MetaModel).
+	//
+	// One event for the pair, because that is what a reader is shown
+	// and each receipt speaks for only half of it.
+	moved := false
+	if m, ok := ModelFromReceipt(line); ok && !SameModel(m, n.model.Model) {
+		n.model.Model, moved = m, true
+	}
+	if e, ok := EffortFromReceipt(line); ok && e != n.model.Effort {
+		n.model.Effort, moved = e, true
+	}
+	if moved {
+		e := n.emit(KindMeta, at)
+		now := n.model
+		e.Meta, e.Model = MetaModel, &now
+		out = append(out, e)
+	}
+	if line != "" {
+		e := n.emit(KindState, at)
+		e.Body = line
+		out = append(out, e)
+	}
+	// A slash command the CLI answered itself is over when its receipt
+	// lands, and the turn the command's own record opened has to end
+	// with it — nothing else ever will, since the model was never
+	// called (see harnessRow). For /compact the receipt arrives 2.5
+	// minutes later, so the turn stays open for as long as the
+	// compaction actually runs, which is honest.
+	if settles && !n.turnDone && !sub {
+		n.turnDone, n.doneMsg = true, ""
+		out = append(out, n.emit(KindTurnEnd, at))
+	}
+	return out
+}
+
 // meta turns a non-conversation record into the session-lifecycle events the
 // renderer shows as inline markers: the mode in force, a prompt sitting in the
 // queue, a hook that failed. Records that say nothing a reader would act on —
@@ -647,6 +653,12 @@ func (n *Normalizer) meta(rec Record) []Event {
 		if rec.Subtype == "local_command" {
 			if line, ok := commandLine(rec.Content); ok {
 				return emit(MetaCommand, line)
+			}
+			// /clear writes its receipt as a system row, after the command
+			// record that opened a turn as a user row (2.1.296), so the
+			// receipt has to settle that turn as the user-row one does.
+			if line, settles, ok := harnessRow(rec.Content); ok {
+				return n.harnessLine(line, settles, rec.IsSidechain && !n.agent, parseAt(rec.Timestamp))
 			}
 			return nil
 		}

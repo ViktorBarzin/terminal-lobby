@@ -93,3 +93,56 @@ func TestHistoryRebuild(t *testing.T) {
 		})
 	}
 }
+
+// The engine never hands the mod the rows a /compact writes after its own
+// record (2.1.296), so the turn that record opened is settled from the
+// transcript once the mod reports the compaction over.
+func TestCompactionEdgeCatchesUpFromTheTranscript(t *testing.T) {
+	defer func(r, c time.Duration) { replayWait, compactWait = r, c }(replayWait, compactWait)
+	replayWait, compactWait = 200*time.Millisecond, time.Second
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	p := compactedTranscript(t, rg)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", CWD: "/w", Transcript: p, Model: "claude-opus-5-5"})
+	c := rg.mods.conn("wizard", "demo")
+	fs, _ := rg.source("wizard", "demo")
+	c.apply(historyAfterCompaction("a2"))
+
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString(strings.Join([]string{
+		`{"type":"user","uuid":"c9","timestamp":"2026-10-05T10:01:00Z","message":{"role":"user","content":"/compact"}}`,
+		`{"type":"system","uuid":"b9","subtype":"compact_boundary","timestamp":"2026-10-05T10:01:08Z","content":"Conversation compacted"}`,
+		`{"type":"user","uuid":"s9","isCompactSummary":true,"timestamp":"2026-10-05T10:01:08Z","message":{"role":"user","content":"This session is being continued from a previous conversation."}}`,
+		`{"type":"user","uuid":"o9","timestamp":"2026-10-05T10:01:09Z","message":{"role":"user","content":"<local-command-stdout>Compacted</local-command-stdout>"}}`,
+	}, "\n") + "\n")
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModRowEvent, UUID: "c9", Door: "prompt",
+		Message: &sessionio.ModMessage{Type: "user", Role: "user", Content: []byte(`[{"type":"text","text":"/compact"}]`)}}})
+	if !fs.TurnOpen() {
+		t.Fatal("the /compact row opened no turn")
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModLevelEvent, Compacting: true}})
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModLevelEvent}})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for fs.TurnOpen() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if fs.TurnOpen() {
+		t.Fatal("the /compact turn is still open after the compaction ended")
+	}
+	var marker, receipt bool
+	for _, e := range fs.Replay(0) {
+		marker = marker || (e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaCompact && e.TurnID != "t1")
+		receipt = receipt || (e.Kind == sessionio.KindState && e.Body == "Compacted")
+	}
+	if !marker || !receipt {
+		t.Errorf("compaction marker %v, receipt %v; want both", marker, receipt)
+	}
+}

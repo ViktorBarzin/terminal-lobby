@@ -64,6 +64,34 @@ gap, and its stream is ended so it reopens with the usual window. The scope is
 the current conversation: `/clear` starts a new transcript, and the replay does
 not reach across it.
 
+**The mod path reads the same as the file path, and a compaction is caught up
+from the transcript (2026-10-11).** Whatever session-events learns a Claude
+session through, a tail of the transcript or the mod, the Text view shows the
+same events. `sessionio/commandparity_test.go` holds each local slash command
+(`/compact`, a compaction Claude starts inside a turn, `/model`, `/clear`) as
+the transcript lines it writes and the mod events the engine sends for it, and
+checks the two come out alike and leave no turn open. On Claude Code 2.1.296
+the two inputs differ for a compaction: the engine raises `session.append` for
+the bare `/compact` row and for nothing written after it, though the mod
+reference says `session.append` covers a compaction's boundary and summary.
+The boundary, summary, caveat, command record and **Command receipt** reach the
+file only, and the receipt is what settles the turn the command opened, so the
+Text view kept a **Working row** for every live `/compact` until a restart
+replayed the file. The mod does report `session.compact` as a level whose
+`compacting` flag goes true, then false. On that edge session-events reads the
+user and system rows the transcript holds after the newest main-thread row in
+the log, waiting up to 5 s for the receipt (or, for a compaction inside a turn,
+the summary), and feeds them to the Normalizer like a tail would
+(`FileSource.CatchUpCompaction`). Rows already in the log are skipped by uuid,
+and a later mod copy of a caught-up row is dropped. If the rows do not arrive
+in time, the `/compact` turn is settled anyway with no **Compaction marker**,
+and session-events logs `compaction catch-up` with the reason. This is the one
+live read of the transcript; everything else still arrives through the mod. A
+mod row also maps its `name` to the record's subtype and its text blocks to the
+record's content, so a system row such as `/model`'s receipt or `/clear`'s
+reads as it does in the file, and a receipt written as a system row settles a
+turn the same way a user-row receipt does, on both paths.
+
 **session-events is the server, the mod is the client.** A mod cannot listen on
 a socket. It POSTs events and long-polls for commands over loopback HTTP. Each
 `$.http.fetch` is capped at 30 s by Claude Code, so a poll holds for 25 s.
@@ -453,6 +481,12 @@ How plans work from mod 0.5.1:
 
 - How a mod built against 2.1.287's types behaves on the next Claude release;
   the API is marked as moving between releases.
+- What happens when a later Claude starts raising `session.append` for a
+  compaction's rows, as the mod reference describes. The catch-up would find
+  them already in the log and skip them, but a mod row carries no
+  `isCompactSummary` flag today, so the summary would draw as a prompt. The
+  parity test fails the day the engine's input changes only if its fixture is
+  updated to match, so a live `/compact` after a Claude upgrade is the check.
 - Whether subagent events render well in the Text view: the wire carries them
   and the unit tests cover them, but the live test did not run a subagent.
   the API is marked as moving between releases.
