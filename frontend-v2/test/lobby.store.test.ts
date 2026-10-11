@@ -591,7 +591,57 @@ describe("lobby store", () => {
       api.sessionsVal = [{ ...sess("k7m2q9x4tp0v"), id: "$3" }];
       await store.refresh();
 
-      expect(store.selected()?.name).toBe("theirs");
+      // Not followed onto this user's own $3. bob's session has left the
+      // list, so it is closed rather than kept (ADR-0043).
+      expect(store.selected()).toBeNull();
+    });
+  });
+
+  it("follows a rename of a session shared with you, within its owner's sessions", async () => {
+    // A shared session is renamed like any other: its first prompt titles it
+    // (ADR-0022), or a driving guest retitles it (ADR-0043). tmux's id is
+    // unique within one owner's server, so the same owner and the same id is
+    // the same session.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("share-check", { owner: "bob", access: "rw" }), id: "$3" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("share-check", "bob");
+
+      api.sessionsVal = [{ ...sess("pong-game", { owner: "bob", access: "rw" }), id: "$3" }];
+      await store.refresh();
+
+      expect(store.selected()).toEqual({ name: "pong-game", owner: "bob" });
+    });
+  });
+
+  it("closes a shared session that is no longer shared, and says so", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("theirs", { owner: "bob", access: "rw" }), id: "$3" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("theirs", "bob");
+
+      api.sessionsVal = [];
+      await store.refresh();
+
+      expect(store.selected()).toBeNull();
+      expect(store.toast()).toContain("bob's session is no longer shared with you");
+    });
+  });
+
+  it("does not follow onto another owner's session that has the same id", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("theirs", { owner: "bob", access: "rw" }), id: "$3" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("theirs", "bob");
+
+      api.sessionsVal = [{ ...sess("other", { owner: "carol", access: "rw" }), id: "$3" }];
+      await store.refresh();
+
+      // Not followed onto carol's $3; bob's is gone, so it is closed.
+      expect(store.selected()).toBeNull();
     });
   });
 

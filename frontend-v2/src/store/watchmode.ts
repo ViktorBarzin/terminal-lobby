@@ -269,3 +269,15 @@ export function createWatchMode(
   const set = (w: boolean) => saveWatch(session(), w, as());
   return [watch, set, () => set(!watch())];
 }
+
+/**
+ * What the automatic rule should read as "someone else is driving" for one
+ * view. A guest invited to drive (a foreign session with rw access, ADR-0043)
+ * joins driving: the rule exists for your own second device, and for a guest
+ * it would open every invite as a watcher while the owner is at the keyboard,
+ * and again each time a rename remounts the view. An explicit choice still
+ * wins in `resolveWatch`.
+ */
+export function joinDriven(driven: boolean, foreign: boolean, access: string | undefined): boolean {
+  return foreign && access === "rw" ? false : driven;
+}

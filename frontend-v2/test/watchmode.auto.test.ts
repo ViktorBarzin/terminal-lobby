@@ -241,3 +241,16 @@ describe("createWatchMode — a lens watches until told otherwise", () => {
     });
   });
 });
+
+describe("joinDriven", () => {
+  it("lets a guest invited to drive join driving, and leaves everyone else's rule alone", async () => {
+    const { joinDriven } = await import("../src/store/watchmode");
+    // Your own session: the automatic rule as it was.
+    expect(joinDriven(true, false, undefined)).toBe(true);
+    expect(joinDriven(false, false, undefined)).toBe(false);
+    // A guest with Drive joins driving even while the owner is at the keyboard.
+    expect(joinDriven(true, true, "rw")).toBe(false);
+    // A watch-only guest reads it as before; their composer is read-only anyway.
+    expect(joinDriven(true, true, "ro")).toBe(true);
+  });
+});

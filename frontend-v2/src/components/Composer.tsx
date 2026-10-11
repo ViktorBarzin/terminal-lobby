@@ -9,6 +9,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { DraftPeeks } from "./DraftPeeks";
 import type { PermissionDecision } from "../types/events";
 import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
@@ -160,6 +161,9 @@ export const Composer: Component<{
   onSend: (text: string, attachments?: readonly DraftAttachment[]) => Promise<boolean>;
   /** The field's text as it changes (PromptField.onDraftChange). */
   onDraftChange?: (text: string) => void;
+  /** Show the others' live drafts above the field: the session's own
+   *  composer, not an agent's drill-in. */
+  draftPeeks?: boolean;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Forward raw pty bytes to the live terminal. No longer used for
@@ -440,6 +444,11 @@ export const Composer: Component<{
     >
       <Show when={props.pending.length > 0}>
         <PermissionPanel pending={props.pending} onResolve={props.onResolve} />
+      </Show>
+      {/* What the others on a shared session are typing, in the box's own
+          column (ADR-0043). */}
+      <Show when={props.draftPeeks}>
+        <DraftPeeks />
       </Show>
       <PromptField
         textSize={props.textSize}

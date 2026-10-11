@@ -80,7 +80,6 @@ import { steerNote, type PendingSteer } from "./steer.logic";
 import { steerAgent } from "../lib/steer-api";
 import { useSessionOwner } from "../lib/session-owner";
 import { usePresence } from "../store/presence";
-import { DraftPeeks } from "./DraftPeeks";
 import { panelPresent, runMembers, sameRunMembers, type AgentSnapshot } from "./agents.logic";
 import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
@@ -2746,8 +2745,8 @@ export const TextView: Component<{
           keysActive={props.onScreen !== false && tileFocused() && cardKeysArmed()}
         />
       </Show>
-      <DraftPeeks />
       <Composer
+        draftPeeks
         onDraftChange={(text) => presenceView?.presence.setDraft(text)}
         placeholder={
           props.noTranscript === "codex"

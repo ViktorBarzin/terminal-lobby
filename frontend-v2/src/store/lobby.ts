@@ -700,12 +700,45 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return born ? [...moves, [sel.name, born.name]] : moves;
   }
 
+  /**
+   * The selected foreign session's new name, when its owner renamed it (or a
+   * driving guest did, ADR-0043). Matched on the owner AND tmux's id: an id is
+   * unique within one owner's server, and only there.
+   */
+  function foreignRename(prev: readonly Session[], next: readonly Session[]): string | undefined {
+    const sel = selected();
+    if (!sel?.owner || sel.owner === me()) return undefined;
+    if (next.some((s) => s.owner === sel.owner && s.name === sel.name)) return undefined;
+    const was = prev.find((s) => s.owner === sel.owner && s.name === sel.name);
+    if (!was?.id) return undefined;
+    return next.find((s) => s.owner === sel.owner && s.id === was.id)?.name;
+  }
+
   function followRenamedSelection(
     moves: ReadonlyArray<readonly [string, string]>,
     next: readonly Session[],
   ): void {
     const sel = selected();
-    if (!sel || sel.owner) return; // foreign sessions are not ours to follow
+    if (!sel) return;
+    if (sel.owner && sel.owner !== me()) {
+      const now = foreignRename(sessions, next);
+      if (now) {
+        applySelection(now, sel.owner);
+        return;
+      }
+      // Gone from the list without a rename: the owner removed this guest, or
+      // ended the session. Said, and closed, rather than left reconnecting to
+      // a session the server now refuses. Only once it was listed: a selection
+      // read from the URL before the first poll has nothing to lose yet.
+      const listed = (list: readonly Session[]) =>
+        list.some((s) => s.owner === sel.owner && s.name === sel.name);
+      if (listed(sessions) && !listed(next)) {
+        showToast(`${sel.owner}'s session is no longer shared with you, or has ended.`, "info");
+        deselect();
+      }
+      return;
+    }
+    if (sel.owner) return;
     if (next.some((s) => s.name === sel.name)) return; // still there
     const moved = moves.find(([was]) => was === sel.name);
     if (!moved) return; // genuinely gone, not renamed

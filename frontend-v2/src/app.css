@@ -6018,6 +6018,7 @@ body.tl-kb-up {
   color: var(--accent);
 }
 .tl-share-note-field,
+.tl-share-guest-field,
 .tl-share-url-field {
   font: inherit;
   font-size: calc(12px * var(--tl-text-scale, 1));
@@ -6044,6 +6045,30 @@ body.tl-kb-up {
   display: flex;
   justify-content: flex-end;
   padding-top: 6px;
+}
+/* The People half (ADR-0043): one row per person, their name, then Watch or
+   Drive, then Remove, wrapping onto a second line only on a phone. */
+.tl-share-guest-field {
+  width: 220px;
+  max-width: 100%;
+}
+.tl-share-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.tl-share-person-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.tl-share-person + .tl-share-url,
+.tl-share-person + .tl-set-row {
+  margin-top: 8px;
 }
 
 /* ---- Text view: canonical item rows (2026-08-16) ------------------------- */
@@ -8797,11 +8822,17 @@ body.tl-kb-up {
    per person, name first, the draft read-only and capped at four lines so it
    cannot push the conversation away. */
 .tl-draft-peeks {
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 0 var(--tl-gutter) 8px;
+  padding-bottom: 8px;
+}
+/* The composer's column, so a draft sits over the box it will be sent from. */
+.tl-draft-peek {
+  width: 100%;
+  max-width: var(--tl-col-w, 760px);
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 .tl-draft-peek {
   padding: 6px 10px;

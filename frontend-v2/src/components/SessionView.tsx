@@ -24,7 +24,7 @@ import type { SseStatus } from "../sse/client";
 import { gridCramped, type SessionGrid } from "../terminal/fit";
 import { createViewMode } from "../store/viewmode";
 import { atListTarget } from "../lib/at-path";
-import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
+import { createWatchMode, clearResolvedWatch, joinDriven, publishResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, deriveRows } from "./timeline.logic";
 import { runMembers, sameRunMembers } from "./agents.logic";
 import type { PermissionDecision } from "../types/events";
@@ -439,7 +439,8 @@ export const SessionView: Component<{
   // still refuses to attach at all when it resolves to watch at dwell time.
   const [watch, , toggleWatch] = createWatchMode(
     session,
-    () => props.driven?.() ?? false,
+    // A guest invited to drive joins driving (watchmode.ts joinDriven).
+    () => joinDriven(props.driven?.() ?? false, !!foreignOwner, props.access?.()),
     () => props.lens?.() ?? "",
     // The join decision is taken once per session, and a rename is not a new
     // session: this is the key the view is mounted under.
