@@ -130,6 +130,33 @@ func TestModReplayStopsAtTheBarrierAndDedupesLiveRows(t *testing.T) {
 	}
 }
 
+// After /clear the engine appends the command's rows, then an attachment, and
+// the mod names that attachment as its history's last row. The file holds the
+// attachment first and the command's rows after it, and the mod sent those on
+// the old conversation's link, so they never come live (measured 2026-10-11 on
+// 2.1.296). The replay takes the command rows that follow the barrier.
+func TestModReplayKeepsTheCommandRowsAfterTheBarrier(t *testing.T) {
+	p := writeModTranscript(t,
+		`{"type":"mode","mode":"normal"}`,
+		`{"type":"attachment","uuid":"at1","timestamp":"2026-10-11T09:17:22.994Z","attachment":{"type":"hook_success"}}`,
+		tUser(t, "k1", "2026-10-11T09:17:22.952Z", true, caveatLine),
+		tUser(t, "n1", "2026-10-11T09:17:22.825Z", false,
+			"<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>"),
+		tSystem(t, "o1", "2026-10-11T09:17:22.943Z", "local_command", "<local-command-stdout></local-command-stdout>"),
+		tPrompt("u9", "a prompt typed after it"),
+	)
+	fs := NewModSource("s", p, nil)
+	if err := fs.ReplayTranscript("at1", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if g := strings.Join(prompts(fs.Replay(0)), ","); g != "/clear" {
+		t.Errorf("prompts = %q, want /clear and not the prompt after it, which comes live", g)
+	}
+	if fs.TurnOpen() {
+		t.Error("the /clear turn is still open")
+	}
+}
+
 // The mod never sends queue-operation rows, so a prompt the file leaves
 // enqueued would sit in the queue for the life of the session. Measured over
 // 150 transcripts on 2026-10-05: 3 end with a human prompt still queued.

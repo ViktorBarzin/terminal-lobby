@@ -751,15 +751,6 @@ func rebuildLog(name string, fs *sessionio.FileSource, final sessionio.ModEvent,
 			return
 		}
 		log.Printf("mod %s: transcript replay: %v; rebuilding from the mod's history", name, err)
-	} else if len(msgs) == 0 {
-		// A conversation /clear just started: its first rows reached the file
-		// but went to the mod's old link (sessionio.ReplayFreshConversation).
-		replaySlots <- struct{}{}
-		err := fs.ReplayFreshConversation(final.Running, replayWait)
-		<-replaySlots
-		if err == nil {
-			return
-		}
 	}
 	fs.FeedHistory(msgs, final.Running)
 }

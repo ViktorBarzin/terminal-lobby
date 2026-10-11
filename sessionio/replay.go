@@ -51,65 +51,7 @@ func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Durat
 	if err != nil {
 		return err
 	}
-	f.replayRecords(recs, running)
-	return nil
-}
 
-var errEmptyTranscript = errors.New("replay: the transcript holds no records")
-
-// ReplayFreshConversation rebuilds the log from whatever the transcript holds,
-// for a conversation whose history came empty and names no row. That is a
-// conversation /clear has just started: the CLI writes the command's own rows
-// as the new transcript's first records, while the mod sends them on the old
-// conversation's link (measured 2026-10-11, mod 0.6.0 on 2.1.296), so without
-// this the /clear a device is standing in for never arrives in the new log.
-//
-// The hello can beat the rows to the file: measured live, the new transcript
-// was created at 08:53:25.128, the hello came at .205, and the /clear rows
-// landed in the next batch at .229. So while the file exists the replay waits
-// up to `wait` for a command receipt, the last row /clear writes. A brand-new
-// session has no file until its first row is stored, and its log must not
-// wait on one: a file still missing after freshMissing is given up on. On
-// error the log is untouched.
-func (f *FileSource) ReplayFreshConversation(running bool, wait time.Duration) error {
-	if f.mod == nil {
-		return errors.New("replay: not a mod source")
-	}
-	path := f.Path()
-	if path == "" {
-		return errNoTranscript
-	}
-	start := time.Now()
-	for {
-		lines, _, err := f.reader.ReadFrom(path, 0)
-		if err != nil && time.Since(start) >= freshMissing {
-			return err
-		}
-		var recs []Record
-		receipt := false
-		for _, ln := range lines {
-			if rec, ok := DecodeRecord([]byte(ln)); ok {
-				recs = append(recs, rec)
-				receipt = receipt || lastCompactionRow(rec, true)
-			}
-		}
-		if receipt || (err == nil && time.Since(start) >= wait) {
-			if len(recs) == 0 {
-				return errEmptyTranscript
-			}
-			f.replayRecords(recs, running)
-			return nil
-		}
-		time.Sleep(replayPoll)
-	}
-}
-
-// freshMissing is how long ReplayFreshConversation looks for a transcript
-// that does not exist yet.
-const freshMissing = 300 * time.Millisecond
-
-// replayRecords feeds transcript records read for a rebuild into an empty log.
-func (f *FileSource) replayRecords(recs []Record, running bool) {
 	f.normMu.Lock()
 	defer f.normMu.Unlock()
 	var evs []Event
@@ -168,6 +110,7 @@ func (f *FileSource) replayRecords(recs []Record, running bool) {
 		delete(f.subs, id)
 		close(ch)
 	}
+	return nil
 }
 
 // readToBarrier reads the transcript's records up to and including the
@@ -191,14 +134,14 @@ func (f *FileSource) readToBarrier(path, last string, wait time.Duration) ([]Rec
 			continue
 		}
 		off = next
-		for _, ln := range lines {
+		for i, ln := range lines {
 			rec, ok := DecodeRecord([]byte(ln))
 			if !ok {
 				continue
 			}
 			recs = append(recs, rec)
 			if rec.UUID == last && !rec.IsSidechain {
-				return recs, nil
+				return append(recs, commandRowsAfter(lines[i+1:])...), nil
 			}
 		}
 		if !time.Now().Before(deadline) {
@@ -206,6 +149,49 @@ func (f *FileSource) readToBarrier(path, last string, wait time.Duration) ([]Rec
 		}
 		time.Sleep(replayPoll)
 	}
+}
+
+// commandRowsAfter is the run of a local command's rows (its caveat, its
+// record and its receipt) that opens lines, the read past a replay's barrier.
+//
+// After /clear the engine appends the command's rows and then an attachment,
+// which the mod names as its history's last row, but the file holds the
+// attachment first. The command's rows went out on the old conversation's
+// link, so they never arrive live either, and the device that sent the /clear
+// kept standing in for it (measured 2026-10-11 on 2.1.296). Anything else
+// after the barrier still comes live from the mod, so the run stops at the
+// first row that is not a command's.
+func commandRowsAfter(lines []string) []Record {
+	var out []Record
+	for _, ln := range lines {
+		rec, ok := DecodeRecord([]byte(ln))
+		if !ok {
+			continue
+		}
+		if !commandRow(rec) {
+			break
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// commandRow reports whether rec is one of the rows a local slash command
+// writes: the caveat, the command's own record, or its receipt.
+func commandRow(rec Record) bool {
+	if rec.IsSidechain {
+		return false
+	}
+	switch rec.Type {
+	case RecordSystem:
+		return rec.Subtype == "local_command"
+	case RecordUser:
+		t := strings.TrimSpace(blockText(rec.Blocks()))
+		return strings.HasPrefix(t, "<local-command-caveat>") ||
+			strings.HasPrefix(t, "<command-name>") ||
+			strings.HasPrefix(t, "<local-command-stdout>")
+	}
+	return false
 }
 
 // queueLeftOpen reports whether the queue the events describe still holds
