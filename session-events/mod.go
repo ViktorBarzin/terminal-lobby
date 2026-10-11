@@ -755,7 +755,7 @@ func rebuildLog(name string, fs *sessionio.FileSource, final sessionio.ModEvent,
 		// A conversation /clear just started: its first rows reached the file
 		// but went to the mod's old link (sessionio.ReplayFreshConversation).
 		replaySlots <- struct{}{}
-		err := fs.ReplayFreshConversation(final.Running)
+		err := fs.ReplayFreshConversation(final.Running, replayWait)
 		<-replaySlots
 		if err == nil {
 			return
