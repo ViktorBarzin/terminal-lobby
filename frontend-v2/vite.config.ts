@@ -99,7 +99,10 @@ const proxy: Record<string, ProxyOptions> = {
   // from session-events, so proxying it here would forward local dev to a 404
   // the prod ingress does not even route. /hooks/* is loopback-only and
   // deliberately absent from the ingress too.
-  "/events": sessionEventsProxy,
+  // /events carries one WebSocket, the presence socket at
+  // /events/<session>/presence (ADR-0043), so it forwards upgrades and keeps
+  // the browser's Host, for the same reason as /browser below.
+  "/events": { target: SESSION_EVENTS, changeOrigin: false, ws: true, configure: injectAuth },
   "/prompt": sessionEventsProxy,
   "/cancel": sessionEventsProxy,
   "/earlier": sessionEventsProxy,
