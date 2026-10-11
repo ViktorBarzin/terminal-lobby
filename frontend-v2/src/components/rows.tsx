@@ -12,7 +12,8 @@ import {
 import { Markdown } from "./Markdown";
 import { Picture } from "./Attachment";
 import { contentUrlFor } from "../lib/attachments";
-import { toolImageUrl } from "../lib/config";
+import { toolImageUrl, withOwner } from "../lib/config";
+import { useSessionOwner } from "../lib/session-owner";
 import type { PictureKind } from "../store/picture";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
 import {
@@ -370,6 +371,7 @@ export const ToolRowView: Component<{
   /** Rendered for a subagent's nested rows. */
   renderChild?: (row: ToolRow["children"][number]) => unknown;
 }> = (props) => {
+  const owner = useSessionOwner();
   const [open, setOpen] = createSignal(false);
 
   const status = () => (!props.row.done ? "running" : props.row.isError ? "error" : "ok");
@@ -394,7 +396,11 @@ export const ToolRowView: Component<{
     if (props.session && toolId) {
       const alt = basename(path()) || "Picture";
       for (const ref of props.row.images ?? []) {
-        out.push({ src: toolImageUrl(props.session, toolId, ref.n), alt, kind: "block" });
+        out.push({
+          src: withOwner(toolImageUrl(props.session, toolId, ref.n), owner),
+          alt,
+          kind: "block",
+        });
       }
     }
     for (const file of props.row.files ?? []) {
@@ -919,11 +925,12 @@ function thumbOf(
   p: WorkPicture,
   session: string | undefined,
   me: string | undefined,
+  owner: string | undefined,
 ): Thumb | null {
   if (p.kind === "block") {
     if (!session) return null;
     return {
-      src: toolImageUrl(session, p.toolId, p.n),
+      src: withOwner(toolImageUrl(session, p.toolId, p.n), owner),
       alt: basename(p.label) || "Picture",
       kind: "block",
     };
@@ -943,8 +950,9 @@ const WorkPictures: Component<{
   session?: string;
   me?: string;
 }> = (props) => {
+  const owner = useSessionOwner();
   const thumbs = createMemo(() =>
-    props.pictures.flatMap((p) => thumbOf(p, props.session, props.me) ?? []),
+    props.pictures.flatMap((p) => thumbOf(p, props.session, props.me, owner) ?? []),
   );
   return (
     <Show when={thumbs().length > 0}>

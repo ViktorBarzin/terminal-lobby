@@ -76,6 +76,17 @@ export function appendActAs(url: string, actAs: string): string {
   return url + (url.includes("?") ? "&" : "?") + "as=" + encodeURIComponent(actAs);
 }
 
+/**
+ * Address a session someone else owns: session-events and tmux-api run every
+ * route for a guest as that owner (ADR-0043). `owner` is undefined for your
+ * own sessions, which leaves the URL as it was. Applied by the caller rather
+ * than by each builder, since only the session's view knows whose it is.
+ */
+export function withOwner(url: string, owner: string | undefined): string {
+  if (!owner) return url;
+  return url + (url.includes("?") ? "&" : "?") + "owner=" + encodeURIComponent(owner);
+}
+
 /** Config-bound `appendActAs`, applied by every builder below. */
 function withActAs(url: string): string {
   return appendActAs(url, ACT_AS);
@@ -127,6 +138,13 @@ export function eventsUrl(session: string, lastEventId: number, epoch = ""): str
   const turns = openWindowTurns(effectiveTier());
   if (turns !== 20) params.push(`turns=${turns}`);
   return withActAs(`${u}?${params.join("&")}`);
+}
+
+/** The presence socket for a session (session-events presence.go): who has
+ *  it open and what each of them is typing. An http(s) URL; the caller turns
+ *  it into ws(s). */
+export function presenceUrl(session: string, owner: string | undefined): string {
+  return withOwner(withActAs(`${API_BASE}/events/${encodeURIComponent(session)}/presence`), owner);
 }
 
 /** POST target to inject a prompt into the session's Claude (session-events).

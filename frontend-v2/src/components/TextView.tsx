@@ -78,6 +78,9 @@ import { AgentPanel } from "./AgentPanel";
 import { AgentTranscript } from "./AgentTranscript";
 import { steerNote, type PendingSteer } from "./steer.logic";
 import { steerAgent } from "../lib/steer-api";
+import { useSessionOwner } from "../lib/session-owner";
+import { usePresence } from "../store/presence";
+import { DraftPeeks } from "./DraftPeeks";
 import { panelPresent, runMembers, sameRunMembers, type AgentSnapshot } from "./agents.logic";
 import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
@@ -536,6 +539,10 @@ export const TextView: Component<{
    *  `starting`, CONTEXT.md "Starting"). */
   starting?: boolean;
 }> = (props) => {
+  /** The session's owner, when it is someone else's (ADR-0043). */
+  const sessionOwner = useSessionOwner();
+  /** Who else is on the session, and what they are typing (ADR-0043). */
+  const presenceView = usePresence();
   const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
   // What the transcript says, plus what it has not caught up with. A prompt
   // Claude has already queued is left out: the timeline draws it as a ghost
@@ -1132,7 +1139,7 @@ export const TextView: Component<{
     if (id === null || !session || !text.trim()) return false;
     const pending: PendingSteer = { id: -++steerSeq, agent: id, text, at: Date.now() };
     setSteers((all) => [...all, pending]);
-    const out = await steerAgent(session, id, text);
+    const out = await steerAgent(session, id, text, undefined, sessionOwner);
     if (out.kind === "sent") return true;
     if (out.kind === "unconfirmed") {
       props.notify?.(
@@ -2739,7 +2746,9 @@ export const TextView: Component<{
           keysActive={props.onScreen !== false && tileFocused() && cardKeysArmed()}
         />
       </Show>
+      <DraftPeeks />
       <Composer
+        onDraftChange={(text) => presenceView?.presence.setDraft(text)}
         placeholder={
           props.noTranscript === "codex"
             ? "Ask Codex, or run a command…"

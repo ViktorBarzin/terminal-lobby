@@ -14,7 +14,8 @@ import {
   type AttachmentKind,
   type Segment,
 } from "../lib/attachments";
-import { promptImageUrl } from "../lib/config";
+import { promptImageUrl, withOwner } from "../lib/config";
+import { useSessionOwner } from "../lib/session-owner";
 import {
   openPicture,
   type PictureKind,
@@ -278,6 +279,7 @@ export const MessageSegments: Component<{
   record?: string;
   onOpen?: (path: string) => void;
 }> = (props) => {
+  const owner = useSessionOwner();
   const shown = createMemo(() => lines(props.segments));
   return (
     <For each={shown()}>
@@ -308,7 +310,7 @@ export const MessageSegments: Component<{
           >
             {(session) => (
               <Picture
-                src={promptImageUrl(session(), props.record ?? "", seg.ref.n)}
+                src={withOwner(promptImageUrl(session(), props.record ?? "", seg.ref.n), owner)}
                 alt={`Pasted image ${seg.ref.paste ?? seg.ref.n + 1}`}
                 size="full"
                 source="bubble"

@@ -2,6 +2,7 @@ import { createEffect, createMemo, For, onCleanup, onMount, Show, type Component
 import type { AgentInfo, WorkflowInfo } from "../types/events";
 import { unreadSteers, withSteers, type PendingSteer } from "./steer.logic";
 import { createAgentStream } from "../store/agent-stream";
+import { useSessionOwner } from "../lib/session-owner";
 import type { NotifyKind } from "../store/session";
 import { deriveRows } from "./timeline.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -53,6 +54,7 @@ export const AgentTranscript: Component<{
 }> = (props) => {
   const stream = createAgentStream(props.session, props.agent, {
     notify: props.notify,
+    owner: useSessionOwner(),
   });
   createEffect(() => (props.parked ? stream.park() : stream.unpark()));
   // Which of the messages sent to this agent its transcript does not show yet.

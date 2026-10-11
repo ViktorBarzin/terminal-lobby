@@ -1944,3 +1944,30 @@
     display: none;
   }
 }
+/* Who else has the session open (ADR-0043): their names, beside the link
+   count. Neutral rather than accent: these are people the owner invited. */
+.tl-bar-present {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 0;
+  max-width: 40vw;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.tl-bar-present-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-done);
+}
+.tl-bar-present-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -29,6 +29,7 @@ import {
   resultUrl,
   answerTextUrl,
   searchUrl,
+  withOwner,
 } from "../lib/config";
 import type { Event, PermissionDecision, SearchHit } from "../types/events";
 import { readCatalogue, type Catalogue } from "./catalogue";
@@ -109,6 +110,8 @@ export interface StopResult {
 }
 
 export interface SessionStore {
+  /** The session's owner when it is someone else's (SessionStoreOptions). */
+  owner: string | undefined;
   /** Reactive, ordered, deduped event list (Solid store proxy). */
   events: Event[];
   /** SSE connection status. */
@@ -426,6 +429,10 @@ export interface SessionStoreOptions {
   autoStart?: boolean;
   /** injected in tests; defaults to the tab's shared IndexedDB-backed cache. */
   cache?: TranscriptCache;
+  /** The account that owns the session, when it is not yours: a guest's
+   *  view (ADR-0043). Every request then names it, and session-events runs
+   *  it as that owner. Undefined for your own session. */
+  owner?: string;
 }
 
 /**
@@ -463,6 +470,12 @@ export function createSessionStore(
    * connect, prompt or cancel addresses the session by the name it has.
    */
   const session: Accessor<string> = typeof name === "function" ? name : () => name;
+  const owner = opts.owner || undefined;
+  /** A session-events URL for this session, naming its owner for a guest. */
+  const own = (url: string): string => withOwner(url, owner);
+  /** The transcript cache's key. A guest's copy of someone else's session must
+   *  not share a slot with a session of their own that has the same name. */
+  const cacheKey = (): string => (owner ? `${owner}/${session()}` : session());
   const [events, setEvents] = createStore<Event[]>([]);
   const [status, setStatus] = createSignal<SseStatus>("connecting");
   // A fresh open backfills a bounded number of BYTES (session-events
@@ -658,7 +671,7 @@ export function createSessionStore(
       // 2026-08-28 and 2026-09-11 every write here threw DataCloneError into a
       // catch and stored nothing. The unwrap lives in transcript-cache.ts so
       // that it covers this call and every future one.
-      void cache.save(session(), cachedEpoch, events, cursor);
+      void cache.save(cacheKey(), cachedEpoch, events, cursor);
     };
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => number })
       .requestIdleCallback;
@@ -831,7 +844,7 @@ export function createSessionStore(
     // is stored describes a transcript that no longer exists, so it goes too.
     // Keeping it would mean seeding the same wrong ids on the next open.
     cachedEpoch = "";
-    void cache.drop(session());
+    void cache.drop(cacheKey());
     pending = [];
     backfill = [];
     seen.clear();
@@ -865,7 +878,7 @@ export function createSessionStore(
 
   const client = new SseClient({
     session: session(),
-    url: (_name, lastEventId, epoch) => eventsUrl(session(), lastEventId, epoch),
+    url: (_name, lastEventId, epoch) => own(eventsUrl(session(), lastEventId, epoch)),
     onReset: reset,
     onEvent: (e: Event) => {
       streamWork = afterEvent(streamWork, e);
@@ -977,7 +990,7 @@ export function createSessionStore(
    * soft — no cache, or a slow one, and this is exactly the open it always was.
    */
   const startWithCache = async (): Promise<void> => {
-    const cached = await cache.read(session());
+    const cached = await cache.read(cacheKey());
     if (closed) return;
     // A copy with no cursor cannot say where paging back starts, and the
     // oldest id held is no stand-in for it (CachedTranscript.cursor), so it
@@ -1155,7 +1168,7 @@ export function createSessionStore(
       const keepalive = new TextEncoder().encode(body).length <= KEEPALIVE_MAX_BYTES;
       const post = () =>
         trackPrompt(
-          fetchWithDeadline(promptUrl(session()), {
+          fetchWithDeadline(own(promptUrl(session())), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body,
@@ -1246,7 +1259,7 @@ export function createSessionStore(
     };
     try {
       const res = await fetchWithDeadline(
-        cancelUrl(session()),
+        own(cancelUrl(session())),
         restoring || returning
           ? {
               method: "POST",
@@ -1291,7 +1304,7 @@ export function createSessionStore(
 
   const unqueue = async (): Promise<string[]> => {
     try {
-      const res = await fetchWithDeadline(unqueueUrl(session()), { method: "POST" });
+      const res = await fetchWithDeadline(own(unqueueUrl(session())), { method: "POST" });
       if (!res.ok) return [];
       const reply = (await res.json().catch(() => null)) as {
         restored?: unknown;
@@ -1317,7 +1330,7 @@ export function createSessionStore(
     say: { refused: string; failed: string },
   ): Promise<"taken" | "refused" | "failed"> => {
     try {
-      const res = await fetchWithDeadline(cancelQueuedUrl(session()), {
+      const res = await fetchWithDeadline(own(cancelQueuedUrl(session())), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -1409,7 +1422,7 @@ export function createSessionStore(
 
   const answer = async (keys: string[]): Promise<boolean> => {
     try {
-      const res = await fetchWithDeadline(keysUrl(session()), {
+      const res = await fetchWithDeadline(own(keysUrl(session())), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keys }),
@@ -1428,7 +1441,7 @@ export function createSessionStore(
   // landed in the field.
   const answerText = async (text: string): Promise<boolean> => {
     try {
-      const res = await fetchWithDeadline(answerTextUrl(session()), {
+      const res = await fetchWithDeadline(own(answerTextUrl(session())), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -1456,11 +1469,11 @@ export function createSessionStore(
    * raises the one case that is genuinely a failure, a null.
    */
   const answerOne = (req: AnswerRequest): Promise<AnswerResponse | null> =>
-    sendAnswer(session(), req);
+    sendAnswer(session(), req, owner);
 
   const search = async (q: string): Promise<SearchHit[]> => {
     try {
-      const res = await fetchWithDeadline(searchUrl(session(), q));
+      const res = await fetchWithDeadline(own(searchUrl(session(), q)));
       if (!res.ok) return [];
       return ((await res.json()) as SearchHit[] | null) ?? [];
     } catch {
@@ -1478,11 +1491,11 @@ export function createSessionStore(
    * it got (store/catalogue.ts carries the measurement).
    */
   const commands = (): Promise<Catalogue> =>
-    readCatalogue(() => fetchWithDeadline(commandsUrl(session())));
+    readCatalogue(() => fetchWithDeadline(own(commandsUrl(session()))));
 
   const pane = async (): Promise<{ pane: string; state: string } | null> => {
     try {
-      const res = await fetchWithDeadline(paneUrl(session()));
+      const res = await fetchWithDeadline(own(paneUrl(session())));
       if (!res.ok) return null;
       return (await res.json()) as { pane: string; state: string };
     } catch {
@@ -1493,7 +1506,7 @@ export function createSessionStore(
   const fullResult = async (toolId: string): Promise<string | null> => {
     try {
       const res = await fetchWithDeadline(
-        resultUrl(session(), toolId),
+        own(resultUrl(session(), toolId)),
         undefined,
         TRANSCRIPT_READ_TIMEOUT_MS,
       );
@@ -1527,7 +1540,7 @@ export function createSessionStore(
     const ask = bytes ?? EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
     try {
       const res = await fetchWithDeadline(
-        earlierUrl(session(), before, ask),
+        own(earlierUrl(session(), before, ask)),
         undefined,
         TRANSCRIPT_READ_TIMEOUT_MS,
       );
@@ -1562,6 +1575,7 @@ export function createSessionStore(
   };
 
   return {
+    owner,
     hold,
     events,
     status,

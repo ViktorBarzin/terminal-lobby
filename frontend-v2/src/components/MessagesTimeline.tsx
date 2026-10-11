@@ -14,6 +14,8 @@ import {
   type JSX,
   type Setter,
 } from "solid-js";
+import { usePresence } from "../store/presence";
+import { attributeSenders } from "./presence.logic";
 import type { Event } from "../types/events";
 import { diag } from "../telemetry/diag";
 import {
@@ -85,6 +87,8 @@ const SendingSpinner: Component = () => (
 
 const UserRowView: Component<{
   row: UserRow;
+  /** Who sent it, on a session someone else has sent into (ADR-0043). */
+  sender?: string;
   /** effective OS user — decides whether a store path is ours to fetch. */
   me?: string;
   /** the session, whose transcript holds the prompt's pasted pictures. */
@@ -109,6 +113,9 @@ const UserRowView: Component<{
           which for a teammate can be minutes, so the bubble says so. */}
       <Show when={props.row.steer && props.row.sending}>
         <span class="tl-steer-wait">Waiting for the agent to read it</span>
+      </Show>
+      <Show when={props.sender}>
+        <span class="tl-user-sender">{props.sender}</span>
       </Show>
       <div class="tl-bubble-user">
         {/* Still a <pre>: the message's own whitespace is significant, and an
@@ -568,6 +575,17 @@ export const MessagesTimeline: Component<{
   const derived = createMemo<TimelineRow[]>(() => props.rows ?? deriveRows(props.events));
   const rows = createMemo<TimelineRow[]>(() => visibleRows(derived(), expandedTurns()));
   /**
+   * Who sent each message, once someone other than the session's owner has
+   * sent into it (ADR-0043). Matched over the derived rows, where each message
+   * appears once and in order, which is what lets each record label one.
+   */
+  const presenceView = usePresence();
+  const senders = createMemo(() => {
+    if (!presenceView) return new Map<string, string>();
+    const users = derived().flatMap((r) => (r.kind === "user" && !r.steer ? [r] : []));
+    return attributeSenders(users, presenceView.presence.senders(), presenceView.owner);
+  });
+  /**
    * The Browsing runs, and which row each run's card is drawn after.
    *
    * Read off the DERIVED rows, where every call appears once; an opened fold
@@ -945,6 +963,7 @@ export const MessagesTimeline: Component<{
         return (
           <UserRowView
             row={row}
+            sender={senders().get(row.key)}
             me={props.me}
             session={props.session}
             onOpenPreview={props.onOpenPreview}
@@ -1065,6 +1084,7 @@ export const MessagesTimeline: Component<{
         return (
           <UserRowView
             row={row() as UserRow}
+            sender={senders().get(row().key)}
             me={props.me}
             session={props.session}
             onOpenPreview={props.onOpenPreview}

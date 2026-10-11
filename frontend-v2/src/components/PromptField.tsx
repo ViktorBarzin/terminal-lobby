@@ -173,6 +173,9 @@ export const PromptField: Component<{
    * nothing persists.
    */
   draftKey?: string;
+  /** Told the field's text each time it changes, sent or cleared included:
+   *  what others on a shared session see this person typing (ADR-0043). */
+  onDraftChange?: (text: string) => void;
   /**
    * Upload these files and return what became attachable. The uploader decides:
    * a document over the store cap stays an ephemeral /tmp transfer and comes back
@@ -278,6 +281,7 @@ export const PromptField: Component<{
   /** The field's label element, which aria-labelledby names. */
   const labelId = createUniqueId();
   const [draft, setDraft] = createSignal("");
+  createEffect(() => props.onDraftChange?.(draft()));
 
   // ---- the shape ----------------------------------------------------------
   const phone = createMobileFlip();

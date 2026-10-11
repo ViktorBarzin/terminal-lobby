@@ -1,7 +1,7 @@
 import { batch, createSignal, onCleanup, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
 import { SseClient, type EventSourceLike, type ReadyFrame, type SseStatus } from "../sse/client";
-import { agentEarlierUrl, agentEventsUrl, agentResultUrl } from "../lib/config";
+import { agentEarlierUrl, agentEventsUrl, agentResultUrl, withOwner } from "../lib/config";
 import { fetchWithDeadline } from "../lib/http";
 import type { Event } from "../types/events";
 import {
@@ -47,6 +47,8 @@ export interface AgentStream {
 
 export interface AgentStreamOptions {
   notify?: (message: string, kind: NotifyKind) => void;
+  /** The session's owner, for a guest's view (config.ts withOwner). */
+  owner?: string;
   /** Injected in tests. */
   createSource?: (url: string) => EventSourceLike;
   probeStatus?: (url: string) => Promise<number | null>;
@@ -132,7 +134,7 @@ export function createAgentStream(
 
   const client = new SseClient({
     session,
-    url: (s, lastEventId) => agentEventsUrl(s, agent, lastEventId),
+    url: (s, lastEventId) => withOwner(agentEventsUrl(s, agent, lastEventId), opts.owner),
     onReset: reset,
     onEvent: (e) => {
       pending.push(e);
@@ -191,7 +193,7 @@ export function createAgentStream(
     const ask = EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
     try {
       const res = await fetchWithDeadline(
-        agentEarlierUrl(session, agent, before, ask),
+        withOwner(agentEarlierUrl(session, agent, before, ask), opts.owner),
         undefined,
         TRANSCRIPT_READ_TIMEOUT_MS,
       );
@@ -213,7 +215,7 @@ export function createAgentStream(
   const fullResult = async (toolId: string): Promise<string | null> => {
     try {
       const res = await fetchWithDeadline(
-        agentResultUrl(session, agent, toolId),
+        withOwner(agentResultUrl(session, agent, toolId), opts.owner),
         undefined,
         TRANSCRIPT_READ_TIMEOUT_MS,
       );

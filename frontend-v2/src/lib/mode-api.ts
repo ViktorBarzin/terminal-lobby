@@ -1,4 +1,4 @@
-import { modelUrl } from "./config";
+import { modelUrl, withOwner } from "./config";
 import { fetchWithDeadline } from "./http";
 import type { ModeId } from "../logic/modes";
 
@@ -63,6 +63,8 @@ function asReply(text: string): SetModeReply | null {
 
 export async function setSessionMode(o: {
   session: string;
+  /** The session's owner, for a guest's view (config.ts withOwner). */
+  owner?: string;
   mode: ModeId;
   fetchImpl?: typeof fetch;
 }): Promise<SetModeResult> {
@@ -70,7 +72,7 @@ export async function setSessionMode(o: {
     o.fetchImpl ?? ((input, init) => fetchWithDeadline(String(input), init ?? undefined));
   let res: Response;
   try {
-    res = await fetchImpl(modelUrl(o.session), {
+    res = await fetchImpl(withOwner(modelUrl(o.session), o.owner), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: o.mode }),

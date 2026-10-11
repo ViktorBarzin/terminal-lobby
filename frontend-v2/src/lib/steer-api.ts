@@ -1,4 +1,4 @@
-import { agentMessageUrl } from "./config";
+import { agentMessageUrl, withOwner } from "./config";
 import { fetchWithDeadline } from "./http";
 
 /** What became of a message sent to an agent from the drill-in. */
@@ -17,10 +17,11 @@ export async function steerAgent(
   agent: string,
   text: string,
   fetchImpl: typeof fetchWithDeadline = fetchWithDeadline,
+  owner?: string,
 ): Promise<SteerOutcome> {
   let res: Response;
   try {
-    res = await fetchImpl(agentMessageUrl(session, agent), {
+    res = await fetchImpl(withOwner(agentMessageUrl(session, agent), owner), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),

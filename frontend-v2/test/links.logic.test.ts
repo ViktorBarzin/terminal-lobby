@@ -6,6 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  canLink,
   canShare,
   expiryLabel,
   linkUrl,
@@ -46,12 +47,25 @@ describe("canShare", () => {
     ],
     ["own session in a lens tab", { ...claude, owner: "emo" }, "emo", "emo", false],
     ["no owner in a lens tab", { ...claude }, "viktor", "emo", false],
-    // A link shares the conversation; a session with no Claude has none (ADR-0041).
-    ["own plain shell", { tool: "shell" as const }, "viktor", "", false],
-    ["own codex session", { tool: "codex" as const }, "viktor", "", false],
-    ["tool not known yet", {}, "viktor", "", false],
+    // People can be invited to any session of yours (ADR-0043); only the
+    // public-link half needs Claude (canLink).
+    ["own plain shell", { tool: "shell" as const }, "viktor", "", true],
+    ["own codex session", { tool: "codex" as const }, "viktor", "", true],
+    ["tool not known yet", {}, "viktor", "", true],
   ])("%s", (_name, session, me, actAs, want) => {
     expect(canShare(session, me, actAs)).toBe(want);
+  });
+});
+
+describe("canLink", () => {
+  // A link shares the conversation; a session with no Claude has none (ADR-0041).
+  it.each([
+    ["claude", { tool: "claude" as const }, true],
+    ["plain shell", { tool: "shell" as const }, false],
+    ["codex", { tool: "codex" as const }, false],
+    ["tool not known yet", {}, false],
+  ])("%s", (_name, session, want) => {
+    expect(canLink(session)).toBe(want);
   });
 });
 

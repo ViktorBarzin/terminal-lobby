@@ -1,4 +1,4 @@
-import { modelUrl } from "./config";
+import { modelUrl, withOwner } from "./config";
 import { fetchWithDeadline } from "./http";
 import { FIRST_PROMPT_LADDER } from "./first-prompt";
 import type { ModelHarness, ModelState } from "./models";
@@ -26,6 +26,8 @@ type Attempt =
 
 export interface SetModelOptions {
   session: string;
+  /** The session's owner, for a guest's view (config.ts withOwner). */
+  owner?: string;
   harness: ModelHarness;
   /** Either may be "", meaning "leave this one alone". Both empty is refused. */
   model: string;
@@ -45,7 +47,7 @@ export type SetModelResult = { ok: true; state: ModelState } | { ok: false; reas
 
 async function attempt(o: SetModelOptions, fetchImpl: typeof fetch): Promise<Attempt> {
   try {
-    const res = await fetchImpl(modelUrl(o.session), {
+    const res = await fetchImpl(withOwner(modelUrl(o.session), o.owner), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

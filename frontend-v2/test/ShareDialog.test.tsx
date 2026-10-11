@@ -15,6 +15,7 @@ const SESSION: Session = {
   attached: 1,
   lastActivity: 0,
   created: 0,
+  tool: "claude",
 };
 
 const link = (over: Partial<LinkView>): LinkView => ({
@@ -61,6 +62,7 @@ const mount = () =>
   render(() => (
     <ShareDialog
       target={{ id: "$4", name: "auth" }}
+      me="viktor"
       sessions={() => [SESSION]}
       onClose={() => {}}
     />

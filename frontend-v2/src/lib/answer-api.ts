@@ -6,7 +6,7 @@
  * step.
  */
 
-import { answerUrl } from "./config";
+import { answerUrl, withOwner } from "./config";
 import { fetchWithDeadline } from "./http";
 
 /**
@@ -136,9 +136,10 @@ export type PlanAnswer = { option: number; label: string } | { feedback: string;
 export async function sendAnswer(
   session: string,
   req: AnswerRequest,
+  owner?: string,
 ): Promise<AnswerResponse | null> {
   try {
-    const res = await fetchWithDeadline(answerUrl(session), {
+    const res = await fetchWithDeadline(withOwner(answerUrl(session), owner), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(req),

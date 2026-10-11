@@ -8781,3 +8781,92 @@ body.tl-kb-up {
 .tl-browser-popup-notice > span {
   flex: 1 1 auto;
 }
+
+/* ---- shared driving (ADR-0043) -------------------------------------------
+   Who sent a message, once someone other than the owner has sent into the
+   session: a small name beside the bubble, like the steer wait above. */
+.tl-user-sender {
+  flex: none;
+  margin-bottom: 10px;
+  font-size: 0.75em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* What the others on the session are typing, above the composer: one block
+   per person, name first, the draft read-only and capped at four lines so it
+   cannot push the conversation away. */
+.tl-draft-peeks {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 var(--tl-gutter) 8px;
+}
+.tl-draft-peek {
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  min-width: 0;
+}
+.tl-draft-peek[data-state="resting"] {
+  opacity: 0.7;
+}
+.tl-draft-peek-who {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tl-draft-peek-what {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.tl-draft-peek-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 6px;
+}
+.tl-draft-peek-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tl-draft-dot 1.2s ease-in-out infinite;
+}
+.tl-draft-peek-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.tl-draft-peek-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes tl-draft-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+.tl-draft-peek-text {
+  margin: 4px 0 0;
+  font: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  max-height: calc(4 * 1.45em);
+  overflow-y: auto;
+  line-height: 1.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-draft-peek-dots span {
+    animation: none;
+    opacity: 0.8;
+  }
+}

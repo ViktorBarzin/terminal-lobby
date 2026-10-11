@@ -158,6 +158,8 @@ export const Composer: Component<{
    *  beside the text, which already carries their paths where their tokens
    *  stood; the live session ignores them. */
   onSend: (text: string, attachments?: readonly DraftAttachment[]) => Promise<boolean>;
+  /** The field's text as it changes (PromptField.onDraftChange). */
+  onDraftChange?: (text: string) => void;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Forward raw pty bytes to the live terminal. No longer used for
@@ -442,6 +444,7 @@ export const Composer: Component<{
       <PromptField
         textSize={props.textSize}
         onSend={send}
+        onDraftChange={props.onDraftChange}
         label={props.label ?? "Message to send to the session"}
         placeholder={
           props.placeholder ??

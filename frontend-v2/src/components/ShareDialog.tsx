@@ -15,6 +15,7 @@ import {
   TTL_LABELS,
   expiryLabel,
   linkUrl,
+  canLink,
   linksForSession,
   viewersLabel,
 } from "./links.logic";
@@ -23,6 +24,8 @@ import type { ShareTarget } from "../store/share-dialog";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 import { dismissOnPress } from "./overlay";
 import { Group, Row } from "./settings/controls";
+import { copyText } from "./copy-text";
+import { SharePeople } from "./SharePeople";
 
 /**
  * How often an open list re-reads its links. Readers come and go while the
@@ -120,27 +123,6 @@ export const LinkRow: Component<{
   );
 };
 
-/**
- * Copy text, falling back to selecting it in its field: the async clipboard is
- * missing on a plain-http origin and can be refused, and `execCommand` still
- * works in both cases. When neither does, the text is left selected so a
- * keyboard copy is one keystroke away.
- */
-async function copyText(text: string, field: HTMLInputElement | undefined): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    if (!field) return false;
-    field.focus();
-    field.select();
-    try {
-      return document.execCommand("copy");
-    } catch {
-      return false;
-    }
-  }
-}
 
 /**
  * The Share dialog (docs/plans/2026-10-06-public-links-design.md, "What the
@@ -151,6 +133,8 @@ async function copyText(text: string, field: HTMLInputElement | undefined): Prom
  */
 export const ShareDialog: Component<{
   target: ShareTarget;
+  /** You, the session's owner: the People half lists your grants on it. */
+  me: string;
   /** The live session list, so the title follows a rename and a kill shows. */
   sessions: Accessor<readonly Session[]>;
   onClose: () => void;
@@ -250,6 +234,10 @@ export const ShareDialog: Component<{
         >
           <h2 class="tl-schelp-title">Share {label()}</h2>
           <div class="tl-schelp-scroll">
+            {/* Other accounts on this box, who may open the session live
+                (ADR-0043). Any session of yours; a public link needs Claude. */}
+            <Show when={session()}>{(s) => <SharePeople name={s().name} me={props.me} />}</Show>
+            <Show when={!session() || canLink(session() ?? {})}>
             <Group title="Public links">
               <Show
                 when={links() !== null}
@@ -358,6 +346,7 @@ export const ShareDialog: Component<{
                 <div class="tl-set-hint tl-set-hint-static">{status()}</div>
               </Show>
             </Group>
+            </Show>
           </div>
           <div class="tl-restore-footer">
             <button type="button" class="tl-foot-btn" onClick={() => props.onClose()}>

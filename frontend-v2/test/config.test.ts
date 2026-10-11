@@ -141,3 +141,15 @@ describe("config — picture URLs", () => {
     expect(promptImageUrl("a b", "r#1", 0)).toBe("/result/a%20b/user/r%231/image/0");
   });
 });
+
+describe("config — a session someone else owns", () => {
+  it("names the owner, and leaves your own session's URL alone", async () => {
+    const { withOwner, presenceUrl } = await import("../src/lib/config");
+    expect(withOwner("/events/main", undefined)).toBe("/events/main");
+    expect(withOwner("/events/main", "")).toBe("/events/main");
+    expect(withOwner("/events/main", "alice")).toBe("/events/main?owner=alice");
+    expect(withOwner("/events/main?rev=1", "alice")).toBe("/events/main?rev=1&owner=alice");
+    expect(presenceUrl("main", "alice")).toMatch(/\/events\/main\/presence\?owner=alice$/);
+    expect(presenceUrl("main", undefined)).toMatch(/\/events\/main\/presence$/);
+  });
+});

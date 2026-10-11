@@ -21,11 +21,13 @@ export const TTL_LABELS: Record<LinkTTL, string> = {
 /**
  * Whether the ⋯ menu offers Share… for a session.
  *
- * Only for your OWN session running Claude (decision 1, ADR-0041): a session
- * shared with you carries `access`, and one owned by somebody else names them
- * in `owner`. Never in a tab acting as another user, whose links would be
- * bearer URLs to their conversations; the server answers 403 there too, so
- * offering it would only ever fail.
+ * Only for your OWN session: a session shared with you carries `access`, and
+ * one owned by somebody else names them in `owner`, and a guest does not share
+ * onward (ADR-0043). Never in a tab acting as another user, whose links would
+ * be bearer URLs to their conversations; the server answers 403 there too, so
+ * offering it would only ever fail. Any harness: People works for a plain
+ * shell as well, and the dialog offers its public-link half only where
+ * `canLink` says.
  */
 export function canShare(
   session: Pick<Session, "owner" | "access" | "tool">,
@@ -34,10 +36,16 @@ export function canShare(
 ): boolean {
   if (actAs) return false;
   if (session.access) return false;
-  // A link shares the conversation, so a session with no Claude in it has
-  // nothing to share (ADR-0041); the server refuses it too.
-  if (session.tool !== "claude") return false;
   return !session.owner || session.owner === me;
+}
+
+/**
+ * Whether the Share dialog offers public links for a session. A link shares
+ * the conversation, so a session with no Claude in it has nothing to share
+ * (ADR-0041); the server refuses it too.
+ */
+export function canLink(session: Pick<Session, "tool">): boolean {
+  return session.tool === "claude";
 }
 
 /** The session bar's "2 viewing", empty while nobody is. */

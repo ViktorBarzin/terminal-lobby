@@ -82,6 +82,9 @@ import { track } from "../telemetry/track";
 import { blankCause, watchBlank } from "../telemetry/blank";
 import { watchStale } from "../telemetry/stale";
 import { effectiveTier } from "../diagnostics/connection";
+import { SessionOwnerProvider } from "../lib/session-owner";
+import { createPresence, PresenceProvider } from "../store/presence";
+import { othersPresent, presentLabel } from "./presence.logic";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -340,9 +343,13 @@ export const SessionView: Component<{
   const session = createMemo(() => props.session);
   /** The bar's "2 viewing", empty while nobody is reading through a link. */
   const linkViewers = createMemo(() => viewersLabel(props.viewers?.()));
+  /** Somebody else's session: every session-events call names its owner, and
+   *  runs as them (ADR-0043). Fixed for the view's life, like its session. */
+  const foreignOwner = props.owner && props.owner !== props.me?.() ? props.owner : undefined;
   const store = createSessionStore(session, {
     notify: props.notify,
     autoStart: false,
+    owner: foreignOwner,
   });
   const [mode, setMode, toggleMode] = createViewMode(session);
   /**
@@ -387,6 +394,7 @@ export const SessionView: Component<{
       });
     return setSessionModel({
       session: session(),
+      owner: foreignOwner,
       harness: h,
       model: choice.model,
       effort: choice.effort,
@@ -467,6 +475,19 @@ export const SessionView: Component<{
    * mount, or a hidden session would answer for the visible one.
    */
   const onScreen = () => props.visible !== false;
+  /** Who else has this session open, and what they are typing (ADR-0043).
+   *  Connected while the session is on screen: being present means having it
+   *  in front of you. */
+  const presence = createPresence({ session, owner: foreignOwner, active: onScreen });
+  const presenceView = {
+    presence,
+    owner: foreignOwner ?? props.me?.() ?? "",
+    get me() {
+      return props.me?.() ?? "";
+    },
+  };
+  /** The bar's "emo here", empty while you are alone. */
+  const present = createMemo(() => presentLabel(othersPresent(presence.people(), props.me?.())));
   /**
    * This view is the one the KEYSTROKES are going to.
    *
@@ -657,12 +678,16 @@ export const SessionView: Component<{
   /** Why the pty controls are inert, or "" when they are not. Watching at all
    *  makes them inert — a read-only tmux client drops what it is sent — so this
    *  answers for an ordinary Watch too, not only for a lens. */
+  /** Shared with you to watch only: there is no control to take. */
+  const watchOnlyShare = () => !!foreignOwner && props.access?.() === "ro";
   const inertReason = () =>
-    !watch()
-      ? ""
-      : lens()
-        ? `Watching ${lens()}: take control to type in their session`
-        : "Watching: this device does not type into the session";
+    watchOnlyShare()
+      ? `${foreignOwner} shared this session for watching only`
+      : !watch()
+        ? ""
+        : lens()
+          ? `Watching ${lens()}: take control to type in their session`
+          : "Watching: this device does not type into the session";
   // The sidebar reads this view's resolved state for the open session; drop it
   // when the view goes so a stale decision cannot outlive the attach it
   // described.
@@ -1667,6 +1692,15 @@ export const SessionView: Component<{
               in, and one click to end every link on it. No confirmation, the
               same as a kill: the person reaching for Stop has just seen
               someone they did not expect. */}
+            {/* Who else has the session open (ADR-0043): the owner, a
+              guest, or the owner's other account. Names, unlike the
+              anonymous link count beside it. */}
+            <Show when={present()}>
+              <span class="tl-bar-present" role="status" title={present()}>
+                <span class="tl-bar-present-dot" aria-hidden="true" />
+                <span class="tl-bar-present-text">{present()}</span>
+              </span>
+            </Show>
             <Show when={linkViewers()}>
               <span class="tl-bar-visitors" role="status">
                 <span class="tl-bar-visitors-text">{linkViewers()}</span>
@@ -1941,6 +1975,8 @@ export const SessionView: Component<{
           aria-hidden={mode() !== "text"}
           ref={textSection}
         >
+          <SessionOwnerProvider value={foreignOwner}>
+          <PresenceProvider value={presenceView}>
           <TextView
             onScreen={onScreen()}
             textShown={mode() === "text"}
@@ -1999,7 +2035,7 @@ export const SessionView: Component<{
                   ? "codex"
                   : undefined
             }
-            onSetMode={(m) => setSessionMode({ session: session(), mode: m })}
+            onSetMode={(m) => setSessionMode({ session: session(), owner: foreignOwner, mode: m })}
             stampedModel={piReading()}
             modelOffer={piOffer()}
             onAttach={attachFiles}
@@ -2007,10 +2043,12 @@ export const SessionView: Component<{
             // The line's Take control: the same toggle the header's Watch
             // button flips, offered where the line says this device is only
             // watching.
-            onTakeControl={() => toggleWatch()}
+            onTakeControl={watchOnlyShare() ? undefined : () => toggleWatch()}
             register={(api) => (composer = api)}
             browser={browserCards}
           />
+          </PresenceProvider>
+          </SessionOwnerProvider>
         </section>
         <section
           class="tl-view"
