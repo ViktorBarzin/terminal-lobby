@@ -23,6 +23,9 @@ import {
   MAX_QUEUED_SHOWN,
   sameRow,
   scrollTopAfterPrepend,
+  slideFrom,
+  slideTop,
+  SLIDE_MS,
   statusText,
   visibleRows,
   type ContinuationRow,
@@ -1165,12 +1168,34 @@ export const MessagesTimeline: Component<{
     props.onPinned?.(next);
   };
 
+  /** Whether "Latest" is sliding the view down to the live end (see slideToEnd). */
+  let sliding = false;
+  let slideFrame = 0;
+  const stopSlide = (): void => {
+    if (!sliding) return;
+    sliding = false;
+    if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(slideFrame);
+  };
+  /** The reader took hold mid-slide. The view stays where the slide had got
+   *  to, and the pin says whether that is the live end, so "Latest" comes back
+   *  instead of the next message snapping the view down. */
+  const yieldSlide = (): void => {
+    if (!sliding) return;
+    stopSlide();
+    setPinned(atBottom());
+  };
+  onCleanup(stopSlide);
+
   const atBottom = (): boolean => {
     const el = scroller;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
   };
+  const endOf = (el: HTMLElement): number => Math.max(0, el.scrollHeight - el.clientHeight);
+  /** Hold the view at the live end. A slide under way already chases the end
+   *  on every frame, and a write here would cut it short. */
   const stickToBottom = (el: HTMLElement): void => {
-    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (sliding) return;
+    el.scrollTop = endOf(el);
   };
 
   /**
@@ -1198,11 +1223,14 @@ export const MessagesTimeline: Component<{
   const notTouch = (): void => {
     touchedLast = false;
     gesture();
+    yieldSlide();
   };
   const readerScrolling = (): boolean =>
     touching || pressing || performance.now() - gestureAt < GESTURE_MS;
 
   const onScroll = () => {
+    // The slide's own frames. The view is pinned and on its way to the end.
+    if (sliding) return;
     const el = scroller;
     if (el && pinned() && !atBottom() && !readerScrolling()) {
       if (!untrack(() => props.hidden)) stickToBottom(el);
@@ -1222,6 +1250,7 @@ export const MessagesTimeline: Component<{
       touching = true;
       touchedLast = true;
       gesture();
+      yieldSlide();
     };
     const untouch = (): void => {
       touching = false;
@@ -1328,9 +1357,9 @@ export const MessagesTimeline: Component<{
   };
 
   /** Bring the reader to the latest message and pin the view there: a send
-   *  (`follow`) and the owner's "Latest" (`registerToEnd`). */
-  const toEnd = (): void => {
-    setPinned(true);
+   *  (`follow`) jumps, the owner's "Latest" (`registerToEnd`) slides. */
+  const toEnd = (slide = false): void => {
+    stopSlide();
     // Pressing it ends whatever scroll the reader had going. The tap's own
     // touchend marks a gesture, and left standing, the next scroll event of a
     // glide still running from an earlier flick read as the reader's and let go
@@ -1339,9 +1368,46 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     // A hidden box takes no scroll. The pin is set, so the effect below
     // brings the reader to the live end the moment the timeline shows.
-    if (!el || untrack(() => props.hidden)) return;
-    if (touchedLast) haltGlide(el);
-    stickToBottom(el);
+    if (el && !untrack(() => props.hidden)) {
+      if (touchedLast) haltGlide(el);
+      // The slide starts before the pin is set: setting it runs the effect
+      // that follows the transcript, which would jump to the end first.
+      if (slide) slideToEnd(el);
+      else stickToBottom(el);
+    }
+    setPinned(true);
+  };
+  /**
+   * Ease the view down to the live end over SLIDE_MS, so the reader sees which
+   * way the transcript went rather than having the screen replaced. The end is
+   * read again every frame: a reply streaming in moves it. Scroll events from
+   * the slide's own writes are ignored, and the pin's other writers stand back
+   * until it lands. A reader who asked the system for less motion gets the jump.
+   */
+  const slideToEnd = (el: HTMLElement): void => {
+    const from = slideFrom(el.scrollTop, endOf(el), el.clientHeight);
+    const still =
+      typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still || typeof requestAnimationFrame !== "function" || endOf(el) - from < 1) {
+      stickToBottom(el);
+      return;
+    }
+    el.scrollTop = from;
+    sliding = true;
+    let start: number | undefined;
+    const step = (now: number): void => {
+      if (!sliding) return;
+      if (untrack(() => props.hidden)) {
+        sliding = false;
+        return;
+      }
+      start ??= now;
+      const elapsed = now - start;
+      el.scrollTop = slideTop(from, endOf(el), elapsed);
+      if (elapsed >= SLIDE_MS) sliding = false;
+      else slideFrame = requestAnimationFrame(step);
+    };
+    slideFrame = requestAnimationFrame(step);
   };
   /**
    * Stop a finger's momentum scroll so the jump to the bottom holds. iOS
@@ -1363,8 +1429,14 @@ export const MessagesTimeline: Component<{
       }),
     );
   };
-  createEffect(on(() => props.follow, toEnd, { defer: true }));
-  props.registerToEnd?.(toEnd);
+  createEffect(
+    on(
+      () => props.follow,
+      () => toEnd(),
+      { defer: true },
+    ),
+  );
+  props.registerToEnd?.(() => toEnd(true));
   createEffect(on(pinned, (atEnd) => props.onAtEnd?.(atEnd)));
 
   createEffect(() => {
@@ -1381,7 +1453,7 @@ export const MessagesTimeline: Component<{
     if (props.hidden) return;
     const el = scroller;
     if (!el || !pinned()) return;
-    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    stickToBottom(el);
   });
 
   /**
@@ -1403,7 +1475,7 @@ export const MessagesTimeline: Component<{
     if (!el || typeof ResizeObserver !== "function") return;
     const ro = new ResizeObserver(() => {
       if (props.hidden || !pinned()) return;
-      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      stickToBottom(el);
     });
     ro.observe(el);
     onCleanup(() => ro.disconnect());
@@ -1429,7 +1501,7 @@ export const MessagesTimeline: Component<{
       if (!(e.target instanceof HTMLImageElement)) return;
       queueMicrotask(() => {
         if (props.hidden || !pinned()) return;
-        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        stickToBottom(el);
       });
     };
     el.addEventListener("load", onPicture, true);

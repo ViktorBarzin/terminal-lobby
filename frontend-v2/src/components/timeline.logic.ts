@@ -2841,6 +2841,31 @@ export function scrollTopAfterPrepend(
   return scrollTop + insertedAbove;
 }
 
+/** How long "Latest" takes to slide the transcript down to its live end. */
+export const SLIDE_MS = 360;
+/** How many screens of transcript the slide shows passing by at most. */
+const SLIDE_LEAD_SCREENS = 1.5;
+
+/**
+ * Where the slide to the live end starts. A reader a long way up jumps to a
+ * screen and a half short of the end first: easing through tens of thousands
+ * of pixels in a third of a second reads as a blur, not as motion.
+ */
+export function slideFrom(scrollTop: number, end: number, viewport: number): number {
+  return Math.max(scrollTop, end - viewport * SLIDE_LEAD_SCREENS);
+}
+
+/**
+ * Where the slide sits `elapsed` ms in. Eases out, so it leaves quickly and
+ * settles onto the end. `to` is read again every frame by the caller, since a
+ * reply streaming in moves the end while the slide runs.
+ */
+export function slideTop(from: number, to: number, elapsed: number): number {
+  if (elapsed >= SLIDE_MS) return to;
+  const t = Math.max(0, elapsed) / SLIDE_MS;
+  return from + (to - from) * (1 - (1 - t) ** 3);
+}
+
 /**
  * The events the transcript reports, plus the prompts this surface has sent
  * that it has not shown yet.

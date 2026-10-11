@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, fireEvent } from "@solidjs/testing-library";
+import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
 import type { Event } from "../src/types/events";
@@ -100,7 +100,7 @@ describe("<MessagesTimeline> — telling the store where the reader is", () => {
     expect(log).toEqual([false, true]);
   });
 
-  it("reports the pin the owner's Latest restores", () => {
+  it("reports the pin the owner's Latest restores", async () => {
     const log: boolean[] = [];
     const atEnd: boolean[] = [];
     let toEnd: (() => void) | undefined;
@@ -122,7 +122,7 @@ describe("<MessagesTimeline> — telling the store where the reader is", () => {
     toEnd();
     expect(log).toEqual([false, true]);
     expect(atEnd, "at mount, the scroll up, and the way back").toEqual([true, false, true]);
-    expect(scroller.scrollTop).toBe(700);
+    await waitFor(() => expect(scroller.scrollTop, "slid to the end").toBe(700));
   });
 
   /**

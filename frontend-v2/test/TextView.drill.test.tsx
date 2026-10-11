@@ -11,6 +11,16 @@ import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { AgentSnapshot } from "../src/components/agents.logic";
 import type { AgentInfo, Event } from "../src/types/events";
+import { SLIDE_MS } from "../src/components/timeline.logic";
+
+/** Frames are held, never run on their own. `pressLatest` plays the ones the
+ *  press queued, so the slide to the end lands. */
+const frames: FrameRequestCallback[] = [];
+function pressLatest(button: Element) {
+  frames.length = 0;
+  fireEvent.click(button);
+  for (const ms of [0, SLIDE_MS]) frames.splice(0).forEach((f) => f(ms));
+}
 
 interface Fake {
   url: string;
@@ -79,7 +89,7 @@ const SESSION: Event[] = [
 
 function mount(opts: { agents: AgentSnapshot; session?: string }) {
   installEventSource();
-  vi.stubGlobal("requestAnimationFrame", () => 1);
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
   vi.stubGlobal("cancelAnimationFrame", () => {});
   const [agents, setAgents] = createSignal<AgentSnapshot | null>(opts.agents);
   const [parked, setParked] = createSignal(false);
@@ -277,7 +287,7 @@ describe("the Latest band while an agent is open", () => {
     const drill = v.q(".tl-drill .tl-timeline")!;
     const geom = scrolledUp(drill);
     expect(v.q(".tl-latest")).not.toBeNull();
-    fireEvent.click(v.q(".tl-latest")!);
+    pressLatest(v.q(".tl-latest")!);
     expect(geom.top).toBe(700);
     expect(v.q(".tl-latest")).toBeNull();
 

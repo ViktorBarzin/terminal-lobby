@@ -9,11 +9,13 @@
  * the glide carried the view off the bottom again.
  *
  * jsdom has no layout and no momentum, so the scroller's geometry is stubbed
- * and the glide is played as scroll events that move scrollTop.
+ * and the glide is played as scroll events that move scrollTop. Latest slides
+ * to the end over SLIDE_MS, so frames are played with the clock they carry.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
+import { SLIDE_MS } from "../src/components/timeline.logic";
 import type { Event } from "../src/types/events";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
@@ -44,12 +46,15 @@ function stubScroller(el: HTMLElement) {
 }
 
 function withFrames() {
-  const frames: Array<() => void> = [];
-  vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+  let frames: Array<FrameRequestCallback> = [];
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
     frames.push(cb);
     return frames.length;
   });
-  return () => frames.splice(0).forEach((f) => f());
+  vi.stubGlobal("cancelAnimationFrame", () => {
+    frames = [];
+  });
+  return (ms = 0) => frames.splice(0).forEach((f) => f(ms));
 }
 
 /** Flick up on the transcript and let go: the glide is still running after. */
@@ -90,18 +95,20 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("Latest pressed while the transcript is still gliding", () => {
   it("keeps the pin when the glide's next scroll event arrives", () => {
-    withFrames();
+    const runFrames = withFrames();
     const { el, atEnd, toEnd, geom } = mount();
     flickUp(el, geom);
     expect(atEnd.at(-1), "the flick let go of the live end").toBe(false);
 
     tapLatest(toEnd);
-    expect(geom.top).toBe(700);
-
-    geom.top = 640; // the glide carries on past the write, as iOS does
+    geom.top = 280; // the glide carries on past the write, as iOS does
     fireEvent.scroll(el);
     expect(atEnd.at(-1), "still at the live end").toBe(true);
-    expect(geom.top, "brought back to the bottom").toBe(700);
+    runFrames(0);
+    runFrames(SLIDE_MS);
+    fireEvent.scroll(el);
+    expect(atEnd.at(-1), "still at the live end").toBe(true);
+    expect(geom.top, "brought to the bottom").toBe(700);
   });
 
   it("stops a finger's glide by taking the scroller's overflow for two frames", () => {
@@ -111,15 +118,16 @@ describe("Latest pressed while the transcript is still gliding", () => {
 
     tapLatest(toEnd);
     expect(el.style.overflowY, "overflow taken while the jump lands").toBe("hidden");
-    runFrames();
+    runFrames(0);
     expect(el.style.overflowY, "still held through the first frame").toBe("hidden");
-    runFrames();
+    runFrames(16);
     expect(el.style.overflowY, "given back").toBe("");
+    runFrames(SLIDE_MS);
     expect(geom.top).toBe(700);
   });
 
   it("leaves the overflow alone after a wheel, where there is no glide to stop", () => {
-    withFrames();
+    const runFrames = withFrames();
     const { el, toEnd, geom } = mount();
     fireEvent.wheel(el, { deltaY: -120 });
     geom.top = 300;
@@ -127,6 +135,8 @@ describe("Latest pressed while the transcript is still gliding", () => {
 
     toEnd();
     expect(el.style.overflowY).toBe("");
+    runFrames(0);
+    runFrames(SLIDE_MS);
     expect(geom.top).toBe(700);
   });
 
