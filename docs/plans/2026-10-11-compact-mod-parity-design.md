@@ -71,7 +71,7 @@ flowchart TD
 |---|---|---|
 | compaction catch-up | `CompactionEnded` spots the true-to-false edge; `CatchUpCompaction` reads the transcript from the newest main-thread user or assistant row in the log, takes user and system rows up to the receipt (manual) or the summary (inside a turn), skips rows already in the log by uuid, and settles a `/compact` turn left open | `sessionio/compactcatchup.go`, `session-events/mod.go` |
 | system rows on the mod path | `feedRow` maps the mod's `name` to the record's subtype and its text blocks to the record's content | `sessionio/modsource.go` |
-| receipts as system rows | a `<local-command-stdout>` in a `system/local_command` row draws and settles like a user-row receipt, on both paths | `sessionio/normalize.go` |
+| receipts as system rows | a `<local-command-stdout>` in a `system/local_command` row settles an open turn like a user-row receipt, on both paths; it still draws nothing, since its reading arrives as its own record | `sessionio/normalize.go` |
 | parity guard | each command's transcript lines and mod events produce the same events, and no turn stays open | `sessionio/commandparity_test.go` |
 | docs | ADR-0036 amended; Compaction marker and Command receipt added to the glossary | `docs/adr/0036-…`, `CONTEXT.md` |
 

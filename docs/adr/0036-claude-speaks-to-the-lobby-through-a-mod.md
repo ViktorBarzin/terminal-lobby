@@ -89,8 +89,9 @@ and session-events logs `compaction catch-up` with the reason. This is the one
 live read of the transcript; everything else still arrives through the mod. A
 mod row also maps its `name` to the record's subtype and its text blocks to the
 record's content, so a system row such as `/model`'s receipt or `/clear`'s
-reads as it does in the file, and a receipt written as a system row settles a
-turn the same way a user-row receipt does, on both paths.
+reads as it does in the file, and a receipt written as a system row settles an
+open turn the same way a user-row receipt does, on both paths, while still
+drawing nothing of its own.
 
 **session-events is the server, the mod is the client.** A mod cannot listen on
 a socket. It POSTs events and long-polls for commands over loopback HTTP. Each

@@ -1226,7 +1226,8 @@ answers itself (`/compact`, `/model`, `/effort`, `/clear`) has finished: the
 command's printed output, drawn as a muted status line. It is also what
 settles the turn the command's own record opened, since the model is never
 called and no reply ends it. Claude writes it as a user row or as a system row
-with the subtype `local_command`, depending on the command; both settle.
+with the subtype `local_command`, depending on the command. Both settle; only
+the user row is drawn, since a system row's reading arrives as its own record.
 _Avoid_: command output, stdout row
 
 ### Data used
