@@ -97,11 +97,6 @@ func guestTarget(r *http.Request, eff, real string) (owner, mode string, status 
 	if owner == "" || owner == eff || strings.HasPrefix(r.URL.Path, "/browser/") {
 		return "", "", 0
 	}
-	if eff != real {
-		// A Lens already acts as someone; a guest's owner on top of that would
-		// be a third account nobody asked about.
-		return "", "", http.StatusBadRequest
-	}
 	// An escaped path is refused: the mux matches {session} on the escaped
 	// form, so `a%2Fb` would reach the handler as "a/b" while sessionOf, which
 	// reads the decoded path, checked "a". No session name needs escaping.
@@ -109,7 +104,10 @@ func guestTarget(r *http.Request, eff, real string) (owner, mode string, status 
 	if r.URL.RawPath != "" || !guestOwnerRe.MatchString(owner) || session == "" || strings.HasPrefix(session, "_") {
 		return "", "", http.StatusBadRequest
 	}
-	mode, err := guestAccess(r.Context(), owner, session, real)
+	// Whose grant counts is the account the request acts as: the caller, or
+	// under an administrator's ?as= the Lens target, so a Lens reaches exactly
+	// the sessions its target can, shared ones included.
+	mode, err := guestAccess(r.Context(), owner, session, eff)
 	if err != nil {
 		log.Printf("guest: access check %s/%s for %s: %v", owner, session, real, err)
 		return "", "", http.StatusServiceUnavailable

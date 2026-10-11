@@ -66,7 +66,9 @@ func TestGuestRefusals(t *testing.T) {
 		{"a watcher cannot stop the turn", http.MethodPost, "/cancel/main?owner=" + other, http.StatusForbidden},
 		{"no grant for this session", http.MethodGet, "/events/other?owner=" + other, http.StatusForbidden},
 		{"a route with no session", http.MethodGet, "/commands/_new?owner=" + other, http.StatusBadRequest},
-		{"an owner on top of act-as", http.MethodGet, "/events/main?owner=" + me + "&as=" + other, http.StatusBadRequest},
+		// A Lens acting as `other` opening a session of mine: the grant that
+		// counts is `other`'s, and the stub gives them none (ADR-0043).
+		{"a Lens on a session its target cannot reach", http.MethodGet, "/events/main?owner=" + me + "&as=" + other, http.StatusForbidden},
 		{"the act-as target named as owner is the Lens", http.MethodGet, "/events/main?owner=" + other + "&as=" + other, http.StatusOK},
 		{"a malformed owner", http.MethodGet, "/events/main?owner=a%20b", http.StatusBadRequest},
 		{"an escaped slash in the session", http.MethodPost, "/prompt/main%2Fother?owner=" + other, http.StatusBadRequest},
@@ -172,5 +174,27 @@ func TestIsGuestStream(t *testing.T) {
 		if got := isGuestStream(httptest.NewRequest(http.MethodGet, path, nil)); got != want {
 			t.Errorf("%s: %v, want %v", path, got, want)
 		}
+	}
+}
+
+// A Lens acting as a guest sees what the guest sees: a session shared with
+// the target opens, as its owner, with the target's mode. Before this it was
+// refused with 400, and the Lens's Text view retried forever (2026-10-11).
+func TestALensReachesWhatItsTargetCanReach(t *testing.T) {
+	mapPath, me, other := actAsEnv(t)
+	// me is the administrator; other is the Lens target; the session is me's,
+	// shared with other.
+	stubGuestAccess(t, map[string]string{me + "/main/" + other: "rw"})
+	var seen, real, mode string
+	h := authMiddleware(mapPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, real, mode = osUserFrom(r.Context()), realOSUserFrom(r.Context()), guestModeFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/events/main?as="+other+"&owner="+me, nil)
+	req.Header.Set(authHeader, "adminauth")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || seen != me || real != me || mode != "rw" {
+		t.Fatalf("status %d, ran as %q real %q mode %q", rec.Code, seen, real, mode)
 	}
 }
