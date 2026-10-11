@@ -8808,8 +8808,8 @@ body.tl-kb-up {
 }
 
 /* ---- shared driving (ADR-0043) -------------------------------------------
-   Who sent a message is its colour, once someone other than the owner has
-   sent into the session (presence.logic sessionColors). Six hues that read on
+   Who sent a message is its name and its colour, once someone other than the
+   owner has sent into the session (presence.logic sessionColors). Six hues that read on
    the dark and the light themes alike, each tinting the theme's own bubble and
    edging it, so a theme keeps its look. The same `data-who` colours a live
    draft and the presence chip's dot, which is the key. */
@@ -8838,6 +8838,16 @@ body.tl-kb-up {
 }
 [data-who="5"] {
   --tl-who: var(--tl-who-5);
+}
+/* The sender's name beside their bubble, in their colour, like the steer
+   wait above it. */
+.tl-user-sender {
+  flex: none;
+  margin-bottom: 10px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  color: var(--tl-who, var(--text-muted));
+  white-space: nowrap;
 }
 .tl-bubble-user[data-who] {
   background: color-mix(in srgb, var(--tl-who) 22%, var(--bubble));

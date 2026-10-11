@@ -115,16 +115,16 @@ const UserRowView: Component<{
       <Show when={props.row.steer && props.row.sending}>
         <span class="tl-steer-wait">Waiting for the agent to read it</span>
       </Show>
-      {/* Who sent it is the bubble's colour (ADR-0043); the presence chip is
-          the key. The name is the tooltip, and read out before the text. */}
-      <div
-        class="tl-bubble-user"
-        data-who={props.sender?.color}
-        title={props.sender ? `Sent by ${props.sender.name}` : undefined}
-      >
-        <Show when={props.sender}>
-          {(who) => <span class="tl-sr-only">{who().name}: </span>}
-        </Show>
+      {/* Who sent it: their name beside the bubble, both in their colour
+          (ADR-0043), which the presence chip's dots match. */}
+      <Show when={props.sender}>
+        {(who) => (
+          <span class="tl-user-sender" data-who={who().color}>
+            {who().name}
+          </span>
+        )}
+      </Show>
+      <div class="tl-bubble-user" data-who={props.sender?.color}>
         {/* Still a <pre>: the message's own whitespace is significant, and an
             <img>/<button> is phrasing content, so substituting a path in place
             costs the surrounding text nothing. */}
