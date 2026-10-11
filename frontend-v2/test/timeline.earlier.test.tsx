@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import type { Event } from "../src/types/events";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
 
@@ -184,6 +185,137 @@ describe("loading earlier turns by reaching the top", () => {
     geom.top = 20;
     fireEvent.scroll(el);
     expect(onLoadEarlier).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The store hands a window back as soon as it arrives, but its rows reach the
+   * screen a chunk per frame, behind the reader. Until they are up nothing has
+   * moved, so the reader is still at the top, and every scroll event of the
+   * gesture that brought them there asked for one more window. Measured on
+   * 2026-10-11 against a live session: one arrival at the top fetched three
+   * windows in 183ms, and the reader landed 5,051px down once they mounted
+   * (Viktor: reaching the top "triggers more and more loading").
+   */
+  it("waits for the window it loaded to be on screen before asking again", async () => {
+    const frames: Array<() => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const older = Array.from({ length: 30 }, (_, i) =>
+      ev({ id: 100 + i, kind: i % 2 === 0 ? "user" : "text", body: `older ${i}` }),
+    );
+    const newer = TURN.map((e) => ({ ...e, id: e.id + 1000 }));
+    const [events, setEvents] = createSignal<Event[]>(newer);
+    const onLoadEarlier = vi.fn(async () => {
+      setEvents([...older, ...newer]);
+    });
+    const { container } = render(() => (
+      <MessagesTimeline events={events()} hasEarlier={true} onLoadEarlier={onLoadEarlier} />
+    ));
+    const el = container.querySelector<HTMLElement>(".tl-timeline")!;
+    const geom = stubScroller(el, 4000, 400);
+    fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
+    geom.top = 40;
+    fireEvent.scroll(el);
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The same gesture carries on at the top while the window mounts.
+    geom.top = 0;
+    fireEvent.scroll(el);
+    fireEvent.scroll(el);
+    expect(onLoadEarlier, "asked again before the last window was up").toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 20 && frames.length > 0; i++) frames.splice(0).forEach((f) => f());
+    fireEvent.wheel(el, { deltaY: -120 });
+    geom.top = 10;
+    fireEvent.scroll(el);
+    expect(onLoadEarlier, "the reader's next reach still loads").toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * iOS carries a finger's glide on through a scrollTop write (the same thing
+   * Latest met on 2026-10-10), so the write that keeps the reader in place as a
+   * window lands at the top was undone by the glide that brought them there:
+   * the reader stayed at the top and the next scroll event asked again (Viktor,
+   * 2026-10-11: being "anchored to the top ... triggers more and more
+   * loading"). The glide is stopped the same way, overflow taken for two frames.
+   */
+  it("stops a finger's glide when it puts the reader back after a window lands", async () => {
+    const frames: Array<() => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let anchorTop = 30;
+    const onLoadEarlier = vi.fn(async () => {
+      anchorTop = 1200;
+    });
+    const { container } = render(() => (
+      <MessagesTimeline events={TURN} hasEarlier={true} onLoadEarlier={onLoadEarlier} />
+    ));
+    const el = container.querySelector<HTMLElement>(".tl-timeline")!;
+    const geom = stubScroller(el, 4000, 400);
+    const anchor = el.querySelector<HTMLElement>(
+      ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)",
+    )!;
+    Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => anchorTop });
+    fireEvent.touchStart(el); // a flick up
+    geom.top = 60;
+    fireEvent.scroll(el);
+    fireEvent.touchEnd(window);
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(geom.top, "put back below what landed").toBe(60 + 1170);
+    expect(el.style.overflowY, "the glide stopped").toBe("hidden");
+    frames.splice(0).forEach((f) => f());
+    frames.splice(0).forEach((f) => f());
+    expect(el.style.overflowY, "given back").toBe("");
+  });
+
+  it("leaves a finger that is still down alone: that is a drag, not a glide", async () => {
+    let anchorTop = 30;
+    const onLoadEarlier = vi.fn(async () => {
+      anchorTop = 1200;
+    });
+    const { container } = render(() => (
+      <MessagesTimeline events={TURN} hasEarlier={true} onLoadEarlier={onLoadEarlier} />
+    ));
+    const el = container.querySelector<HTMLElement>(".tl-timeline")!;
+    const geom = stubScroller(el, 4000, 400);
+    const anchor = el.querySelector<HTMLElement>(
+      ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)",
+    )!;
+    Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => anchorTop });
+    fireEvent.touchStart(el);
+    geom.top = 60;
+    fireEvent.scroll(el);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(geom.top).toBe(60 + 1170);
+    expect(el.style.overflowY, "taking the overflow would end the drag").toBe("");
+  });
+
+  it("leaves the overflow alone after a wheel, which has no glide", async () => {
+    let anchorTop = 30;
+    const onLoadEarlier = vi.fn(async () => {
+      anchorTop = 1200;
+    });
+    const { container } = render(() => (
+      <MessagesTimeline events={TURN} hasEarlier={true} onLoadEarlier={onLoadEarlier} />
+    ));
+    const el = container.querySelector<HTMLElement>(".tl-timeline")!;
+    const geom = stubScroller(el, 4000, 400);
+    const anchor = el.querySelector<HTMLElement>(
+      ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)",
+    )!;
+    Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => anchorTop });
+    fireEvent.wheel(el, { deltaY: -120 });
+    geom.top = 60;
+    fireEvent.scroll(el);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(geom.top).toBe(60 + 1170);
+    expect(el.style.overflowY).toBe("");
   });
 
   /**

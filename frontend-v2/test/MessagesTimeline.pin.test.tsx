@@ -120,9 +120,10 @@ describe("<MessagesTimeline> — telling the store where the reader is", () => {
     expect(scroller.querySelector("button.tl-scroll-end, .tl-latest")).toBeNull();
     if (!toEnd) throw new Error("the timeline handed over no way to the end");
     toEnd();
-    expect(log).toEqual([false, true]);
     expect(atEnd, "at mount, the scroll up, and the way back").toEqual([true, false, true]);
+    // The store hears it once the slide has landed: it trims on hearing it.
     await waitFor(() => expect(scroller.scrollTop, "slid to the end").toBe(700));
+    await waitFor(() => expect(log).toEqual([false, true]));
   });
 
   /**

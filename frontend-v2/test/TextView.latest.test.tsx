@@ -21,7 +21,7 @@ import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { AnswerResponse } from "../src/lib/answer-api";
 import type { Event } from "../src/types/events";
-import { SLIDE_MS } from "../src/components/timeline.logic";
+import { SLIDE_MAX_MS as SLIDE_MS } from "../src/components/timeline.logic";
 
 /** Frames are held, never run on their own. `pressLatest` plays the ones the
  *  press queued, so the slide to the end lands. */

@@ -1,6 +1,8 @@
 /**
  * "Latest" slides the transcript down to the live end instead of jumping there
- * (Viktor, 2026-10-11: "a nicer animation would be a better UX").
+ * (Viktor, 2026-10-11: "a nicer animation would be a better UX"), from where
+ * the reader is and all the way ("it seems we're not scrolling smoothly from
+ * the current position until the end but rather jumping").
  *
  * jsdom has no layout and no animation clock, so the scroller's geometry is
  * stubbed and animation frames are played by hand with the timestamps a browser
@@ -10,7 +12,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
-import { SLIDE_MS, slideFrom, slideTop } from "../src/components/timeline.logic";
+import { slideMs, slideTop } from "../src/components/timeline.logic";
 import type { Event } from "../src/types/events";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
@@ -59,12 +61,14 @@ function withFrames() {
 
 function mount(opts: { follow?: () => number; events?: () => Event[] } = {}) {
   const atEnd: boolean[] = [];
+  const published: boolean[] = [];
   let toEnd: (() => void) | undefined;
   const { container } = render(() => (
     <MessagesTimeline
       events={opts.events?.() ?? TRANSCRIPT}
       follow={opts.follow?.()}
       onAtEnd={(a) => atEnd.push(a)}
+      onPinned={(p) => published.push(p)}
       registerToEnd={(fn) => {
         toEnd = fn;
       }}
@@ -73,7 +77,7 @@ function mount(opts: { follow?: () => number; events?: () => Event[] } = {}) {
   const el = container.querySelector<HTMLElement>(".tl-timeline");
   if (!el || !toEnd) throw new Error("no timeline");
   const geom = stubScroller(el);
-  return { el, atEnd, toEnd, geom };
+  return { el, atEnd, published, toEnd, geom };
 }
 
 /** The reader wheels up to `top`, which lets go of the live end. */
@@ -85,36 +89,31 @@ function scrollUpTo(el: HTMLElement, geom: { top: number }, top: number) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+const SLIDE_MS = slideMs(400);
+
 describe("the slide's arithmetic", () => {
-  it("starts where the reader is when the end is close", () => {
-    expect(slideFrom(400, 700, 300)).toBe(400);
+  it("takes longer the further it goes, within bounds", () => {
+    expect(slideMs(200)).toBeGreaterThanOrEqual(300);
+    expect(slideMs(5000)).toBeGreaterThan(slideMs(1000));
+    expect(slideMs(1_000_000)).toBeLessThanOrEqual(1000);
   });
 
-  it("starts a screen and a half short of the end when the end is far", () => {
-    expect(slideFrom(0, 7000, 300)).toBe(6550);
+  it.each([0.1, 0.25, 0.5, 0.75, 0.9])("moves forward and stays between its ends at %f", (f) => {
+    const ms = slideMs(400) * f;
+    const top = slideTop(100, 500, ms, slideMs(400));
+    expect(top).toBeGreaterThan(100);
+    expect(top).toBeLessThan(500);
+    expect(slideTop(100, 500, ms + 16, slideMs(400))).toBeGreaterThan(top);
   });
 
-  it("never starts below where the reader already is", () => {
-    expect(slideFrom(690, 700, 300)).toBe(690);
-  });
-
-  it.each([0, 0.1, 0.25, 0.5, 0.75, 0.9].map((f) => f * SLIDE_MS))(
-    "moves forward and stays between its ends at %ims",
-    (ms) => {
-      const top = slideTop(100, 500, ms);
-      expect(top).toBeGreaterThanOrEqual(100);
-      expect(top).toBeLessThan(500);
-      expect(slideTop(100, 500, ms + 16)).toBeGreaterThan(top);
-    },
-  );
-
-  it("eases out: the first half covers more than half the way", () => {
-    expect(slideTop(0, 400, SLIDE_MS / 2)).toBeGreaterThan(200);
+  it("leaves from where the reader is: the first frame covers a sliver of a long way", () => {
+    const ms = slideMs(20_000);
+    expect(slideTop(0, 20_000, 16, ms)).toBeLessThan(200);
   });
 
   it("lands exactly on the end once the time is up", () => {
-    expect(slideTop(100, 500, SLIDE_MS)).toBe(500);
-    expect(slideTop(100, 500, SLIDE_MS * 3)).toBe(500);
+    expect(slideTop(100, 500, 400, 400)).toBe(500);
+    expect(slideTop(100, 500, 1200, 400)).toBe(500);
   });
 });
 
@@ -136,17 +135,53 @@ describe("Latest slides to the live end", () => {
     expect(pending(), "the slide stops scheduling frames").toBe(0);
   });
 
-  it("jumps most of a long way and slides the last screen and a half", () => {
+  it("goes all the way from where the reader is, with no jump first", () => {
     const { frame } = withFrames();
     const { el, toEnd, geom } = mount();
     geom.height = 10_000;
     scrollUpTo(el, geom, 0);
 
     toEnd();
-    expect(geom.top).toBe(9700 - 450);
+    expect(geom.top, "nothing moves on the press").toBe(0);
     frame(0);
-    frame(SLIDE_MS);
+    frame(16);
+    expect(geom.top).toBeGreaterThan(0);
+    expect(geom.top).toBeLessThan(200);
+    frame(slideMs(9700));
     expect(geom.top).toBe(9700);
+  });
+
+  /**
+   * The store trims the transcript back to its last turns the moment it hears
+   * the reader is at the end. Told at the press, it took the turns the reader
+   * had paged in out from under the slide before its first frame, and the view
+   * jumped to whatever now sat at that scrollTop.
+   */
+  it("tells the store the reader is at the end only when the slide lands", () => {
+    const { frame } = withFrames();
+    const { el, published, toEnd, geom } = mount();
+    scrollUpTo(el, geom, 300);
+    expect(published.at(-1)).toBe(false);
+
+    toEnd();
+    frame(0);
+    frame(SLIDE_MS / 2);
+    expect(published.at(-1), "not while sliding").toBe(false);
+    frame(SLIDE_MS);
+    expect(published.at(-1), "on landing").toBe(true);
+  });
+
+  it("does not tell the store anything when the reader takes over mid-slide", () => {
+    const { frame } = withFrames();
+    const { el, published, toEnd, geom } = mount();
+    scrollUpTo(el, geom, 300);
+    const before = published.length;
+
+    toEnd();
+    frame(0);
+    frame(SLIDE_MS / 3);
+    fireEvent.touchStart(el);
+    expect(published.length).toBe(before);
   });
 
   it("ignores its own scroll events instead of snapping to the end", () => {
