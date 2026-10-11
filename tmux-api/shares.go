@@ -224,9 +224,11 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 		http.Error(w, "no such running session", http.StatusNotFound)
 		return
 	}
+	isNew := true
 	err := shareStoreInstance.update(func(ss *ShareSet) error {
 		for i := range ss.Shares {
 			if ss.Shares[i].Owner == osUser && ss.Shares[i].Name == name && ss.Shares[i].Guest == guest {
+				isNew = false
 				ss.Shares[i].Mode = mode
 				ss.Shares[i].ClientTty = "" // mode changed; stale live client no longer authoritative
 				ss.Shares[i].SessionID = target.ID
@@ -247,6 +249,10 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 	events.Emit("share.granted", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.to": guest, "tl.kind": mode, "tl.client": "api",
 	})
+	// Only a new grant pushes. Changing watch to drive is not a second invite.
+	if isNew {
+		pushSharedWithYou(osUser, guest, name, target.Title)
+	}
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -478,13 +484,24 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 			}
 			return errShareNotFound
 		})
-		if errors.Is(err, errShareNotFound) {
-			// No grant → deny the attach.
-			http.Error(w, "not shared", http.StatusForbidden)
+		if err != nil && !errors.Is(err, errShareNotFound) {
+			logAndFail(w, "record attach failed: %v", err)
 			return
 		}
-		if err != nil {
-			logAndFail(w, "record attach failed: %v", err)
+		// A project member reaches the session at the project's attach mode
+		// with no share row, and the wider of the two wins (sessionAccess).
+		// Only a share records a tty, so only a share's revoke detaches.
+		pmode, perr := projectAccessMode(body.Owner, body.Name, body.Guest)
+		if perr != nil {
+			logAndFail(w, "project access for attach failed: %v", perr)
+			return
+		}
+		if pmode == shareModeRW || mode == "" {
+			mode = pmode
+		}
+		if mode == "" {
+			// No grant → deny the attach.
+			http.Error(w, "not shared", http.StatusForbidden)
 			return
 		}
 	}

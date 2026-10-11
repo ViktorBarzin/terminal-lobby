@@ -535,6 +535,7 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/shares", handleShares)
 	mux.HandleFunc("/shares/", handleShareByPath)
 	mux.HandleFunc("/internal/attach", handleInternalAttach)
+	mux.HandleFunc("/internal/access", handleInternalAccess)
 	// Public links (links.go). /links is the owner's. The five /link/ routes
 	// are the only ones in this service that serve a caller with no identity;
 	// the ingress sends exactly these paths, and nothing else, from /s/api/:

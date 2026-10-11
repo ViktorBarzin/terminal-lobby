@@ -25,13 +25,20 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
+	// A guest names the session's owner with ?owner=; from here on every verb
+	// runs in the owner's server, as the terminal attach does (ADR-0043).
+	osUser, guest, status := guestTarget(r, osUser, name)
+	if status != 0 {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
 
 	if len(parts) == 1 {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		killSession(w, osUser, name)
+		killSession(w, osUser, name, guest)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "rename" {
@@ -129,7 +136,9 @@ type killResponse struct {
 	Resurrect *restoreSelection `json:"resurrect,omitempty"`
 }
 
-func killSession(w http.ResponseWriter, osUser, name string) {
+// guest is the account that asked, when it is not the owner's own request
+// (guestTarget); the owner is then told who killed it.
+func killSession(w http.ResponseWriter, osUser, name, guest string) {
 	// Ask tmux whether the session is even there, BEFORE anything privileged
 	// runs. The snapshot below is a root tmux-persist run that walks every
 	// mapped user (snapshots.go resurrectRecordFor), and taking it first meant
@@ -151,6 +160,7 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// link to it records the conversation now, while it can still be read
 	// (links_transcript.go).
 	noteLinkTranscriptsBeforeKill(osUser)
+	title := titleStoreInstance.get(osUser, name)
 	out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
 	if err != nil {
 		msg := string(out)
@@ -198,7 +208,13 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		log.Printf("persist-forget after killing %s for %s failed: %v: %s", name, osUser, err, strings.TrimSpace(string(out)))
 	}
 	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("session.killed", osUser, telemetry.Attrs{"tl.session": name, "tl.client": "api"})
+	killed := telemetry.Attrs{"tl.session": name, "tl.client": "api"}
+	if guest != "" {
+		killed["tl.by"] = guest
+		log.Printf("guest kill: %s killed %s/%s", guest, osUser, name)
+		pushGuestKilled(osUser, guest, name, title)
+	}
+	events.Emit("session.killed", osUser, killed)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	// The kill has already happened, so a body that does not reach the client
