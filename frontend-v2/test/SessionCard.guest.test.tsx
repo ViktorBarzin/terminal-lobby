@@ -40,7 +40,9 @@ const card = (s: Session, st = store()) =>
   render(() => <SessionCard store={st} session={s} groupName="" tick={() => 0} />);
 
 const items = (c: HTMLElement) =>
-  Array.from(c.querySelectorAll<HTMLButtonElement>("button.tl-menu-item")).map((b) => b.textContent?.trim());
+  Array.from(c.querySelectorAll<HTMLButtonElement>("button.tl-menu-item")).map((b) =>
+    b.textContent?.trim(),
+  );
 const item = (c: HTMLElement, text: string) =>
   Array.from(c.querySelectorAll<HTMLButtonElement>("button.tl-menu-item")).find(
     (b) => b.textContent?.trim() === text,

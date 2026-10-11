@@ -543,7 +543,10 @@ export const SessionCard: Component<{
       try {
         await guestRetitle(owner, s().name, next);
       } catch (err) {
-        toasts.push({ kind: "error", message: `Could not rename ${owner}'s session: ${(err as Error).message}` });
+        toasts.push({
+          kind: "error",
+          message: `Could not rename ${owner}'s session: ${(err as Error).message}`,
+        });
       }
       await props.store.refresh();
       return;
@@ -561,11 +564,15 @@ export const SessionCard: Component<{
     menu.close();
     const owner = s().owner;
     if (!owner) return;
-    if (!window.confirm(`Kill ${owner}'s session ${label()}? ${owner} will be told it was you.`)) return;
+    if (!window.confirm(`Kill ${owner}'s session ${label()}? ${owner} will be told it was you.`))
+      return;
     try {
       await guestKill(owner, s().name);
     } catch (err) {
-      toasts.push({ kind: "error", message: `Could not kill ${owner}'s session: ${(err as Error).message}` });
+      toasts.push({
+        kind: "error",
+        message: `Could not kill ${owner}'s session: ${(err as Error).message}`,
+      });
     }
     await props.store.refresh();
   };
@@ -577,7 +584,10 @@ export const SessionCard: Component<{
     try {
       await removeShare(owner, s().name, me);
     } catch (err) {
-      toasts.push({ kind: "error", message: `Could not leave ${owner}'s session: ${(err as Error).message}` });
+      toasts.push({
+        kind: "error",
+        message: `Could not leave ${owner}'s session: ${(err as Error).message}`,
+      });
     }
     await props.store.refresh();
   };

@@ -50,11 +50,17 @@ if (typeof document !== "undefined" && typeof EventSource === "undefined") {
  * arrives with no pointer type and the code correctly declines to handle it,
  * so the test would be asserting against the shim rather than the behaviour.
  */
-if (typeof window !== "undefined" && typeof (window as { PointerEvent?: unknown }).PointerEvent === "undefined") {
+if (
+  typeof window !== "undefined" &&
+  typeof (window as { PointerEvent?: unknown }).PointerEvent === "undefined"
+) {
   class PointerEventShim extends MouseEvent {
     pointerType: string;
     pointerId: number;
-    constructor(type: string, init: MouseEventInit & { pointerType?: string; pointerId?: number } = {}) {
+    constructor(
+      type: string,
+      init: MouseEventInit & { pointerType?: string; pointerId?: number } = {},
+    ) {
       super(type, init);
       this.pointerType = init.pointerType ?? "";
       this.pointerId = init.pointerId ?? 0;
