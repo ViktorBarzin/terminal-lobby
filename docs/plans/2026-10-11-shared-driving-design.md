@@ -176,6 +176,26 @@ A review of the branch before it landed found these, all fixed before release:
 | A rename onto a name a dead session's share row still held failed the share rewrite | The dead row is dropped first |
 | A guest's attachments landed in the guest's own store | Refused for guests, with a message |
 
+## Verified live, 2026-10-11
+
+Two browsers against the deployed backends (0.120.0), one as Viktor and one as
+emo, through `vite preview` with each identity, plus emo's view in Chrome on
+the shared Android emulator:
+
+| Checked | Result |
+|---|---|
+| Invite from People, Drive | emo's sidebar lists it under Shared with me; the invite push ran and found no device of emo's subscribed |
+| Live draft | Viktor's tab showed "emil.barzin is typing" and the text as typed, then "has an unsent message" at rest; the same on the phone |
+| Presence | Each side's bar named the other ("vbarzin here", "emil.barzin here") |
+| Guest send | Reached Viktor's Claude; `share.prompt_sent` recorded under emo |
+| Sender labels | Both messages labelled on both sides, and still after two renames |
+| Guest rename | Session, share row and both tabs moved to the new name |
+| Remove | emo's streams closed within the 5 s recheck; a send after it was refused |
+
+The run found four defects, fixed before release: a guest's tab did not follow
+a rename, a guest rejoined as a watcher after one, a removed guest's tab kept
+reconnecting, and the draft and People rows were laid out wrongly.
+
 ## What we don't know yet
 
 - How sender labels behave across `/compact` and `/clear` rebuilds of the Text
