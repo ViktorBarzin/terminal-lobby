@@ -200,7 +200,11 @@ describe("createWatchMode — a lens watches until told otherwise", () => {
     createRoot((dispose) => {
       saveWatch("main", false); // your own `main`: drive
       const [driven] = createSignal(false);
-      const [watch] = createWatchMode(() => "main", driven, () => "bob");
+      const [watch] = createWatchMode(
+        () => "main",
+        driven,
+        () => "bob",
+      );
       expect(watch()).toBe(true); // the lens has said nothing, so it watches
       dispose();
     });
@@ -209,7 +213,11 @@ describe("createWatchMode — a lens watches until told otherwise", () => {
   it("records take-control under the target, leaving your own session alone", () => {
     createRoot((dispose) => {
       const [driven] = createSignal(false);
-      const [watch, set] = createWatchMode(() => "main", driven, () => "bob");
+      const [watch, set] = createWatchMode(
+        () => "main",
+        driven,
+        () => "bob",
+      );
       expect(watch()).toBe(true);
       set(false); // take control of the session you are looking at
       expect(watch()).toBe(false);
@@ -223,7 +231,11 @@ describe("createWatchMode — a lens watches until told otherwise", () => {
     createRoot((dispose) => {
       saveWatch("main", false, "bob");
       const [driven] = createSignal(false);
-      const [watch] = createWatchMode(() => "main", driven, () => "bob");
+      const [watch] = createWatchMode(
+        () => "main",
+        driven,
+        () => "bob",
+      );
       expect(watch()).toBe(false);
       dispose();
     });
@@ -232,7 +244,11 @@ describe("createWatchMode — a lens watches until told otherwise", () => {
   it("leaves an ordinary tab exactly as it was", () => {
     createRoot((dispose) => {
       const [driven] = createSignal(false);
-      const [watch, set] = createWatchMode(() => "main", driven, () => "");
+      const [watch, set] = createWatchMode(
+        () => "main",
+        driven,
+        () => "",
+      );
       expect(watch()).toBe(false);
       set(true);
       expect(watch()).toBe(true);

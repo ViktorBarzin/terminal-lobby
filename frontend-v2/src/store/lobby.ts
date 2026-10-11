@@ -30,13 +30,7 @@ import { registerKillUndoHandlers } from "./undo.kill";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
 import { registerLocalUndoHandlers } from "./undo.local";
 import { registerTitleUndoHandlers } from "./undo.titles";
-import {
-  ApiError,
-  lobbyApi,
-  ORIGIN_USER,
-  type LobbyApi,
-  type SlotFlags,
-} from "../lib/lobby-api";
+import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi, type SlotFlags } from "../lib/lobby-api";
 import {
   emptyLayout,
   NAME_RE,

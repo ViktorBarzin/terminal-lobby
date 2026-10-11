@@ -24,7 +24,12 @@ import type { SseStatus } from "../sse/client";
 import { gridCramped, type SessionGrid } from "../terminal/fit";
 import { createViewMode } from "../store/viewmode";
 import { atListTarget } from "../lib/at-path";
-import { createWatchMode, clearResolvedWatch, joinDriven, publishResolvedWatch } from "../store/watchmode";
+import {
+  createWatchMode,
+  clearResolvedWatch,
+  joinDriven,
+  publishResolvedWatch,
+} from "../store/watchmode";
 import { pendingPermissions, deriveRows } from "./timeline.logic";
 import { runMembers, sameRunMembers } from "./agents.logic";
 import type { PermissionDecision } from "../types/events";
