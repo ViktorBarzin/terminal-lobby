@@ -14,13 +14,23 @@ Projects and sessions can be **shared with other users on the same machine**
   Governance is co-equal — any member may rename, re-dir, add/remove members, or
   delete it (delete only dissolves the grouping, never kills sessions). Members
   see each other's sessions in the shared project.
-- **Share a single session with an account** through `POST /shares`, read-only
-  or read-write. A shared session is attached *as its owner*: read-only (`tmux
-  attach -r`) lets a guest **watch**; read-write is a **full interactive shell
-  as the owner**, a deliberate trust grant. Revoking (or the guest leaving)
-  detaches their live client immediately. A grant is pinned to the session it
-  was made for and ends with it. The vanilla lobby had a dialog for this; the
-  current lobby does not yet, so it is an API call.
+- **Share a single session with an account** from its `⋯` menu → **Share…** →
+  People: pick an account and Watch or Drive (Drive by default). The guest gets
+  a push and finds it under Shared with me; the dialog also gives a lobby link
+  that opens the session for the people listed and nobody else. A shared
+  session is reached *as its owner*: Watch lets a guest see the terminal and
+  the Text view live; Drive is a **full interactive shell as the owner**, plus
+  the composer, a deliberate trust grant. A driving guest may rename and kill
+  (asked first, with no undo; the owner is pushed who did it) but not share it
+  onward. Everyone with the session open sees who else is there in the session
+  bar and each other's unsent message as it is typed, and once a guest has
+  sent, each message says who sent it. Removing someone (or a guest leaving)
+  detaches their terminal at once and ends their Text view within 5 seconds. A
+  grant is pinned to the session it was made for and ends with it (ADR-0043).
+  A watcher cannot switch to the owner's other sessions with tmux's `prefix (`,
+  `prefix )` or `prefix L`; an account that rebinds one of those keys in its
+  own `~/.tmux.conf` keeps its binding, and its watchers can then switch with
+  that key.
 - **Share a session's conversation with anyone** from its `⋯` menu →
   **Share…**, which makes a public link: a URL that works with no account,
   for 1 hour, 24 hours, 7 days or until revoked. Whoever holds it reads the

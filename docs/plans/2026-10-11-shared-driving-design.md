@@ -1,14 +1,17 @@
 # Shared driving: two accounts in one session, both typing
 
-**Status:** designed 2026-10-11, not started · **Scope:** `tmux-api/shares.go`,
-`authuser/`, `session-events/` (Text view reads, `/prompt`, presence),
-`devvm/tmux.conf.system`, `frontend-v2` (Share dialog, sidebar, session bar,
-composer, Text view) · **ADR:**
+**Status:** built 2026-10-11 · **Scope:** `tmux-api/access.go`,
+`tmux-api/share_push.go`, `session-events/guest.go`, `session-events/presence.go`,
+`sessionio/readonly_guard.go`, `devvm/tmux.conf.system`, `frontend-v2` (Share
+dialog, session card, session bar, composer, Text view) · **ADR:**
 [0043](../adr/0043-a-guest-drives-through-the-same-gate-as-the-terminal.md)
 
 Viktor, 2026-10-11: *"i want 2 users to be able to share a session live. the
 goal is to enable both users to be able to type and view the session live. we
-may already have this."*
+may already have this."* Then, before the build: *"we need to have realtime
+interactions between users so i should be able to see what other users type in
+real time (or whether they are typing at all)"*, which changed decision 14 from
+a typing indicator to a live draft preview.
 
 ## What exists today
 
@@ -44,13 +47,13 @@ attached with `-r` pressed `C-b )` and moved from session `a` to `b`.
 | 5 | Where the owner invites | One Share… dialog: People (account picker, Watch or Drive, default Drive) above Public link. |
 | 6 | Lifetime | Until the session ends (the share is pinned to `session_id` + `session_created`). The owner or guest can remove it earlier; removal detaches the guest's live clients and stops their Text view and composer at the next request. |
 | 7 | How the guest finds it | "Shared with me" in the sidebar (exists), one push on invite, and a lobby URL naming owner and session that opens only for an account with access. The URL grants nothing on its own. |
-| 8 | Guest powers | Everything except sharing the session onward: type, answer questions, rename, kill. A guest kill names the owner in its confirm ("Kill viktor's session?") and pushes the owner. ADR-0025's undo window applies. |
+| 8 | Guest powers | Everything except sharing the session onward: type, answer questions, rename, kill. A guest kill asks first, naming the owner ("Kill emo's session …? emo will be told it was you."), and pushes the owner. A guest can also leave a share. |
 | 9 | Pushes | The guest gets the invite push only. Turn-done and question pushes stay with the owner. |
 | 10 | Access check | One function decides "may account G reach owner O's session S, and at what mode": a share row, or project membership at the project's attach mode, or admin act-as. Terminal attach, Text view reads and composer sends all call it. This also fixes the project-member 403. |
 | 11 | Watch guests and switch-client | Close the gap in `devvm/tmux.conf.system` (see "Closing the watch gap"). |
-| 12 | Presence | Everyone with the session open in a lobby tab, terminal or Text view, by heartbeat. The session bar names them ("viktor, emo present"); the owner's other devices count. |
+| 12 | Presence | Everyone with the session open in a lobby tab, terminal or Text view, over a WebSocket per tab. The session bar names the others ("emo here", "bob (watching) here"); your own other devices are you, not company. |
 | 13 | Attribution | Composer sends record the sender. The Text view labels user messages with it once a session has had a guest. Prompts typed into the terminal stay unlabelled, since tmux receives every keystroke as the owner. |
-| 14 | Typing indicator | "emo is typing…" above the composer while another person drafts. Drafts stay private. Two sends at once queue in order (ADR-0042). |
+| 14 | Live drafts | Each person's unsent draft streams to the others as they type, read-only above the composer, with "emo is typing" while it moves and "emo has an unsent message" once it rests. A watcher has no composer and publishes nothing. Two sends at once queue in order (ADR-0042). |
 | 15 | Window size | Whoever typed last, which is tmux's `latest` and what rw clients do today. |
 | 16 | Audit | The sender is recorded in telemetry on each composer send, so `homelab claude-usage` shows who prompted a shared session. Spend stays the owner's. |
 | 17 | Public links | Never show senders. Account names stay inside the box. |
@@ -103,35 +106,60 @@ right-click menu uses `display-menu`, which a read-only client cannot run. The
 file's existing invariant (never bind `switch-client -r`) stays.
 
 `/etc/tmux.conf` loads before each user's `~/.tmux.conf` and only at server
-start, so two cases need handling: a user config that rebinds these keys to a
-bare `switch-client`, and tmux servers already running when the change lands.
-The deploy can `source-file /etc/tmux.conf` into running servers; a user's own
-rebind is their choice and is noted in `docs/multi-user.md`.
+start. For servers already running, tmux-api applies the same wrapping to the
+owner's server on every guest's watch attach (`sessionio.GuardReadOnly`), and
+refuses the attach if it cannot. It wraps only a key still bound to its
+default, so an account's own binding for one of these keys is left alone; that
+account's watchers can then switch with it, which `docs/multi-user.md` notes.
 
-### Presence and typing
+### Presence and live drafts
 
-Each lobby tab with a session open sends a heartbeat to session-events every
-few seconds, carrying the account, a device id, and whether the composer holds
-an unsent draft that changed in the last few seconds. session-events keeps the
-set in memory per (owner, session) and pushes it on the session's existing
-event stream. The session bar draws the names; the composer draws the typing
-line. A restart empties the set and the next heartbeats refill it.
+Each lobby tab with a session on screen holds one WebSocket to
+`GET /events/{session}/presence` on session-events, a guest naming the owner
+with `?owner=` like every other route. The ingress already routes `/events/`
+there. session-events keeps the people in memory per (owner, session) and sends
+every socket the whole room whenever it changes: someone arriving, leaving, or
+changing their draft. A room is a few people, so the whole room is a few
+hundred bytes and the client merges nothing.
+
+```mermaid
+sequenceDiagram
+  participant E as emo's composer
+  participant S as session-events
+  participant V as viktor's tab
+  E->>S: {"t":"draft","text":"can you also"}
+  S->>V: {"t":"room","now":…,"people":[… emo, draft, draftAt …]}
+  E->>S: {"t":"draft","text":""} (sent or cleared)
+  S->>V: room, emo's draft empty
+```
+
+The composer sends its draft at most every 80 ms, always the newest text, and
+an empty draft at once. A draft is capped at 2,000 characters. Whether a person
+is typing or has stopped is decided on the client from the draft's `draftAt`
+against the frame's `now`, both on the server's clock, so a device's own clock
+never enters it. A restart of session-events empties the rooms; each tab
+reconnects and republishes its draft.
 
 ### Attribution
 
-The sender is known only at `/prompt`. session-events records `(session,
-prompt text hash, sent-at, sender)`, and the Text view joins it to the user
-message that appears in the transcript. A prompt typed into the terminal has no
-record and shows no label. The label appears only on sessions that have had a
-guest, so a session nobody shared looks as it does today.
+The sender is known only at `/prompt`. session-events records each accepted
+prompt as `(text, at, user, name)`, up to 500 per session, in a file per
+session beside the held prompts so it survives a restart. The presence socket
+sends the records on connect and each new one as it happens. The Text view
+matches records to user messages by their words, oldest first, each record
+labelling one message sent no more than two hours earlier. A prompt typed into
+the terminal has no record and shows no label. Labels appear only once someone
+other than the owner has sent, so a session nobody shared looks as it does
+today.
 
 ## What we don't know yet
 
-- How the sender record survives `/compact` and `/clear` rebuilds of the Text
-  view. The join is by text and time, so it should, but this needs a test
-  against a real compacted session.
-- Whether the presence heartbeat should share the "N viewing" machinery from
-  public links or stay separate. Both count readers in a 30-second window; the
-  difference is that one is anonymous and this one has names.
-- The project-member 403 is read from code. The first step of the work
-  reproduces it before changing anything.
+- How sender labels behave across `/compact` and `/clear` rebuilds of the Text
+  view. The join is by words and time, so it should hold, but it has not been
+  tried on a real compacted session.
+- Labels are matched over the turns the Text view has loaded. With the same
+  words sent several times and older turns not loaded yet, a label can land on
+  the wrong copy until the earlier turns load.
+- The project-member 403 was found by reading the code and is now covered by a
+  test of the attach handler (`TestInternalAttachProjectMember`); it has not
+  been reproduced against the deployed box.

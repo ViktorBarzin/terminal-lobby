@@ -21,7 +21,10 @@ Design and the grilling decisions:
 | Mode needed | ro to read the conversation; rw to send, answer, rename or kill |
 | As whom the guest's actions run | The owner, as the terminal attach does today |
 | Sharing onward | Refused for a guest, whatever their mode |
-| Read-only tmux clients | Cannot reach `switch-client`; the default bindings are wrapped in `if-shell` in `/etc/tmux.conf` |
+| Read-only tmux clients | Cannot reach `switch-client`; the default bindings are wrapped in `if-shell` in `/etc/tmux.conf`, and on each guest's watch attach in the owner's running server |
+| How a guest's request names the session | `?owner=<account>` on every session-events and `/sessions/{name}` route, the way an administrator's `?as=` names a target |
+| Who is present, and what they type | A WebSocket per open tab, `GET /events/{session}/presence`, carrying the room and each person's live draft |
+| Who sent a prompt | Recorded by session-events at `/prompt`, sent on the presence socket, matched to messages in the Text view |
 
 ## Why one check
 
@@ -60,3 +63,8 @@ one. Tested on tmux 3.4 on 2026-10-11.
   keys and reopen the gap for their sessions.
 - Prompts typed into the terminal cannot be attributed. Only composer sends
   carry a sender.
+- A draft reaches everyone on the session as it is typed, including words the
+  person deletes before sending. Viktor chose the live preview over a bare
+  typing indicator on 2026-10-11.
+- A guest's open streams ask tmux-api again every 5 seconds, so a removed guest
+  can read for up to that long after the removal.
