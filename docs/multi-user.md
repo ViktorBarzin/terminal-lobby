@@ -24,7 +24,8 @@ Projects and sessions can be **shared with other users on the same machine**
   (asked first, with no undo; the owner is pushed who did it) but not share it
   onward. Everyone with the session open sees who else is there in the session
   bar and each other's unsent message as it is typed, and once a guest has
-  sent, each message says who sent it. Removing someone (or a guest leaving)
+  sent, each person's messages are drawn in their own colour, with the
+  presence chip as the key. Removing someone (or a guest leaving)
   detaches their terminal at once and ends their Text view within 5 seconds. A
   grant is pinned to the session it was made for and ends with it (ADR-0043).
   A watcher cannot switch to the owner's other sessions or detach the owner's

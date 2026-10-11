@@ -52,7 +52,7 @@ attached with `-r` pressed `C-b )` and moved from session `a` to `b`.
 | 10 | Access check | One function decides "may account G reach owner O's session S, and at what mode": a share row, or project membership, or admin act-as. Terminal attach, Text view reads and composer sends all call it. This also fixes the project-member 403. Project membership only ever watches (decided after the security review, see below); driving needs a share the owner made. |
 | 11 | Watch guests and switch-client | Close the gap in `devvm/tmux.conf.system` (see "Closing the watch gap"). |
 | 12 | Presence | Everyone with the session open in a lobby tab, terminal or Text view, over a WebSocket per tab. The session bar names the others ("emo here", "bob (watching) here"); your own other devices are you, not company. |
-| 13 | Attribution | Composer sends record the sender. The Text view labels user messages with it once a session has had a guest. Prompts typed into the terminal stay unlabelled, since tmux receives every keystroke as the owner. |
+| 13 | Attribution | Composer sends record the sender. Once a guest has sent, each person's messages are drawn in their own colour (Viktor, 2026-10-11: colour rather than a name label); the presence chip shows each name beside a dot in that colour, and the bubble's tooltip names the sender. Prompts typed into the terminal stay uncoloured, since tmux receives every keystroke as the owner. |
 | 14 | Live drafts | Each person's unsent draft streams to the others as they type, read-only above the composer, with "emo is typing" while it moves and "emo has an unsent message" once it rests. A watcher has no composer and publishes nothing. Two sends at once queue in order (ADR-0042). |
 | 15 | Window size | Whoever typed last, which is tmux's `latest` and what rw clients do today. |
 | 16 | Audit | The sender is recorded in telemetry on each composer send, so `homelab claude-usage` shows who prompted a shared session. Spend stays the owner's. |
@@ -158,7 +158,9 @@ the records, and a later session that takes the name starts with none, so a
 guest invited to it never sees an earlier session's prompts. The presence socket
 sends the records on connect and each new one as it happens. The Text view
 matches records to user messages by their words, oldest first, each record
-labelling one message sent no more than two hours earlier. A prompt typed into
+labelling one message sent no more than two hours earlier. Colours come from
+the order people appear: the owner, then senders by their first send, then
+anyone present by name, six colours in all, so every screen agrees. A prompt typed into
 the terminal has no record and shows no label. Labels appear only once someone
 other than the owner has sent, so a session nobody shared looks as it does
 today.
@@ -191,6 +193,7 @@ the shared Android emulator:
 | Sender labels | Both messages labelled on both sides, and still after two renames |
 | Guest rename | Session, share row and both tabs moved to the new name |
 | Remove | emo's streams closed within the 5 s recheck; a send after it was refused |
+| A Lens acting as the guest | Refused with 400 at first (`?as=` and `?owner=` together), so its Text view retried forever; fixed so a Lens reaches what its target can |
 
 The run found four defects, fixed before release: a guest's tab did not follow
 a rename, a guest rejoined as a watcher after one, a removed guest's tab kept
