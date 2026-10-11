@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -270,5 +271,48 @@ func TestSharePushPayloads(t *testing.T) {
 	}
 	if p.Title != "emo killed Fix auth" || p.Badge != nil || p.Notification != nil {
 		t.Fatalf("kill payload %+v", p)
+	}
+}
+
+// A guest's watch attach wraps the owner's switch-client keys first, and is
+// refused when that fails.
+func TestInternalAttachGuardsAWatcher(t *testing.T) {
+	swapShareStore(t)
+	swapProjectStore(t)
+	withUserMap(t, "alice=alice\nbob=bob\n")
+	withAdmins(t, "")
+	withInternalToken(t, "tok")
+	stubSessionExists(t, true)
+	oldPin := pinGrid
+	pinGrid = func(string, string) error { return nil }
+	t.Cleanup(func() { pinGrid = oldPin })
+	seedShareRow(t, Share{Owner: "alice", Name: "main", Guest: "bob", Mode: "ro", SessionID: "$1", SessionCreated: 1000})
+
+	var guarded []string
+	guardErr := error(nil)
+	old := guardReadOnly
+	guardReadOnly = func(u string) error { guarded = append(guarded, u); return guardErr }
+	t.Cleanup(func() { guardReadOnly = old })
+
+	body := `{"owner":"alice","name":"main","guest":"bob","tty":"/dev/pts/3"}`
+	rec := httptest.NewRecorder()
+	handleInternalAttach(rec, internalAttachReq(body, "tok"))
+	if rec.Code != http.StatusOK || len(guarded) != 1 || guarded[0] != "alice" {
+		t.Fatalf("status %d, guarded %v", rec.Code, guarded)
+	}
+
+	guardErr = errors.New("no server")
+	rec = httptest.NewRecorder()
+	handleInternalAttach(rec, internalAttachReq(body, "tok"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a failed guard answered %d, want 500", rec.Code)
+	}
+
+	// The owner watching their own session from a phone needs no guard.
+	guarded = nil
+	rec = httptest.NewRecorder()
+	handleInternalAttach(rec, internalAttachReq(`{"owner":"alice","name":"main","guest":"alice","requested":"ro"}`, "tok"))
+	if len(guarded) != 0 {
+		t.Fatalf("a self watch was guarded")
 	}
 }

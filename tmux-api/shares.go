@@ -362,6 +362,7 @@ var (
 	sessionExists = func(osUser, name string) bool { return gridInjector.HasSession(osUser, name) }
 	pinGrid       = func(osUser, name string) error { return gridInjector.PinGrid(osUser, name) }
 	repinGrid     = func(osUser, name string) error { return gridInjector.RepinGrid(osUser, name) }
+	guardReadOnly = func(osUser string) error { return gridInjector.GuardReadOnly(osUser) }
 )
 
 // handleInternalAttach is the devvm attach path's single authorization call:
@@ -532,6 +533,19 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 	exists := false
 	if !selfAttach || mode == shareModeRO {
 		exists = sessionExists(body.Owner, body.Name)
+	}
+
+	// A watcher on someone else's session must not be able to switch to the
+	// owner's other sessions, which tmux's default bindings allow a read-only
+	// client (sessionio.GuardReadOnly). Refused if it cannot be applied: a
+	// watch attach without it reaches further than the grant.
+	// An administrator may attach any session anyway, so only a guest let in
+	// by a share or a project needs it.
+	if mode == shareModeRO && !selfAttach && !actAs && exists {
+		if err := guardReadOnly(body.Owner); err != nil {
+			logAndFail(w, "read-only guard on %s for %s's watch: %v", body.Owner, body.Guest, err)
+			return
+		}
 	}
 
 	if mode == shareModeRO {
