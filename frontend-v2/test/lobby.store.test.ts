@@ -615,6 +615,21 @@ describe("lobby store", () => {
     });
   });
 
+  it("finds a shared session an invite link named before its rename", async () => {
+    // The link was copied as #colour-check@bob!$3; the first prompt renamed the
+    // session to "one" before the guest opened it.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("one", { owner: "bob", access: "rw" }), id: "$3" }];
+    await withStore(
+      api,
+      async (store) => {
+        await store.refresh();
+        expect(store.selected()).toEqual({ name: "one", owner: "bob" });
+      },
+      { initialSelected: { name: "colour-check", owner: "bob" }, initialSelectedId: "$3" },
+    );
+  });
+
   it("closes a shared session that is no longer shared, and says so", async () => {
     const api = new FakeApi();
     api.sessionsVal = [{ ...sess("theirs", { owner: "bob", access: "rw" }), id: "$3" }];

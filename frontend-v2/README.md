@@ -291,6 +291,8 @@ src/
                          the Share dialog (list, invite, change, remove), the
                          lobby URL that opens a session for its guests, and a
                          driving guest's kill and retitle with ?owner=
+    foreign-hash.ts      The #name@owner!id hash a shared session's link
+                         carries; the id finds it after a rename (ADR-0043)
     session-owner.ts     The context naming a session's owner when it is not
                          yours, read by the parts of the Text view that build
                          their own session-events URLs (ADR-0043)

@@ -8,6 +8,7 @@
  * guest", "no such running session"), which is written for a person.
  */
 import { apiUrl, withOwner } from "./config";
+import { foreignHash } from "./foreign-hash";
 import { fetchWithDeadline } from "./http";
 
 export type ShareMode = "ro" | "rw";
@@ -61,10 +62,11 @@ export async function removeShare(owner: string, name: string, guest: string): P
 }
 
 /** The lobby URL that opens someone else's session: the hash form the page
- *  reads for a foreign session. It grants nothing; only an invited account
- *  gets past the server's access check. */
-export function inviteUrl(origin: string, owner: string, name: string): string {
-  return `${origin}/#${name}@${owner}`;
+ *  reads for a foreign session, with tmux's session id so it still finds the
+ *  session after a rename (lib/foreign-hash.ts). It grants nothing; only an
+ *  invited account gets past the server's access check. */
+export function inviteUrl(origin: string, owner: string, name: string, id?: string): string {
+  return `${origin}/${foreignHash(owner, name, id)}`;
 }
 
 /** A /sessions/{name}… route on someone else's session, for a guest: tmux-api

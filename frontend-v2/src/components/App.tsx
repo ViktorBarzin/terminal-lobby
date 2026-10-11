@@ -13,6 +13,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { parseForeignHash } from "../lib/foreign-hash";
 import { createLobbyStore, type NotifyKind, type SelectedSession } from "../store/lobby";
 import { canActAs } from "../lib/mode";
 import {
@@ -160,8 +161,8 @@ function readInitialSelection(): SelectedSession | null {
   try {
     const hash = window.location.hash.replace(/^#/, "");
     if (hash) {
-      const at = hash.indexOf("@");
-      if (at > 0) return { name: hash.slice(0, at), owner: hash.slice(at + 1) };
+      const foreign = parseForeignHash(hash);
+      if (foreign) return { name: foreign.name, owner: foreign.owner };
       if (NAME_RE.test(hash)) return { name: hash };
     }
     const q = new URLSearchParams(window.location.search).get("session");
@@ -170,6 +171,13 @@ function readInitialSelection(): SelectedSession | null {
     /* no URL */
   }
   return null;
+}
+
+/** The tmux session id an invite link carries (lib/foreign-hash.ts), which
+ *  finds the shared session after a rename. */
+function readInitialSelectionId(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return parseForeignHash(window.location.hash)?.id;
 }
 
 function readSidebarCollapsed(): boolean {
@@ -719,6 +727,7 @@ export const App: Component = () => {
 
   const store = createLobbyStore({
     initialSelected,
+    initialSelectedId: readInitialSelectionId(),
     notify,
     undo: undoStack,
     // A phone renders no dock, so it must not hide the docked shell from the

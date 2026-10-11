@@ -12,14 +12,20 @@ import (
 // owner; a guest gets nothing else.
 
 // shareNavigateURL opens the lobby on a session someone else owns: the hash
-// form the page reads for a foreign session (#name@owner).
-func shareNavigateURL(origin, owner, session string) string {
-	return origin + "/#" + session + "@" + owner
+// form the page reads for a foreign session (#name@owner), with tmux's session
+// id after a `!` so the page still finds it once its first prompt has renamed
+// it (frontend-v2 lib/foreign-hash.ts).
+func shareNavigateURL(origin, owner, session, id string) string {
+	u := origin + "/#" + session + "@" + owner
+	if id != "" {
+		u += "!" + id
+	}
+	return u
 }
 
 // buildSharedWithYouPayload is the guest's invite. from is the account that
 // shared it, which is the owner.
-func buildSharedWithYouPayload(from, owner, session, title, origin string) []byte {
+func buildSharedWithYouPayload(from, owner, session, id, title, origin string) []byte {
 	label := pushLabel(session, title)
 	p := pushPayload{
 		Title:   from + " shared " + label + " with you",
@@ -32,7 +38,7 @@ func buildSharedWithYouPayload(from, owner, session, title, origin string) []byt
 		p.Notification = &declarativeNotification{
 			Title:    p.Title,
 			Body:     p.Body,
-			Navigate: shareNavigateURL(origin, owner, session),
+			Navigate: shareNavigateURL(origin, owner, session, id),
 			Tag:      p.Tag,
 		}
 	}
@@ -65,14 +71,14 @@ const kindShare = "share"
 
 // pushSharedWithYou sends the invite to every device the guest has. A box with
 // push switched off has no sender, and the invite is then only the sidebar.
-func pushSharedWithYou(owner, guest, session, title string) {
+func pushSharedWithYou(owner, guest, session, id, title string) {
 	p := pushSenderInstance
 	if p == nil {
 		return
 	}
 	go func() {
 		sent, _ := p.send(guest, session, func(origin string) []byte {
-			return buildSharedWithYouPayload(owner, owner, session, title, origin)
+			return buildSharedWithYouPayload(owner, owner, session, id, title, origin)
 		}, kindShare)
 		log.Printf("share push: %s → %s for %s/%s, %d device(s)", owner, guest, owner, session, sent)
 	}()

@@ -241,6 +241,10 @@ export interface LobbyStoreOptions {
   pollMs?: number;
   autoStart?: boolean;
   initialSelected?: SelectedSession | null;
+  /** The tmux session id the URL named with a foreign selection (an invite
+   *  link, lib/foreign-hash.ts): finds it if it was renamed before the tab
+   *  opened. */
+  initialSelectedId?: string;
   /** update the URL hash on select (default true; off in tests). */
   syncHash?: boolean;
   /** surface a store message to the app's toast stack (in ADDITION to the
@@ -385,6 +389,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   let layoutKnown = false;
   let layoutFetch: Promise<boolean> | null = null;
   const [sessions, setSessions] = createStore<Session[]>([]);
+  /** The foreign selection the URL opened with, and the id it carried. */
+  const urlSelection =
+    opts.initialSelected?.owner && opts.initialSelectedId
+      ? { ...opts.initialSelected, id: opts.initialSelectedId }
+      : undefined;
   const [pending, setPending] = createSignal<Session[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
@@ -704,8 +713,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (!sel?.owner || sel.owner === me()) return undefined;
     if (next.some((s) => s.owner === sel.owner && s.name === sel.name)) return undefined;
     const was = prev.find((s) => s.owner === sel.owner && s.name === sel.name);
-    if (!was?.id) return undefined;
-    return next.find((s) => s.owner === sel.owner && s.id === was.id)?.name;
+    // A tab opened from an invite link never saw the old name listed; the
+    // link's id stands in for the row it would have matched.
+    const id = was?.id ?? (sel.name === urlSelection?.name && sel.owner === urlSelection.owner ? urlSelection.id : undefined);
+    if (!id) return undefined;
+    return next.find((s) => s.owner === sel.owner && s.id === id)?.name;
   }
 
   function followRenamedSelection(

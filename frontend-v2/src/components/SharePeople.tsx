@@ -31,6 +31,8 @@ export const SharePeople: Component<{
   name: string;
   /** You: the session's owner. */
   me: string;
+  /** tmux's session id, which keeps the link working after a rename. */
+  id?: string;
 }> = (props) => {
   const [shares, setShares] = createSignal<ShareView[] | null>(null);
   const [users, setUsers] = createSignal<string[]>([]);
@@ -90,7 +92,7 @@ export const SharePeople: Component<{
     await reload();
   };
 
-  const url = () => inviteUrl(window.location.origin, props.me, props.name);
+  const url = () => inviteUrl(window.location.origin, props.me, props.name, props.id);
   const copy = async (): Promise<void> => {
     setCopied((await copyText(url(), urlEl)) ? "Copied" : "Selected. Press Ctrl+C to copy");
   };

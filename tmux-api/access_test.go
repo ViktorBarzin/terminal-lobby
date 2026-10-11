@@ -275,13 +275,13 @@ func TestGuestTarget(t *testing.T) {
 
 func TestSharePushPayloads(t *testing.T) {
 	var p pushPayload
-	if err := json.Unmarshal(buildSharedWithYouPayload("vbarzin", "alice", "fix-auth", "Fix auth", "https://t.example"), &p); err != nil {
+	if err := json.Unmarshal(buildSharedWithYouPayload("vbarzin", "alice", "fix-auth", "$7", "Fix auth", "https://t.example"), &p); err != nil {
 		t.Fatal(err)
 	}
 	if p.Title != "vbarzin shared Fix auth with you" || p.Badge != nil {
 		t.Fatalf("invite payload %+v", p)
 	}
-	if p.Notification == nil || p.Notification.Navigate != "https://t.example/#fix-auth@alice" {
+	if p.Notification == nil || p.Notification.Navigate != "https://t.example/#fix-auth@alice!$7" {
 		t.Fatalf("invite navigate %+v", p.Notification)
 	}
 	p = pushPayload{}

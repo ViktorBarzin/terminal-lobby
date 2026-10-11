@@ -251,7 +251,7 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 	})
 	// Only a new grant pushes. Changing watch to drive is not a second invite.
 	if isNew {
-		pushSharedWithYou(osUser, guest, name, target.Title)
+		pushSharedWithYou(osUser, guest, name, target.ID, target.Title)
 	}
 	w.WriteHeader(http.StatusCreated)
 }
