@@ -17,9 +17,17 @@ import { lsGet, lsSet } from "../lib/storage";
  * Under the terminal default nothing was stored for a terminal session, so
  * those sessions now open in text; a stored "text" still reads as text and is
  * pruned the next time the switch is pressed.
+ *
+ * A third view, "t3", is T3 Code's web client in a frame (docs/plans/
+ * 2026-10-12-t3-view-design.md). It is offered only to an admin on their own
+ * Claude session, so a stored "t3" is read through that offer: where it is not
+ * offered the session shows the default, and the stored choice stays put for
+ * the device and the moment it is offered again.
  */
 
-export type ViewMode = "text" | "terminal";
+export type ViewMode = "text" | "terminal" | "t3";
+
+const isMode = (v: string | null): v is ViewMode => v === "text" || v === "terminal" || v === "t3";
 
 const KEY_PREFIX = "tl:viewmode:v1:";
 
@@ -33,8 +41,7 @@ export function defaultMode(): ViewMode {
 
 export function loadMode(session: string): ViewMode {
   const stored = lsGet(KEY_PREFIX + session);
-  if (stored === "text" || stored === "terminal") return stored;
-  return defaultMode();
+  return isMode(stored) ? stored : defaultMode();
 }
 
 export function saveMode(session: string, mode: ViewMode): void {
@@ -57,20 +64,33 @@ export function saveMode(session: string, mode: ViewMode): void {
 export function carryViewMode(from: string, to: string): void {
   if (from === to) return;
   const stored = lsGet(KEY_PREFIX + from);
-  if (stored !== "text" && stored !== "terminal") return;
+  if (!isMode(stored)) return;
   lsSet(KEY_PREFIX + from, null);
   lsSet(KEY_PREFIX + to, stored);
 }
 
+/**
+ * The view a session shows, and the two ways to change it.
+ *
+ * `t3Offered` says whether this session may show the T3 view right now. While
+ * it is false a stored "t3" reads as the default; nothing is written, so the
+ * choice comes back when the offer does (the admin flag arrives with /whoami,
+ * after the first paint).
+ */
 export function createViewMode(
   session: Accessor<string>,
+  t3Offered: Accessor<boolean> = () => false,
 ): [Accessor<ViewMode>, (m: ViewMode) => void, () => void] {
-  const [mode, setMode] = createSignal<ViewMode>(loadMode(session()));
+  const [chosen, setChosen] = createSignal<ViewMode>(loadMode(session()));
   // Re-hydrate when the session changes (each session has its own last view).
-  createEffect(() => setMode(loadMode(session())));
+  createEffect(() => setChosen(loadMode(session())));
+  const mode = (): ViewMode => {
+    const m = chosen();
+    return m === "t3" && !t3Offered() ? defaultMode() : m;
+  };
 
   const set = (m: ViewMode) => {
-    setMode(m);
+    setChosen(m);
     saveMode(session(), m);
   };
   const toggle = () => set(mode() === "text" ? "terminal" : "text");

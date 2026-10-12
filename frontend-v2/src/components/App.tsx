@@ -134,6 +134,8 @@ import {
   NEW_SESSION_COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
+import { frameChords, t3ViewOrigin } from "../t3/embed.logic";
+import type { T3Wiring } from "./T3Host";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 /** sessionStorage: this tab went back to the phone's list (opensOnContent). */
@@ -2133,6 +2135,19 @@ export const App: Component = () => {
   // capture-phase window keydown sees every chord in the page — the terminal's
   // included, since the terminal is drawn in this document.
   const engine = createKeybindingEngine();
+  // The T3 view (docs/plans/2026-10-12-t3-view-design.md): where it is served,
+  // whether this caller is an admin acting as themselves, and the chords its
+  // frame hands back to this engine. Each SessionView decides from these
+  // whether its own session offers it.
+  const t3Chords = createMemo(() => frameChords(engine.bindings()));
+  const t3: T3Wiring = {
+    admin: () => {
+      const w = store.whoami();
+      return w?.admin === true && !w.realUser;
+    },
+    origin: t3ViewOrigin(window.location),
+    chords: t3Chords,
+  };
   // Both overlays render OVER the terminal and take focus off it, so dismissing
   // one leaves focus on <body> and the pty deaf. refocusTerminal calls the
   // bridge the mounted TerminalNative publishes; it is a no-op with no session
@@ -3051,6 +3066,7 @@ export const App: Component = () => {
                       prefs={prefs}
                       notify={notify}
                       overlayOpen={overlayOpen}
+                      t3={t3}
                       // This reaches the LOBBY, so only the session on screen may
                       // speak: a hidden mount raising a badge would be a session
                       // acting from behind another.

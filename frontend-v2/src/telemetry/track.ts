@@ -102,6 +102,8 @@ export type TlEvent =
   | "palette.opened"
   | "palette.action"
   | "help.opened"
+  // The session's view changed (store/viewmode.ts saveMode): tl.to is text |
+  // terminal | t3, tl.session the session. t3 since 2026-10-12, the T3 view.
   | "view.switched"
   // watch mode (attach read-only): tl.to is "ro" or "rw"
   | "watch.switched"

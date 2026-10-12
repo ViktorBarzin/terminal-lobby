@@ -50,9 +50,12 @@ import {
   CameraIcon,
   ClipboardIcon,
   DotsGlyph,
+  T3Glyph,
   TerminalGlyph,
   TextGlyph,
 } from "./Icons";
+import { T3Host, type T3Wiring } from "./T3Host";
+import { t3Offered as offersT3, t3ThreadId } from "../t3/embed.logic";
 import { headerSubtitle } from "./header.logic";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { stepTextSize } from "../mobile/textzoom";
@@ -272,6 +275,10 @@ export const SessionView: Component<{
    *  never in a lens), and the bar menu's Share… that opens the dialog. */
   shareable?: () => boolean;
   onShare?: () => void;
+  /** The T3 view's wiring (components/T3Host.tsx): absent, or with no origin,
+   *  offers no T3 view. Whether THIS session offers it is decided here, from
+   *  the admin flag, the owner, the lens and the tool. */
+  t3?: T3Wiring;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** The model and effort a NEWLY-CREATED session launches on, as flags on the
@@ -359,7 +366,23 @@ export const SessionView: Component<{
     autoStart: false,
     owner: foreignOwner,
   });
-  const [mode, setMode, toggleMode] = createViewMode(session);
+  /**
+   * Whether this session offers the T3 view (design decisions 12, 16, 17): an
+   * admin, as themselves, on their own Claude session, with a T3 view
+   * configured. False until /whoami and the session list have both said so,
+   * which `createViewMode` reads as "show the default for now".
+   */
+  const t3Offered = createMemo(
+    () =>
+      !!props.t3?.origin &&
+      offersT3({
+        admin: props.t3.admin(),
+        actingAs: !!props.lens?.(),
+        foreign: !!foreignOwner,
+        tool: props.tool?.(),
+      }),
+  );
+  const [mode, setMode, toggleMode] = createViewMode(session, t3Offered);
   /**
    * Put this session on a model or an effort level.
    *
@@ -1488,7 +1511,11 @@ export const SessionView: Component<{
     // directories again — the 2026-08-29 report, reopened by the visible set.
     // The paste has one destination (the pty of the tile you are typing into),
     // so it has one handler, and the handler is the one that owns that pty.
-    active: focused,
+    //
+    // Not in the T3 view, which is another document with its own composer: a
+    // paste on the lobby's chrome around it would otherwise type a path into
+    // the hidden terminal.
+    active: () => focused() && mode() !== "t3",
     // Route on the ACTIVE VIEW (design 2026-08-17 decision 5). In the text view a
     // paste or a drop belongs to the composer — which is the bug this fixes: the
     // capture-phase paste listener swallowed every image and typed its path at a
@@ -1515,6 +1542,12 @@ export const SessionView: Component<{
     // the same thing instead of appearing to work.
     if (watch()) {
       props.notify?.(inertReason(), "info");
+      return true;
+    }
+    // The T3 view is another document: the lobby cannot type into it, and the
+    // terminal behind it is not what the reader is looking at.
+    if (mode() === "t3") {
+      props.notify?.("Paste inside the T3 view itself", "info");
       return true;
     }
     // Routed on the ACTIVE VIEW, like every other intake (design 2026-08-17
@@ -1859,6 +1892,21 @@ export const SessionView: Component<{
                     <span class="tl-browser-indicator-dot" aria-hidden="true" />
                   </button>
                 )}
+              </Show>
+              {/* The T3 view (design decision 11), for whoever it is offered
+                to. Pressed again, it goes back to Text, the default. */}
+              <Show when={t3Offered()}>
+                <button
+                  type="button"
+                  class="tl-bar-group-btn tl-t3-toggle"
+                  classList={{ on: mode() === "t3" }}
+                  aria-pressed={mode() === "t3"}
+                  aria-label="T3 view"
+                  title={mode() === "t3" ? "Back to the Text view" : "T3 view (admin preview)"}
+                  onClick={() => setMode(mode() === "t3" ? "text" : "t3")}
+                >
+                  <T3Glyph />
+                </button>
               </Show>
               <button
                 type="button"
@@ -2212,6 +2260,24 @@ export const SessionView: Component<{
             />
           </Show>
         </section>
+        {/* The T3 view: T3 Code's web client in a frame (ADR-0044). Mounted
+            only while it is the view, and the frame inside only while this
+            session holds the tab's one frame (t3/frame-claim.ts), so a kept
+            session in the background costs no T3 client. */}
+        <Show when={mode() === "t3" && props.t3?.origin}>
+          {(origin) => (
+            <section class="tl-view tl-t3-view">
+              <T3Host
+                claimKey={untrack(() => keyOf({ name: session(), owner: props.owner }))}
+                want={() => onScreen() && !preloading()}
+                prefer={focused}
+                threadId={() => t3ThreadId(keyOf({ name: session() }))}
+                origin={origin()}
+                chords={() => props.t3?.chords() ?? []}
+              />
+            </section>
+          )}
+        </Show>
         {/* Beside the view on a desktop, the view giving up the right of the
             pane (`.tl-browser-split`); over the whole pane when it is under
             720px wide; over the whole screen on a phone. */}

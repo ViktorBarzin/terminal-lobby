@@ -119,3 +119,40 @@ describe("createKeybindingEngine — Alt-hold tracker", () => {
     expect(engine.altActive()).toBe(false);
   });
 });
+
+/**
+ * The live rows, for a surface that has to know the chords before a keydown
+ * exists: the T3 frame (components/T3Host.tsx) is another document, so it is
+ * told which keys to hand back rather than seeing them pass this listener.
+ */
+describe("createKeybindingEngine — the live rows", () => {
+  let engine: KeybindingEngine;
+  beforeEach(() => {
+    localStorage.clear();
+    engine = createKeybindingEngine();
+  });
+  afterEach(() => engine.dispose());
+
+  it("reports the gate, the default rows and the always-on rows", () => {
+    const b = engine.bindings();
+    expect(b.enabled).toBe(true);
+    expect(b.defaults.some((r) => r.command === "palette.toggle")).toBe(true);
+    expect(b.always.some((r) => r.command === "session.kill.current")).toBe(true);
+  });
+
+  it("follows the Settings switch", () => {
+    engine.setEnabled(false);
+    expect(engine.bindings().enabled).toBe(false);
+  });
+
+  it("follows an override written by another tab", () => {
+    localStorage.setItem(
+      KB_KEY,
+      JSON.stringify({ enabled: true, overrides: { "palette.toggle": "alt+shift+p" } }),
+    );
+    engine.init({ getContext: LOBBY_CTX, runCommand: () => {} });
+    window.dispatchEvent(new StorageEvent("storage", { key: KB_KEY }));
+    const pal = engine.bindings().defaults.find((r) => r.command === "palette.toggle");
+    expect(pal?.chord).toMatchObject({ alt: true, shift: true, key: "p" });
+  });
+});

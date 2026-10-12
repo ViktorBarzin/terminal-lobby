@@ -808,7 +808,11 @@ src/
                          stay on the session bar, which follows focus
     SessionView.tsx      The per-session two-view surface (text | terminal),
                          and the T3 header over both: title, "project · state"
-                         subtitle, one group with the view icon and "…"
+                         subtitle, one group with the view icon and "…". An
+                         admin's own Claude session has a third view, T3
+    T3Host.tsx           The T3 view: T3 Code's web client framed from its own
+                         origin, one frame per tab, and the lobby's side of
+                         the postMessage contract (t3-view/EMBED.md)
     header.logic.ts      PURE header subtitle: the state word and dot, the
                          project and any background work
     TextView.tsx         Text mode in one centred 760px column: the
@@ -1139,6 +1143,11 @@ src/
                          overlay closes (window.__tlFocusTerminal)
     editing.ts           Is the keyboard inside something that types? The one
                          chord that has to yield to a field is Cmd+Z
+  t3/
+    embed.logic.ts       PURE the T3 view's embed contract: its origin and the
+                         `?t3view=` override, the thread id, message parsing,
+                         and the chords the frame hands back
+    frame-claim.ts       At most one T3 frame per tab: the latest ask holds it
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge

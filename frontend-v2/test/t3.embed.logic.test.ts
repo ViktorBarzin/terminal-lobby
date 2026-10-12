@@ -1,0 +1,396 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  allowedT3Origin,
+  defaultT3Origin,
+  frameChords,
+  loadEnvironmentId,
+  parseFrameMessage,
+  replayInit,
+  saveEnvironmentId,
+  t3FrameUrl,
+  t3Offered,
+  t3ThreadId,
+  t3ViewOrigin,
+} from "../src/t3/embed.logic";
+import { parseChord } from "../src/keybindings/chords.logic";
+import type { ResolvedBinding } from "../src/keybindings/bindings.logic";
+
+describe("where the T3 view is served", () => {
+  it("defaults to t3view beside the lobby's own host", () => {
+    expect(defaultT3Origin("terminal.viktorbarzin.me")).toBe("https://t3view.viktorbarzin.me");
+    expect(defaultT3Origin("terminal-dev.viktorbarzin.me")).toBe("https://t3view.viktorbarzin.me");
+    expect(defaultT3Origin("example.com")).toBe("https://t3view.example.com");
+  });
+
+  it("has no default on a loopback or bare host, where there is no sibling to name", () => {
+    for (const h of ["127.0.0.1", "localhost", "[::1]", "10.0.10.10", "devvm"]) {
+      expect(defaultT3Origin(h), h).toBeNull();
+    }
+  });
+
+  it("accepts an override on the lobby's own domain, or on loopback", () => {
+    const lobby = "terminal.viktorbarzin.me";
+    expect(allowedT3Origin("https://t3view-dev.viktorbarzin.me", lobby)).toBe(
+      "https://t3view-dev.viktorbarzin.me",
+    );
+    expect(allowedT3Origin("https://t3view.viktorbarzin.me/", lobby)).toBe(
+      "https://t3view.viktorbarzin.me",
+    );
+    expect(allowedT3Origin("http://127.0.0.1:17691", lobby)).toBe("http://127.0.0.1:17691");
+    expect(allowedT3Origin("http://localhost:5173", "127.0.0.1")).toBe("http://localhost:5173");
+  });
+
+  // The override decides which page the lobby frames AND which page's key
+  // messages it replays as lobby commands. A crafted link carrying
+  // ?t3view=https://evil.example would otherwise hand that page Alt+Shift+W.
+  it("refuses an override anywhere else", () => {
+    const lobby = "terminal.viktorbarzin.me";
+    for (const o of [
+      "https://evil.example",
+      "https://viktorbarzin.me.evil.example",
+      "https://evilviktorbarzin.me",
+      "http://t3view.viktorbarzin.me",
+      "javascript:alert(1)",
+      "https://t3view.viktorbarzin.me/path?x",
+      "http://192.168.1.4:17691",
+      "not a url",
+      "",
+    ]) {
+      expect(allowedT3Origin(o, lobby), o).toBeNull();
+    }
+  });
+
+  it("reads ?t3view= when it is allowed, else the default", () => {
+    expect(
+      t3ViewOrigin({
+        hostname: "terminal.viktorbarzin.me",
+        search: "?t3view=http://127.0.0.1:17691",
+      }),
+    ).toBe("http://127.0.0.1:17691");
+    expect(
+      t3ViewOrigin({
+        hostname: "terminal.viktorbarzin.me",
+        search: "?t3view=https://evil.example",
+      }),
+    ).toBe("https://t3view.viktorbarzin.me");
+    expect(t3ViewOrigin({ hostname: "127.0.0.1", search: "" })).toBeNull();
+  });
+});
+
+describe("which thread the frame shows", () => {
+  it("is the birth name of one of your own sessions (keepalive keyOf)", () => {
+    expect(t3ThreadId("\u0000824smya2cmz5")).toBe("824smya2cmz5");
+  });
+
+  it("is nothing for somebody else's session or an empty key", () => {
+    expect(t3ThreadId("emo\u0000auth")).toBeNull();
+    expect(t3ThreadId("\u0000")).toBeNull();
+    expect(t3ThreadId("auth")).toBeNull();
+  });
+
+  it("builds T3's own thread route with the embed flag", () => {
+    expect(
+      t3FrameUrl({
+        origin: "https://t3view.viktorbarzin.me",
+        environmentId: "3f2a-env",
+        threadId: "824smya2cmz5",
+      }),
+    ).toBe("https://t3view.viktorbarzin.me/3f2a-env/824smya2cmz5?embed");
+  });
+
+  it("escapes a hand-typed session name in the path", () => {
+    expect(
+      t3FrameUrl({
+        origin: "http://127.0.0.1:17691",
+        environmentId: "e",
+        threadId: "a b/c",
+      }),
+    ).toBe("http://127.0.0.1:17691/e/a%20b%2Fc?embed");
+  });
+
+  it("opens the root while the environment id is not known yet", () => {
+    expect(
+      t3FrameUrl({
+        origin: "https://t3view.viktorbarzin.me",
+        environmentId: null,
+        threadId: "auth",
+      }),
+    ).toBe("https://t3view.viktorbarzin.me/?embed");
+  });
+});
+
+describe("the environment id cache", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("remembers the id per T3 origin", () => {
+    expect(loadEnvironmentId("https://t3view.viktorbarzin.me")).toBeNull();
+    saveEnvironmentId("https://t3view.viktorbarzin.me", "env-1");
+    expect(loadEnvironmentId("https://t3view.viktorbarzin.me")).toBe("env-1");
+    expect(loadEnvironmentId("http://127.0.0.1:17691")).toBeNull();
+  });
+});
+
+describe("messages from the frame", () => {
+  it("parses tl-ready", () => {
+    expect(
+      parseFrameMessage({ type: "tl-ready", v: 1, environmentId: "env-1", threadId: null }),
+    ).toEqual({ type: "tl-ready", v: 1, environmentId: "env-1", threadId: null });
+    expect(
+      parseFrameMessage({ type: "tl-ready", v: 1, environmentId: "env-1", threadId: "auth" }),
+    ).toEqual({ type: "tl-ready", v: 1, environmentId: "env-1", threadId: "auth" });
+  });
+
+  it("parses tl-key", () => {
+    const msg = {
+      type: "tl-key",
+      v: 1,
+      key: "1",
+      code: "Digit1",
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      altKey: true,
+      repeat: false,
+    };
+    expect(parseFrameMessage(msg)).toEqual(msg);
+  });
+
+  it("refuses anything malformed, from another version, or with extra power", () => {
+    for (const bad of [
+      null,
+      "tl-key",
+      {
+        type: "tl-key",
+        v: 2,
+        key: "1",
+        code: "",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: true,
+        repeat: false,
+      },
+      {
+        type: "tl-key",
+        v: 1,
+        key: 1,
+        code: "",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: true,
+        repeat: false,
+      },
+      {
+        type: "tl-key",
+        v: 1,
+        key: "1",
+        code: "",
+        ctrlKey: "yes",
+        metaKey: false,
+        shiftKey: false,
+        altKey: true,
+        repeat: false,
+      },
+      {
+        type: "tl-key",
+        v: 1,
+        key: "x".repeat(40),
+        code: "",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: true,
+        repeat: false,
+      },
+      { type: "tl-ready", v: 1, environmentId: "", threadId: null },
+      { type: "tl-ready", v: 1, environmentId: 3, threadId: null },
+      { type: "tl-run", v: 1, command: "session.kill.current" },
+    ]) {
+      expect(parseFrameMessage(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it("replays a key as a cancelable, bubbling keydown with the same identity", () => {
+    expect(
+      replayInit({
+        type: "tl-key",
+        v: 1,
+        key: "[",
+        code: "BracketLeft",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: true,
+        altKey: true,
+        repeat: false,
+      }),
+    ).toEqual({
+      key: "[",
+      code: "BracketLeft",
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: true,
+      altKey: true,
+      repeat: false,
+      bubbles: true,
+      cancelable: true,
+    });
+  });
+});
+
+describe("the chords the frame hands back", () => {
+  const rb = (key: string, command: string, when?: string): ResolvedBinding => ({
+    command,
+    when,
+    chord: parseChord(key),
+  });
+
+  it("lists every live binding with its physical-key alias", () => {
+    const chords = frameChords({
+      enabled: true,
+      defaults: [
+        rb("alt+1", "session.attach.1"),
+        rb("alt+shift+[", "session.prev"),
+        rb("ctrl+shift+k", "palette.toggle"),
+        rb("alt+shift+enter", "session.next.awaiting"),
+        rb("alt+/", "shortcuts.help"),
+      ],
+      always: [rb("alt+shift+backspace", "session.kill.current")],
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: false,
+      alt: true,
+      meta: false,
+      key: "1",
+      code: "Digit1",
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: true,
+      alt: true,
+      meta: false,
+      key: "[",
+      code: "BracketLeft",
+    });
+    expect(chords).toContainEqual({
+      ctrl: true,
+      shift: true,
+      alt: false,
+      meta: false,
+      key: "k",
+      code: "KeyK",
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: true,
+      alt: true,
+      meta: false,
+      key: "enter",
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: false,
+      alt: true,
+      meta: false,
+      key: "/",
+      code: "Slash",
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: true,
+      alt: true,
+      meta: false,
+      key: "backspace",
+    });
+  });
+
+  it("always includes the dock's Ctrl/Cmd+J and a passive Escape", () => {
+    const chords = frameChords({ enabled: true, defaults: [], always: [] });
+    expect(chords).toContainEqual({
+      ctrl: true,
+      shift: false,
+      alt: false,
+      meta: false,
+      key: "j",
+      code: "KeyJ",
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: false,
+      alt: false,
+      meta: true,
+      key: "j",
+      code: "KeyJ",
+    });
+    expect(chords).toContainEqual({
+      ctrl: false,
+      shift: false,
+      alt: false,
+      meta: false,
+      key: "escape",
+      passive: true,
+    });
+  });
+
+  // Cmd+Z in T3's composer is the composer's own undo. The lobby's undo row
+  // says `!editing`, and the lobby cannot see focus inside the frame, so the
+  // frame is told to keep the key while its own focus is in a field.
+  it("marks the rows a focused field owns", () => {
+    const chords = frameChords({
+      enabled: true,
+      defaults: [rb("ctrl+z", "edit.undo", "!editing && !overlayOpen && !previewDirty")],
+      always: [],
+    });
+    expect(chords).toContainEqual({
+      ctrl: true,
+      shift: false,
+      alt: false,
+      meta: false,
+      key: "z",
+      code: "KeyZ",
+      notWhileEditing: true,
+    });
+  });
+
+  it("hands back only the always-on rows while app shortcuts are off", () => {
+    const chords = frameChords({
+      enabled: false,
+      defaults: [rb("alt+1", "session.attach.1")],
+      always: [rb("alt+shift+backspace", "session.kill.current")],
+    });
+    expect(chords.some((c) => c.key === "1")).toBe(false);
+    expect(chords.some((c) => c.key === "backspace")).toBe(true);
+  });
+
+  it("skips a row whose override did not parse, and lists a chord once", () => {
+    const chords = frameChords({
+      enabled: true,
+      defaults: [
+        { command: "session.new", chord: null },
+        rb("ctrl+z", "edit.undo"),
+        rb("ctrl+z", "edit.undo"),
+      ],
+      always: [],
+    });
+    expect(chords.filter((c) => c.key === "z")).toHaveLength(1);
+  });
+});
+
+describe("who is offered the T3 view", () => {
+  const base = { admin: true, actingAs: false, foreign: false, tool: "claude" as const };
+
+  it("an admin, as themselves, on their own Claude session", () => {
+    expect(t3Offered(base)).toBe(true);
+  });
+
+  it("nobody else", () => {
+    expect(t3Offered({ ...base, admin: false })).toBe(false);
+    expect(t3Offered({ ...base, actingAs: true })).toBe(false);
+    expect(t3Offered({ ...base, foreign: true })).toBe(false);
+    expect(t3Offered({ ...base, tool: "pi" })).toBe(false);
+    expect(t3Offered({ ...base, tool: "codex" })).toBe(false);
+    expect(t3Offered({ ...base, tool: "shell" })).toBe(false);
+    expect(t3Offered({ ...base, tool: undefined })).toBe(false);
+  });
+});

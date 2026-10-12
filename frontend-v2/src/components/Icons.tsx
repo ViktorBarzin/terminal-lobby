@@ -275,6 +275,16 @@ export const TextGlyph: Component = () => (
   </Glyph>
 );
 
+/** The header's T3 view icon (docs/plans/2026-10-12-t3-view-design.md): the
+ *  Text icon's rounded frame with "T3" drawn in strokes, so it reads as a
+ *  third view of the same conversation. */
+export const T3Glyph: Component = () => (
+  <Glyph box="0 0 20 20" size={20}>
+    <rect x="2.5" y="3.5" width="15" height="13" rx="2.4" />
+    <path d="M5.6 7.4h4M7.6 7.4v5.4M11.6 7.6c.4-.3.9-.4 1.4-.4.8 0 1.4.5 1.4 1.2s-.6 1.2-1.4 1.2c.8 0 1.5.5 1.5 1.3s-.7 1.3-1.5 1.3c-.6 0-1.1-.2-1.5-.5" />
+  </Glyph>
+);
+
 /** The header's "…" (prototype `dots`). Filled, so it reads at 20px. */
 export const DotsGlyph: Component = () => (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

@@ -209,7 +209,7 @@ var knownEvents = map[string]bool{
 	"palette.opened": true,
 	"palette.action": true, // ANY command dispatch: palette pick, chord, forwarded shortcut
 	"help.opened":    true,
-	"view.switched":  true, // text-mode <-> terminal (tl.to)
+	"view.switched":  true, // the session's view (tl.to = text|terminal|t3, tl.session); t3 since 2026-10-12
 
 	// -- images, clipboard, transfers --------------------------------------
 	"gallery.opened":       true,
@@ -229,7 +229,7 @@ var knownEvents = map[string]bool{
 	// -- the session browser, as the lobby sees it -------------------------
 	// Browser-emitted (v2 lobby, docs/plans/2026-10-01-session-browser-design.md).
 	// Never a URL or anything from the page.
-	"browser.panel_open":   true, // the Browser panel opened (tl.kind = card|bar, tl.to = text|terminal)
+	"browser.panel_open":   true, // the Browser panel opened (tl.kind = card|bar, tl.to = text|terminal|t3)
 	"browser.take_control": true, // a person took control from the agent
 	"browser.hand_back":    true, // ...and handed it back (tl.ms = how long they held it)
 

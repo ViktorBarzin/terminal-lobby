@@ -37,6 +37,11 @@ export interface KeybindingEngine {
   /** platform-localized modifier label ("Option" on Mac, else "Alt"). */
   altLabel: string;
   isMac: boolean;
+  /** The live rows: the gate, the default rows with overrides applied, and the
+   *  always-on rows. For a surface that must know the chords before a keydown
+   *  exists, which today is the T3 frame: another document, told which keys
+   *  to hand back (components/T3Host.tsx). */
+  bindings: Accessor<EngineBindings>;
   /** the shared match decision point (exposed for parity / future xterm merge). */
   matchesAppChord: (e: ChordEventLike) => ResolvedBinding | null;
   /** wire the context + command runner, then install the window listeners. */
@@ -45,6 +50,12 @@ export interface KeybindingEngine {
     runCommand: (cmd: string) => void;
   }) => void;
   dispose: () => void;
+}
+
+export interface EngineBindings {
+  enabled: boolean;
+  defaults: readonly ResolvedBinding[];
+  always: readonly ResolvedBinding[];
 }
 
 function readKbDoc(): KbDoc {
@@ -72,6 +83,11 @@ export function createKeybindingEngine(): KeybindingEngine {
   const [enabled, setEnabledSig] = createSignal(doc.enabled);
   let resolvedDefaults = resolveBindings(doc.overrides);
   const resolvedAlways = resolveAlways();
+  const [bindings, setBindings] = createSignal<EngineBindings>({
+    enabled: doc.enabled,
+    defaults: resolvedDefaults,
+    always: resolvedAlways,
+  });
 
   let getContextFn: (() => Record<string, boolean>) | null = null;
   let runCommandFn: ((cmd: string) => void) | null = null;
@@ -80,6 +96,7 @@ export function createKeybindingEngine(): KeybindingEngine {
     doc = readKbDoc();
     resolvedDefaults = resolveBindings(doc.overrides);
     setEnabledSig(doc.enabled);
+    setBindings({ enabled: doc.enabled, defaults: resolvedDefaults, always: resolvedAlways });
   }
 
   const context = (): Record<string, boolean> => (getContextFn ? getContextFn() : {});
@@ -186,6 +203,7 @@ export function createKeybindingEngine(): KeybindingEngine {
     altActive,
     altLabel: altLabelFor(isMac),
     isMac,
+    bindings,
     matchesAppChord,
     init,
     dispose,
