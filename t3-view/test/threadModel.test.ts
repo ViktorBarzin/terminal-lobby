@@ -93,7 +93,11 @@ describe("a session followed across reconnects", () => {
     expect(approval).toMatchObject({ status: "waiting", requestKind: "command" });
     expect(approval?.prompt).toContain("touch /tmp/t3view-probe-file");
     const request = model.projection.runtimeRequests.find((r) => r.id === approval?.requestId);
-    expect(request).toMatchObject({ status: "pending", kind: "command" });
+    expect(request).toMatchObject({
+      status: "pending",
+      kind: "command",
+      responseCapability: { type: "live" },
+    });
     expect(model.mapper.openDialogs.map((d) => [d.kind, d.toolId])).toEqual([
       ["permission", "toolu_01LNxqGL65zRa7tULyGynHs5"],
     ]);
@@ -222,6 +226,45 @@ describe("a session followed across reconnects", () => {
       (i) => i.status === "failed",
     );
     expect(failed).toHaveLength(1);
+  });
+});
+
+describe("stops and wakes", () => {
+  const event = (o: Record<string, unknown>) => ({
+    event: "message",
+    data: JSON.stringify({ session: "s", ...o }),
+  });
+
+  it("ends a stopped run as interrupted when the mod's clean turn_end follows a T3 Stop", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    model.onFrame(event({ id: 50, kind: "user", turnId: "t2", body: "long job" }));
+    model.commit(model.mapper.interruptRequested());
+    model.onFrame(event({ id: 51, kind: "turn_end", turnId: "t2" }));
+    const run = model.projection.runs.at(-1);
+    expect(run?.status).toBe("interrupted");
+    expect(
+      model.projection.turnItems.filter((i) => i.runId === run?.id).map((i) => i.type),
+    ).toEqual(["user_message", "run_interrupt_request", "run_interrupt_result"]);
+  });
+
+  it("shows a background job's report once, as the notification that opens Claude's answer", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    const note =
+      "<task-notification>\n<task-id>b1</task-id>\n<summary>Background command \"loop\" completed (exit code 0)</summary>\n</task-notification>";
+    model.onFrame(event({ id: 60, kind: "meta", meta: "queued", turnId: "t1", body: note }));
+    model.onFrame(event({ id: 61, kind: "meta", meta: "unqueued", turnId: "t1", body: note }));
+    model.onFrame(
+      event({ id: 62, kind: "state", turnId: "t1", body: 'Background command "loop" completed (exit code 0)' }),
+    );
+    model.onFrame(event({ id: 63, kind: "text", turnId: "t2", body: "The loop finished." }));
+    model.onFrame(event({ id: 64, kind: "turn_end", turnId: "t2" }));
+    const run = model.projection.runs.at(-1);
+    const items = model.projection.turnItems.filter((i) => i.runId === run?.id);
+    expect(items.map((i) => i.type)).toEqual(["notification", "assistant_message"]);
+    expect(model.projection.turnItems.some((i) => i.type === "system_notice")).toBe(false);
+    assertSemanticProjectionIntegrity(model.projection);
   });
 });
 

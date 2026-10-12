@@ -127,6 +127,7 @@ export function threadShellOf(
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    lastVisitedAt: thread.lastVisitedAt,
     deletedAt: null,
   };
 }

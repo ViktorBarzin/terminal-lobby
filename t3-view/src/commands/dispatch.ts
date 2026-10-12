@@ -63,6 +63,8 @@ export interface CommandDeps {
   ) => Promise<DirectoryProject | undefined>;
   /** Records the thread id T3 minted for a session the sidecar created (aliases.ts). */
   readonly alias: (identity: Identity, minted: string, threadId: string) => void;
+  /** The models the composer offers (models.ts); a send leaves any other model alone. */
+  readonly knownModels?: ReadonlySet<string>;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly mintName?: () => string;
   readonly log?: (message: string) => void;
@@ -106,10 +108,18 @@ export class Commands {
   }
 
   async dispatch(identity: Identity, command: OrchestrationV2Command): Promise<void> {
-    if (command.type === "thread.visit") return;
+    if (command.type === "thread.visit") {
+      const handle = await this.#d.thread(identity, command.threadId);
+      const at = Date.parse(command.visitedAt);
+      if (handle !== undefined && Number.isFinite(at)) {
+        handle.live.commit(handle.live.model.mapper.visited(at));
+      }
+      return;
+    }
     if (!("threadId" in command)) {
       throw new CommandFailure(`${command.type} is not something a lobby session can do yet.`);
     }
+    this.#d.log?.(`${identity.osUser}: ${command.type} on ${command.threadId}`);
     const handle = await this.#d.thread(identity, command.threadId);
     if (handle === undefined) throw new CommandFailure("The lobby lists no such session.");
     const { entry, live } = handle;
@@ -133,7 +143,12 @@ export class Commands {
       case "run.interrupt": {
         refuseIfReadOnly();
         live.commit(live.model.mapper.interruptRequested());
-        await call(() => this.#d.api.cancel(relay, where.session, where.owner, false));
+        try {
+          await call(() => this.#d.api.cancel(relay, where.session, where.owner, false));
+        } catch (error) {
+          live.model.mapper.interruptRefused();
+          throw error;
+        }
         return;
       }
       case "queued-run.cancel": {
@@ -239,7 +254,15 @@ export class Commands {
         return;
       }
     }
-    if (command.modelSelection !== undefined && mapper.activeRun === undefined) {
+    // The composer can only show a model the provider lists. On a session
+    // running another (a pre-warm alias such as claude-haiku-5-5) it falls
+    // back to its default, so its selection there is not a choice to apply.
+    const current = mapper.thread.modelSelection.model;
+    if (
+      command.modelSelection !== undefined &&
+      mapper.activeRun === undefined &&
+      (this.#d.knownModels === undefined || this.#d.knownModels.has(current))
+    ) {
       await this.#setModel(handle, relay, command.modelSelection, false);
     }
     const mode = resolveDispatchMode(mapper.runs, command.dispatchMode, command.deliveryIntent);

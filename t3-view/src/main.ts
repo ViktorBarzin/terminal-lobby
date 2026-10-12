@@ -16,6 +16,7 @@ import { ConfigError, loadConfig } from "./config.ts";
 import { environmentDescriptor, environmentIdFor } from "./descriptor.ts";
 import { Hub } from "./hub.ts";
 import { LobbyApi } from "./lobby/api.ts";
+import { LOBBY_CLAUDE_MODELS } from "./models.ts";
 import { SequenceClock } from "./sequence.ts";
 import { sidecarLayer } from "./server.ts";
 import { ThreadAliases } from "./shell/aliases.ts";
@@ -73,6 +74,7 @@ function start(): void {
       return user.directory.project(projectId);
     },
     alias: (identity, minted, threadId) => aliases.set(identity.osUser, minted, threadId),
+    knownModels: new Set(LOBBY_CLAUDE_MODELS.map((m) => m.slug)),
     log,
   });
 

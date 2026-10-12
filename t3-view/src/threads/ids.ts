@@ -12,6 +12,7 @@ import {
   MessageId,
   NodeId,
   PlanId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -28,6 +29,9 @@ export const rootNodeId = (run: RunId): NodeId => NodeId.make(`${run}:root`);
 export const providerTurnId = (run: RunId): ProviderTurnId => ProviderTurnId.make(`${run}:turn`);
 export const providerThreadId = (thread: ThreadId): ProviderThreadId =>
   ProviderThreadId.make(`provider-thread:${thread}`);
+/** The Claude in the session's pane, as T3's live provider session: a dialog it holds is answerable now. */
+export const providerSessionId = (thread: ThreadId): ProviderSessionId =>
+  ProviderSessionId.make(`provider-session:${thread}`);
 
 /** A turn item for one stored lobby event. */
 export const eventItemId = (thread: ThreadId, epoch: string, eventId: number): TurnItemId =>

@@ -85,6 +85,8 @@ interface RunRecord {
   items: number;
   hasOutput: boolean;
   interrupted: boolean;
+  /** A T3 Stop asked for this run to end: the turn_end that follows is an interrupt. */
+  stopRequested: boolean;
   /** Queued while another run was open (T3's queued_turn). */
   readonly queuedBehind: boolean;
 }
@@ -272,11 +274,17 @@ export class ThreadMapper {
     return this.#batch(e.at ?? this.#o.now(), () => this.#apply(e));
   }
 
-  /** A T3 Stop: shows the interrupt request on the active run. */
+  /**
+   * A T3 Stop: shows the interrupt request on the active run, and makes the
+   * turn_end that follows an interrupt. A Claude with the lobby's mod is
+   * stopped inside the process and its turn ends cleanly, with no
+   * "[Request interrupted by user]" row to say so.
+   */
   interruptRequested(): DomainEvent[] {
     return this.#batch(this.#o.now(), () => {
       const rec = this.#open;
       if (rec === undefined) return;
+      rec.stopRequested = true;
       this.#item(rec, {
         type: "run_interrupt_request",
         message: "Interrupt requested",
@@ -284,6 +292,11 @@ export class ThreadMapper {
         title: "Interrupt requested",
       });
     });
+  }
+
+  /** The lobby refused the Stop: the run carries on, and its end is not an interrupt. */
+  interruptRefused(): void {
+    if (this.#open !== undefined) this.#open.stopRequested = false;
   }
 
   /** A mode the lobby confirmed it set (POST /model {mode}), ahead of the transcript saying so. */
@@ -294,6 +307,19 @@ export class ThreadMapper {
   /** A model the lobby confirmed it set (POST /model), ahead of the transcript saying so. */
   confirmModel(model: ModelState): DomainEvent[] {
     return this.#batch(this.#o.now(), () => this.#setModel(model));
+  }
+
+  /**
+   * T3's thread.visit: the newest moment the viewer saw the thread, kept as
+   * the maximum so a late or replayed visit cannot move it back.
+   */
+  visited(visitedAtMs: number): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      const before = this.#thread.lastVisitedAt;
+      if (before !== null && DateTime.toEpochMillis(before) >= visitedAtMs) return;
+      this.#thread = { ...this.#thread, lastVisitedAt: utc(visitedAtMs) };
+      this.#emit("thread.visited", this.#thread);
+    });
   }
 
   /** A notice row about something the sidecar did or could not do (a refused model change). */
@@ -414,6 +440,7 @@ export class ThreadMapper {
       items: 0,
       hasOutput: false,
       interrupted: false,
+      stopRequested: false,
       queuedBehind: this.#open !== undefined,
     };
     this.#runs.set(id, rec);
@@ -585,6 +612,15 @@ export class ThreadMapper {
     for (const dialog of [...this.#dialogs.values()]) {
       if (dialog.runId === rec.run.id) this.#resolveDialog(dialog, "expired");
     }
+    if (rec.stopRequested && !rec.interrupted) {
+      rec.interrupted = true;
+      this.#item(rec, {
+        type: "run_interrupt_result",
+        message: "Interrupted",
+        status: "interrupted",
+        title: "Interrupted",
+      });
+    }
     const status = rec.interrupted ? "interrupted" : "completed";
     this.#emit("provider-turn.updated", this.#providerTurn(rec, status, e.usage), rec.run.id);
     this.#emit("run-attempt.updated", this.#attempt(rec, status), rec.run.id);
@@ -610,8 +646,12 @@ export class ThreadMapper {
       });
       return;
     }
-    if (this.#open === undefined && this.#wakeSummary === undefined && body !== "") {
-      this.#wakeSummary = body;
+    // A harness row with no turn open is a background job reporting in, and
+    // Claude answers it next: it opens that run, as its notification. The
+    // queued <task-notification> before it already named it, and the row
+    // repeats that summary, so it is shown once.
+    if (this.#open === undefined && body !== "") {
+      this.#wakeSummary ??= body;
       this.#ensureOpen();
       return;
     }
@@ -1032,7 +1072,9 @@ export class ThreadMapper {
   #setModel(model: ModelState): void {
     if (model.model === undefined) return;
     const current = this.#thread.modelSelection;
-    const effort = model.effort ?? effortOf(current);
+    // A reading that names no effort keeps the one in force, unless the model
+    // moved: efforts are per model, and Haiku has none.
+    const effort = model.effort ?? (model.model === current.model ? effortOf(current) : undefined);
     const next = {
       instanceId: CLAUDE_INSTANCE_ID,
       model: model.model,
@@ -1238,7 +1280,10 @@ export class ThreadMapper {
       nativeRequestRef: null,
       kind,
       status,
-      responseCapability: { type: "message" },
+      // The mod holds the dialog in the running Claude, so an answer lands
+      // now: T3's "live". ("message" would make T3 answer a question by
+      // sending a new prompt, and draw an approval as unanswerable.)
+      responseCapability: { type: "live", providerSessionId: Ids.providerSessionId(this.#o.threadId) },
       createdAt: utc(this.#at),
       resolvedAt: status === "pending" ? null : utc(this.#at),
     };

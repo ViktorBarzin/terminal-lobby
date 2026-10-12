@@ -8,6 +8,7 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vitest";
 
 import type { Identity } from "../src/auth.ts";
@@ -104,6 +105,7 @@ function setup(
     alias: (_identity, minted, threadId) => aliases.push([minted, threadId]),
     sleep: async () => {},
     mintName: () => "bw8k5gt9v314",
+    knownModels: new Set(["claude-opus-5-5", "claude-haiku-4-5-20251001"]),
   });
   return { commands, calls, live, pending, aliases };
 }
@@ -156,6 +158,30 @@ describe("message.dispatch", () => {
     });
     const user = live.projection.turnItems.findLast((i) => i.type === "user_message");
     expect(user?.type === "user_message" && user.messageId).toBe("client-m1");
+  });
+
+  it("leaves the model alone when the session runs one the composer cannot show", async () => {
+    // The fixture session answers on claude-haiku-5-5, which the composer does
+    // not list, so the Opus it shows is its fallback, not a choice.
+    const { commands, calls } = setup();
+    await commands.dispatch(
+      identity,
+      message({ modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: "claude-opus-5-5" } }),
+    );
+    expect(calls.map((c) => c.op)).toEqual(["prompt"]);
+  });
+
+  it("changes the model before a send when the person picked another one", async () => {
+    const { commands, calls, live } = setup();
+    live.commit(live.model.mapper.confirmModel({ model: "claude-haiku-4-5-20251001" }));
+    await commands.dispatch(
+      identity,
+      message({ modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: "claude-opus-5-5" } }),
+    );
+    expect(calls.map((c) => [c.op, c.args[2]])).toEqual([
+      ["model", { model: "claude-opus-5-5" }],
+      ["prompt", { text: "hello there", id: base.commandId }],
+    ]);
   });
 
   it("steers a running turn, and queues behind it with wait", async () => {
@@ -245,6 +271,21 @@ describe("message.dispatch", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("thread.visit", () => {
+  it("records the visit on the thread, and never moves it back", async () => {
+    const { commands, calls, live } = setup();
+    const visit = (visitedAt: string) =>
+      commands.dispatch(identity, { type: "thread.visit", ...base, visitedAt });
+    await visit("2026-10-12T09:00:00.000Z");
+    await visit("2026-10-12T08:00:00.000Z");
+    expect(calls).toEqual([]);
+    const at = live.projection.thread.lastVisitedAt;
+    expect(at === null ? null : new Date(DateTime.toEpochMillis(at)).toISOString()).toBe(
+      "2026-10-12T09:00:00.000Z",
+    );
   });
 });
 
