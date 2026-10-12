@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isCrossSiteWrite, isSameOriginUpgrade } from "../src/origin.ts";
+import { frameAncestors, isCrossSiteWrite, isSameOriginUpgrade } from "../src/origin.ts";
 
 const HOST = "t3view.viktorbarzin.me";
 
@@ -50,5 +50,28 @@ describe("isCrossSiteWrite", () => {
     expect(isCrossSiteWrite("POST", { "sec-fetch-site": "same-origin" })).toBe(false);
     expect(isCrossSiteWrite("POST", { "sec-fetch-site": "none" })).toBe(false);
     expect(isCrossSiteWrite("POST", {})).toBe(false);
+  });
+});
+
+describe("frameAncestors", () => {
+  it("lets only the lobby beside the sidecar frame its pages", () => {
+    expect(frameAncestors(HOST)).toBe("frame-ancestors https://terminal.viktorbarzin.me");
+    expect(frameAncestors("T3View.Example.org:443")).toBe(
+      "frame-ancestors https://terminal.example.org",
+    );
+  });
+
+  it("lets a loopback lobby frame a loopback sidecar, for the local check", () => {
+    for (const host of ["127.0.0.1:17691", "localhost:17691", "[::1]:17691"]) {
+      expect(frameAncestors(host)).toBe(
+        "frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*",
+      );
+    }
+  });
+
+  it("lets nothing frame a host with no lobby beside it", () => {
+    for (const host of [undefined, "", "devvm", "viktorbarzin.me", "10.0.10.10:7690"]) {
+      expect(frameAncestors(host)).toBe("frame-ancestors 'none'");
+    }
   });
 });

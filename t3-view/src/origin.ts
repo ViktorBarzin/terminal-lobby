@@ -46,3 +46,26 @@ export function isCrossSiteWrite(method: string, headers: RequestHeaders): boole
   const site = single(headers, "sec-fetch-site");
   return site !== undefined && !OWN_CONTEXTS.has(site.toLowerCase());
 }
+
+/** The lobby's host name, beside the sidecar's own (t3view.example.org -> terminal.example.org). */
+const LOBBY_LABEL = "terminal";
+
+const LOOPBACK_ANCESTORS = "frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*";
+
+/**
+ * The CSP that names who may frame the sidecar's pages: the lobby beside it,
+ * https://terminal.<this host's domain>, and nothing else. Traefik's global
+ * CSP allows every *.viktorbarzin.me page; a browser enforces both headers, so
+ * this narrows it to the one page the embed patch talks to. A loopback host is
+ * the local check (dev-proxy.mjs), framed by a loopback lobby.
+ */
+export function frameAncestors(host: string | undefined): string {
+  const name = (host ?? "").trim().toLowerCase().replace(/:\d+$/, "");
+  if (name === "localhost" || name === "127.0.0.1" || name === "[::1]") return LOOPBACK_ANCESTORS;
+  const labels = name.split(".");
+  const isAddress = /^\d{1,3}(\.\d{1,3}){3}$/.test(name) || name.startsWith("[");
+  if (isAddress || labels.length < 3 || labels.some((l) => l === "")) {
+    return "frame-ancestors 'none'";
+  }
+  return `frame-ancestors https://${LOBBY_LABEL}.${labels.slice(1).join(".")}`;
+}

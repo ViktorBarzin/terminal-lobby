@@ -42,12 +42,12 @@ describe("parentOrigin", () => {
 });
 
 describe("embedHost", () => {
-  it("accepts the lobby on the frame's own domain", () => {
+  it("accepts the lobby beside the frame: terminal. on the frame's own domain", () => {
     expect(embedHost(true, LOBBY, T3)).toBe(LOBBY);
-    expect(embedHost(true, "https://terminal-dev.viktorbarzin.me", T3)).toBe(
-      "https://terminal-dev.viktorbarzin.me",
-    );
-    expect(embedHost(true, "https://viktorbarzin.me", T3)).toBe("https://viktorbarzin.me");
+    expect(embedHost(true, `${LOBBY}/`, T3)).toBe(LOBBY);
+    expect(
+      embedHost(true, "https://terminal.example.org", { hostname: "t3view.example.org" }),
+    ).toBe("https://terminal.example.org");
   });
 
   it("runs as upstream when unframed or without the flag", () => {
@@ -56,6 +56,10 @@ describe("embedHost", () => {
   });
 
   it.each([
+    ["another page on the same site", "https://pages.viktorbarzin.me"],
+    ["the bare domain", "https://viktorbarzin.me"],
+    ["a host below the lobby", "https://x.terminal.viktorbarzin.me"],
+    ["the lobby on another port", "https://terminal.viktorbarzin.me:8443"],
     ["another domain", "https://evil.example"],
     ["a look-alike suffix", "https://terminal.notviktorbarzin.me"],
     ["plain http off loopback", "http://terminal.viktorbarzin.me"],
@@ -66,7 +70,7 @@ describe("embedHost", () => {
   });
 
   it("refuses to treat a bare top-level domain as the frame's domain", () => {
-    expect(embedHost(true, "https://anything.me", { hostname: "viktorbarzin.me" })).toBeNull();
+    expect(embedHost(true, "https://terminal.me", { hostname: "viktorbarzin.me" })).toBeNull();
   });
 
   it("allows http on loopback only when the frame is on loopback too", () => {
@@ -246,6 +250,18 @@ describe("parseLobbyMessage", () => {
       threadId: "t-1",
     });
   });
+  it("keeps only chords with a modifier, or Escape, so no chord can forward typing", () => {
+    const typing = [
+      chord({ key: "a", passive: true }),
+      chord({ shift: true, key: "a", code: "KeyA" }),
+      chord({ key: "1" }),
+      chord({ key: "enter", notWhileEditing: true }),
+    ];
+    expect(
+      parseLobbyMessage({ type: "tl-bindings", v: 1, chords: [...typing, ...CHORDS] }),
+    ).toEqual({ type: "tl-bindings", v: 1, chords: CHORDS });
+  });
+
   it.each([
     ["another version", { type: "tl-open", v: 2, threadId: "t" }],
     ["an unknown type", { type: "tl-run", v: 1, command: "x" }],

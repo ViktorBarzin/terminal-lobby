@@ -30,10 +30,10 @@ index 00d5c05..5e9f71e 100644
        </SidebarProvider>
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..66f2734
+index 0000000..3e91ac5
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,241 @@
 +// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
 +// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
 +
@@ -92,10 +92,15 @@ index 0000000..66f2734
 +  return remembered || new URLSearchParams(search).has("embed");
 +}
 +
++/** The lobby's host name, beside the frame's own (t3view.example.org -> terminal.example.org). */
++const LOBBY_LABEL = "terminal";
++
 +/**
 + * The lobby origin the frame may talk to, or null to run as upstream: the
-+ * parent's origin when the flag is on and the parent is https on the frame's
-+ * own domain, or http on loopback with the frame on loopback too.
++ * parent's origin when the flag is on and the parent is exactly
++ * https://terminal.<the frame's domain>, or http on loopback with the frame on
++ * loopback too. Only the lobby itself, never a sibling page on the same site:
++ * the parent this accepts can read every key the frame forwards.
 + */
 +export function embedHost(
 +  flag: boolean,
@@ -111,9 +116,9 @@ index 0000000..66f2734
 +  }
 +  if (url.origin !== parent.replace(/\/$/, "")) return null;
 +  if (url.protocol === "https:") {
-+    const domain = frame.hostname.split(".").slice(1).join(".");
++    const domain = frame.hostname.toLowerCase().split(".").slice(1).join(".");
 +    if (!domain.includes(".")) return null;
-+    return url.hostname === domain || url.hostname.endsWith(`.${domain}`) ? url.origin : null;
++    return url.origin === `https://${LOBBY_LABEL}.${domain}` ? url.origin : null;
 +  }
 +  if (url.protocol === "http:" && LOOPBACK.has(frame.hostname) && LOOPBACK.has(url.hostname)) {
 +    return url.origin;
@@ -211,6 +216,15 @@ index 0000000..66f2734
 +  };
 +}
 +
++/**
++ * A chord the frame will hand over: one with Ctrl, Alt or Meta, or Escape.
++ * The lobby asks for nothing else, and a bare or Shift-only key would forward
++ * ordinary typing.
++ */
++function isForwardable(c: FrameChord): boolean {
++  return c.ctrl || c.alt || c.meta || c.key === "escape";
++}
++
 +/** A message from the lobby, or null for anything outside the contract. */
 +export function parseLobbyMessage(data: unknown): LobbyMessage | null {
 +  if (!isRecord(data) || data.v !== 1) return null;
@@ -218,7 +232,11 @@ index 0000000..66f2734
 +    if (!Array.isArray(data.chords) || data.chords.length > 256) return null;
 +    const chords = data.chords.map(parseChord);
 +    if (chords.some((c) => c === null)) return null;
-+    return { type: "tl-bindings", v: 1, chords: chords.filter((c) => c !== null) };
++    return {
++      type: "tl-bindings",
++      v: 1,
++      chords: chords.filter((c): c is FrameChord => c !== null && isForwardable(c)),
++    };
 +  }
 +  if (data.type === "tl-open") {
 +    const { threadId } = data;

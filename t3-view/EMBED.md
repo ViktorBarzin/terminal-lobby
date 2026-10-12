@@ -22,8 +22,8 @@ The lobby loads one of two URLs:
 
 - `origin` is `https://t3view.<the lobby's domain>` in production
   (`https://t3view.viktorbarzin.me` for `terminal.viktorbarzin.me`). For a local
-  check the lobby takes `?t3view=<origin>`, limited to https on the lobby's own
-  domain or http on loopback.
+  check the lobby takes `?t3view=<origin>`, limited to http on loopback. The
+  lobby grants the frame clipboard access only on the production origin.
 - `environmentId` is the one the sidecar's descriptor carries
   (`GET /.well-known/t3/environment`). The lobby learns it from `tl-ready` and
   keeps it in `localStorage` under `tl:t3view:env:v1:{origin}`.
@@ -52,9 +52,20 @@ that frames it cannot choose it:
    `strict-origin-when-cross-origin` sends the lobby's origin.
 3. Neither available, or the answer is `"null"`: the frame posts nothing.
 
-Traefik's global CSP (`frame-ancestors *.viktorbarzin.me`) limits which pages
-can frame the production origin at all. The lobby, for its part, trusts a
-message only from the T3 origin it framed and from that frame's own window.
+The frame then accepts that origin only when it is the lobby itself:
+exactly `https://terminal.<the frame's domain>` (`https://terminal.viktorbarzin.me`
+for `t3view.viktorbarzin.me`), or `http` on loopback with the frame on loopback
+too. Any other parent, a sibling page on the same site included, gets a frame
+that behaves as upstream and posts nothing. The parent the frame accepts sees
+every chord it forwards, so this is a single origin rather than a domain.
+
+Which pages can frame the sidecar at all is set by CSP. Traefik's global
+header allows `frame-ancestors 'self' *.viktorbarzin.me`, and the sidecar adds
+its own `frame-ancestors https://terminal.<its domain>` on every page it
+serves (`frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*`
+on a loopback host). A browser enforces both, so only the lobby can frame it.
+The lobby, for its part, trusts a message only from the T3 origin it framed
+and from that frame's own window.
 
 ## Messages
 
@@ -132,7 +143,10 @@ interface FrameChord {
 
 ## Forwarding keys
 
-Until the first `tl-bindings` arrives the frame forwards nothing.
+Until the first `tl-bindings` arrives the frame forwards nothing. It keeps
+only chords with Ctrl, Alt or Meta, or Escape, and drops the rest of the
+list: the lobby asks for nothing else, and a bare or Shift-only key would
+forward ordinary typing.
 
 A keydown matches a chord when all four modifiers equal the chord's
 (`ctrlKey === ctrl`, and the same for shift, alt and meta) and either
@@ -170,7 +184,8 @@ The frame does not hard-code this list. It uses whatever the latest
 `tl-bindings` says, which follows the person's overrides and the "App
 shortcuts" switch.
 
-The lobby replays a `tl-key` by dispatching a synthetic, bubbling, cancelable
+The lobby drops a `tl-key` that matches no chord in the latest list it sent,
+and replays the rest by dispatching a synthetic, bubbling, cancelable
 `keydown` on the iframe element, so its own keybinding engine and window
 listeners treat it as a key pressed on the session pane, and evaluate their
 own conditions (an open overlay, an unsaved file draft) as they would for a

@@ -51,7 +51,7 @@ import {
   hasOrchestrationProtocolHeader,
   protocolIncompatibleBody,
 } from "./protocol.ts";
-import { isCrossSiteWrite, isSameOriginUpgrade } from "./origin.ts";
+import { frameAncestors, isCrossSiteWrite, isSameOriginUpgrade } from "./origin.ts";
 import { rpcScopeAuthorization } from "./rpc/authorization.ts";
 import { makeHandlers } from "./rpc/handlers.ts";
 import type { SequenceClock } from "./sequence.ts";
@@ -329,10 +329,16 @@ export function routes(deps: SidecarDeps) {
         if (Option.isNone(url)) {
           return Effect.succeed(HttpServerResponse.text("bad request", { status: 400 }));
         }
+        // Every page the sidecar serves says who may frame it: the lobby only.
+        const csp = frameAncestors(request.headers.host);
         return Effect.flatMap(threadRedirect(deps, identity, url.value), (redirect) =>
           redirect === undefined
             ? serveWebBuild(deps.webDir, url.value.pathname)
             : Effect.succeed(redirect),
+        ).pipe(
+          Effect.map((response) =>
+            HttpServerResponse.setHeader(response, "content-security-policy", csp),
+          ),
         );
       }),
     ),

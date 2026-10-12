@@ -137,6 +137,9 @@ describe("HTTP routes for an admin", () => {
     expect(index.status).toBe(200);
     expect(await index.text()).toContain("<title>T3</title>");
     expect(index.headers.get("cache-control")).toBe("no-cache");
+    expect(index.headers.get("content-security-policy")).toBe(
+      "frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*",
+    );
 
     const route = await get("/env-1/thread-1", ADMIN);
     expect(await route.text()).toContain("<title>T3</title>");
