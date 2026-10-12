@@ -30,10 +30,10 @@ index 00d5c05..5e9f71e 100644
        </SidebarProvider>
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..469e8d0
+index 0000000..beae5fe
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,193 @@
 +// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
 +// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
 +
@@ -68,22 +68,48 @@ index 0000000..469e8d0
 +
 +const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 +
-+/** The lobby origin the frame may talk to, or null to run as upstream. */
-+export function embedHost(
-+  search: string,
-+  frame: { readonly hostname: string },
-+  framed: boolean,
++/**
++ * The framing page's origin as the browser reports it, so the page cannot
++ * choose it: ancestorOrigins where the browser has it (Chrome, Safari), else
++ * the referrer's origin (Firefox). Null when neither names one.
++ */
++export function parentOrigin(
++  ancestorOrigins: ArrayLike<string> | undefined,
++  referrer: string,
 +): string | null {
-+  const params = new URLSearchParams(search);
-+  const raw = params.get("host");
-+  if (!framed || !params.has("embed") || raw === null) return null;
-+  let url: URL;
++  const first = ancestorOrigins !== undefined && ancestorOrigins.length > 0 ? ancestorOrigins[0] : undefined;
++  if (first !== undefined) return first === "null" ? null : first;
 +  try {
-+    url = new URL(raw);
++    const origin = new URL(referrer).origin;
++    return origin === "null" ? null : origin;
 +  } catch {
 +    return null;
 +  }
-+  if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) return null;
++}
++
++/** The bare ?embed flag, or the one remembered for this frame's session. */
++export function embedFlag(search: string, remembered: boolean): boolean {
++  return remembered || new URLSearchParams(search).has("embed");
++}
++
++/**
++ * The lobby origin the frame may talk to, or null to run as upstream: the
++ * parent's origin when the flag is on and the parent is https on the frame's
++ * own domain, or http on loopback with the frame on loopback too.
++ */
++export function embedHost(
++  flag: boolean,
++  parent: string | null,
++  frame: { readonly hostname: string },
++): string | null {
++  if (!flag || parent === null) return null;
++  let url: URL;
++  try {
++    url = new URL(parent);
++  } catch {
++    return null;
++  }
++  if (url.origin !== parent.replace(/\/$/, "")) return null;
 +  if (url.protocol === "https:") {
 +    const domain = frame.hostname.split(".").slice(1).join(".");
 +    if (!domain.includes(".")) return null;
@@ -203,11 +229,11 @@ index 0000000..469e8d0
 +}
 diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
 new file mode 100644
-index 0000000..2f81458
+index 0000000..169fec2
 --- /dev/null
 +++ b/apps/web/src/embed.tsx
-@@ -0,0 +1,123 @@
-+// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed&host=,
+@@ -0,0 +1,133 @@
++// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed,
 +// the lobby draws the chrome: index.css hides T3's header and panels under
 +// html[data-t3-embed], AppSidebarLayout drops the sidebar, and chords the
 +// lobby names in tl-bindings go to it, since keys typed in a cross-origin
@@ -216,9 +242,11 @@ index 0000000..2f81458
 +import { useEffect } from "react";
 +
 +import {
++  embedFlag,
 +  embedHost,
 +  isTextEntry,
 +  keyMessage,
++  parentOrigin,
 +  parseLobbyMessage,
 +  readyMessage,
 +  routeFrameKey,
@@ -228,24 +256,32 @@ index 0000000..2f81458
 +import { usePrimaryEnvironmentId } from "./state/environments";
 +import { resolveThreadRouteRef } from "./threadRoutes";
 +
-+const HOST_KEY = "t3-embed-host";
++const FLAG_KEY = "t3-embed";
 +
-+// Kept for the frame's session: T3's own navigation can drop the query.
++// The flag is kept for the frame's session, since T3's own navigation drops
++// the query; the parent's origin is read from the browser every time.
 +function detectHost(): string | null {
-+  const framed = window.parent !== window;
-+  const fromUrl = embedHost(window.location.search, window.location, framed);
++  if (window.parent === window) return null;
++  let remembered = false;
 +  try {
-+    if (fromUrl !== null) {
-+      window.sessionStorage.setItem(HOST_KEY, fromUrl);
-+      return fromUrl;
-+    }
-+    const saved = window.sessionStorage.getItem(HOST_KEY);
-+    return saved === null
-+      ? null
-+      : embedHost(`?embed&host=${encodeURIComponent(saved)}`, window.location, framed);
++    remembered = window.sessionStorage.getItem(FLAG_KEY) === "1";
 +  } catch {
-+    return fromUrl;
++    remembered = false;
 +  }
++  const flag = embedFlag(window.location.search, remembered);
++  const host = embedHost(
++    flag,
++    parentOrigin(window.location.ancestorOrigins, document.referrer),
++    window.location,
++  );
++  if (host !== null && !remembered) {
++    try {
++      window.sessionStorage.setItem(FLAG_KEY, "1");
++    } catch {
++      // Without storage the flag lasts until T3's first navigation.
++    }
++  }
++  return host;
 +}
 +
 +const host = detectHost();
@@ -313,10 +349,10 @@ index 0000000..2f81458
 +  useEffect(() => {
 +    if (environmentId === null) return;
 +    // An href rather than typed search params: the thread route declares
-+    // none, and the contract keeps ?embed&host on the URL.
++    // none, and the contract keeps ?embed on the URL.
 +    openThread = (target) => {
 +      const path = `/${encodeURIComponent(environmentId)}/${encodeURIComponent(target)}`;
-+      void navigate({ href: `${path}?embed&host=${encodeURIComponent(host ?? "")}` });
++      void navigate({ href: `${path}?embed` });
 +    };
 +    if (pendingOpen !== null) {
 +      const target = pendingOpen;

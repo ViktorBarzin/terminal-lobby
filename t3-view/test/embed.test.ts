@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 // @t3tools/web at the patched checkout, so this fails to import when the
 // patch did not apply.
 import {
+  embedFlag,
   embedHost,
   type FrameChord,
   isTextEntry,
   type KeyLike,
   keyMessage,
+  parentOrigin,
   parseLobbyMessage,
   readyMessage,
   routeFrameKey,
@@ -17,50 +19,72 @@ import {
 
 const T3 = { hostname: "t3view.viktorbarzin.me" };
 const LOCAL = { hostname: "127.0.0.1" };
-const q = (host: string) => `?embed&host=${encodeURIComponent(host)}`;
+const LOBBY = "https://terminal.viktorbarzin.me";
+
+describe("parentOrigin", () => {
+  it("prefers the browser's ancestor origins", () => {
+    expect(parentOrigin([LOBBY], "https://elsewhere.example/page")).toBe(LOBBY);
+  });
+
+  it("falls back to the referrer's origin where there are no ancestor origins", () => {
+    expect(parentOrigin(undefined, `${LOBBY}/s/abc?x=1`)).toBe(LOBBY);
+    expect(parentOrigin([], `${LOBBY}/`)).toBe(LOBBY);
+  });
+
+  it("knows no parent from an opaque or missing answer", () => {
+    expect(parentOrigin(["null"], "")).toBeNull();
+    expect(parentOrigin(undefined, "")).toBeNull();
+    expect(parentOrigin(undefined, "not a url")).toBeNull();
+  });
+});
 
 describe("embedHost", () => {
   it("accepts the lobby on the frame's own domain", () => {
-    expect(embedHost(q("https://terminal.viktorbarzin.me"), T3, true)).toBe(
-      "https://terminal.viktorbarzin.me",
-    );
-    expect(embedHost(q("https://terminal-dev.viktorbarzin.me/"), T3, true)).toBe(
+    expect(embedHost(true, LOBBY, T3)).toBe(LOBBY);
+    expect(embedHost(true, "https://terminal-dev.viktorbarzin.me", T3)).toBe(
       "https://terminal-dev.viktorbarzin.me",
     );
-    expect(embedHost(q("https://viktorbarzin.me"), T3, true)).toBe("https://viktorbarzin.me");
+    expect(embedHost(true, "https://viktorbarzin.me", T3)).toBe("https://viktorbarzin.me");
   });
 
   it("runs as upstream when unframed or without the flag", () => {
-    expect(embedHost(q("https://terminal.viktorbarzin.me"), T3, false)).toBeNull();
-    expect(
-      embedHost(`?host=${encodeURIComponent("https://terminal.viktorbarzin.me")}`, T3, true),
-    ).toBeNull();
-    expect(embedHost("?embed", T3, true)).toBeNull();
+    expect(embedHost(true, null, T3)).toBeNull();
+    expect(embedHost(false, LOBBY, T3)).toBeNull();
   });
 
   it.each([
     ["another domain", "https://evil.example"],
     ["a look-alike suffix", "https://terminal.notviktorbarzin.me"],
     ["plain http off loopback", "http://terminal.viktorbarzin.me"],
-    ["a path", "https://terminal.viktorbarzin.me/x"],
-    ["a query", "https://terminal.viktorbarzin.me/?a=1"],
-    ["credentials", "https://u:p@terminal.viktorbarzin.me"],
+    ["an opaque origin", "null"],
     ["not a URL", "terminal.viktorbarzin.me"],
-  ])("refuses %s", (_name, host) => {
-    expect(embedHost(q(host), T3, true)).toBeNull();
+  ])("refuses %s", (_name, parent) => {
+    expect(embedHost(true, parent, T3)).toBeNull();
   });
 
   it("refuses to treat a bare top-level domain as the frame's domain", () => {
-    expect(embedHost(q("https://anything.me"), { hostname: "viktorbarzin.me" }, true)).toBeNull();
+    expect(embedHost(true, "https://anything.me", { hostname: "viktorbarzin.me" })).toBeNull();
   });
 
   it("allows http on loopback only when the frame is on loopback too", () => {
-    expect(embedHost(q("http://127.0.0.1:17792"), LOCAL, true)).toBe("http://127.0.0.1:17792");
-    expect(embedHost(q("http://localhost:5173"), { hostname: "localhost" }, true)).toBe(
+    expect(embedHost(true, "http://127.0.0.1:17792", LOCAL)).toBe("http://127.0.0.1:17792");
+    expect(embedHost(true, "http://localhost:5173", { hostname: "localhost" })).toBe(
       "http://localhost:5173",
     );
-    expect(embedHost(q("http://127.0.0.1:17792"), T3, true)).toBeNull();
-    expect(embedHost(q("http://192.168.1.5"), LOCAL, true)).toBeNull();
+    expect(embedHost(true, "http://127.0.0.1:17792", T3)).toBeNull();
+    expect(embedHost(true, "http://192.168.1.5", LOCAL)).toBeNull();
+  });
+});
+
+describe("embedFlag", () => {
+  it("reads the bare flag from the URL", () => {
+    expect(embedFlag("?embed", false)).toBe(true);
+    expect(embedFlag("?embed=&x=1", false)).toBe(true);
+    expect(embedFlag("?x=1", false)).toBe(false);
+  });
+
+  it("remembers the flag once T3's own navigation has dropped the query", () => {
+    expect(embedFlag("", true)).toBe(true);
   });
 });
 
