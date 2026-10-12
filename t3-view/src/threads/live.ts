@@ -24,6 +24,7 @@ import { SseParser } from "../lobby/wire.ts";
 import type { SequenceClock } from "../sequence.ts";
 import type { DomainEvent } from "./mapper.ts";
 import { ThreadModel } from "./model.ts";
+import { modeFromPane } from "./modes.ts";
 import type { PendingDispatches } from "./pending.ts";
 
 export interface ThreadLocation {
@@ -263,6 +264,23 @@ export class LiveThread {
     this.#running = false;
   }
 
+  /**
+   * The mode the pane shows, folded at every `ready` (a first open and each
+   * resync). The `state` frame's mode comes from session-events' record of
+   * the transcript, which the CLI does not write when the mode changes, so it
+   * can be stale; the Solid view reads GET /pane for the same reason.
+   */
+  async #readPaneMode(
+    relay: RelayCredentials,
+    where: ThreadLocation,
+    model: ThreadModel,
+  ): Promise<void> {
+    const pane = await this.#o.api.pane(relay, where.name, where.owner);
+    const mode = pane === undefined ? "" : modeFromPane(pane);
+    if (mode === "" || this.#disposed || model !== this.#model) return;
+    this.#broadcast(model.commit(model.mapper.confirmMode(mode)));
+  }
+
   /** One upstream connection, until it ends. */
   async #readOnce(
     relay: RelayCredentials,
@@ -306,6 +324,7 @@ export class LiveThread {
           }
           this.#broadcast(outcome.events);
           if (frame.event === "ready" && this.#model.synced) {
+            await this.#readPaneMode(relay, where, this.#model);
             synced = true;
             this.#synced();
           }

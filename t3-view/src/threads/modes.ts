@@ -58,3 +58,33 @@ export function lobbyModeForInteraction(
 ): string {
   return interactionMode === "plan" ? "plan" : lobbyModeFor(runtimeMode);
 }
+
+/**
+ * The permission mode a Claude pane's status line shows, by the CLI's
+ * identifiers, or "" when it shows none. A copy of frontend-v2's
+ * `modeFromPane` (src/logic/compose.logic.ts), which the Solid view reads
+ * the mode with: the CLI writes no record when the mode changes, so the
+ * stream's `state` frame can name an old one and the pane is the live answer.
+ * Last match wins, since the pane holds scrollback above the status line.
+ */
+const PANE_MODES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/bypass permissions on/i, "bypassPermissions"],
+  [/accept edits on/i, "acceptEdits"],
+  [/auto mode on/i, "auto"],
+  [/manual mode on/i, "manual"],
+  [/plan mode on/i, "plan"],
+  [/don'?t ask (?:mode )?on/i, "dontAsk"],
+];
+
+export function modeFromPane(pane: string): string {
+  let found = "";
+  let at = -1;
+  for (const [re, mode] of PANE_MODES) {
+    const i = pane.search(re);
+    if (i > at) {
+      at = i;
+      found = mode;
+    }
+  }
+  return found;
+}

@@ -23,6 +23,8 @@ export async function startFakeLobby(options: {
   readonly identity: string;
   readonly secret: string;
   readonly fixture: string;
+  /** What GET /pane answers for the session; 404 when absent. */
+  readonly pane?: string;
 }): Promise<FakeLobby> {
   const posts: Array<{ path: string; body: unknown }> = [];
   const streams = new Set<ServerResponse>();
@@ -70,6 +72,13 @@ export async function startFakeLobby(options: {
       streams.add(res);
       req.on("close", () => streams.delete(res));
       return;
+    }
+    if (
+      req.method === "GET" &&
+      url.pathname === `/pane/${SESSION_NAME}` &&
+      options.pane !== undefined
+    ) {
+      return json({ pane: options.pane, state: "done" });
     }
     if (req.method === "POST") {
       let raw = "";

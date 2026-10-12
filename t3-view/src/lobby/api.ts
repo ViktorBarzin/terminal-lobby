@@ -82,6 +82,8 @@ export interface ModelReply {
 }
 
 const TIMEOUT_MS = 30_000;
+/** A pane read holds the opening of a stream, so it gets a short bound. */
+const PANE_TIMEOUT_MS = 3_000;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -198,6 +200,29 @@ export class LobbyApi {
       headers: this.headers(relay, { accept: "text/event-stream" }),
       signal,
     });
+  }
+
+  /** What the session's pane shows now (pane.go); undefined when it cannot be read. */
+  async pane(
+    relay: RelayCredentials,
+    session: string,
+    owner: string | undefined,
+    timeoutMs = PANE_TIMEOUT_MS,
+  ): Promise<string | undefined> {
+    try {
+      const response = await this.#fetch(this.sessionUrl("/pane", session, owner), {
+        headers: this.headers(relay),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return undefined;
+      }
+      const pane: unknown = asRecord(safeJson(await response.text())).pane;
+      return typeof pane === "string" ? pane : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async prompt(

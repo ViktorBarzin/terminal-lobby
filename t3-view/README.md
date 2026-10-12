@@ -213,7 +213,9 @@ flowchart LR
 - `LiveThread` (`src/threads/live.ts`) keeps one upstream stream per (OS user,
   session), resumes it with `lastEventId` and `epoch`, follows renames through
   the directory on a 404, and rebuilds the model (clients get one snapshot)
-  when `ready` names another log. It closes 60 s after its last subscriber.
+  when `ready` names another log. At every `ready` it reads the mode off the
+  pane (session-events `GET /pane`, as the Solid view does), since the `state`
+  frame's mode can be stale. It closes 60 s after its last subscriber.
 - `ThreadModel` (`src/threads/model.ts`) buffers `back` frames until `ready`,
   folds `state` (mode, model; the queue is reconciled at `ready`), and passes
   stored events and deltas to `ThreadMapper`. Its log starts at a floor taken
