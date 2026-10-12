@@ -7,9 +7,11 @@ client treats it as a T3 server. Design: [ADR-0044](../docs/adr/0044-t3-code-ren
 and [the T3 view design](../docs/plans/2026-10-12-t3-view-design.md). What the
 real client asks of its server was measured in [TRACE.md](TRACE.md).
 
-Status: stage 2 (skeleton). The web client boots without the first-run wizard
-and shows one placeholder project. Lobby sessions, the read path and commands
-come in stages 3 and 4.
+Status: stages 3 and 4 (read path and commands). The shell lists the user's
+Claude sessions grouped as the lobby groups them, a thread renders from the
+session's lobby stream, and sends, steers, queued messages, Stop, dialog
+answers, mode, model and new threads go back to the lobby. History paging and
+images are the second cut.
 
 ## Layout
 
@@ -62,6 +64,7 @@ Environment variables only:
 | `TL_T3_VIEW_SESSION_EVENTS` | `http://127.0.0.1:7685` | session-events (used from stage 3) |
 | `TL_T3_VIEW_WEB_DIR` | `/usr/lib/terminal-lobby/tl-t3-view/web` | The built web client |
 | `TL_T3_VIEW_LABEL` | host name | The environment's name in T3 |
+| `TL_T3_VIEW_STATE_DIR` | `$STATE_DIRECTORY` (systemd), else none | Where prompts awaiting their row (`pending.json`) and the thread ids of sessions T3 created (`aliases.json`) outlive a restart; without it they are kept in memory |
 
 The sidecar refuses to start when `TL_PROXY_SECRET` is set (see the next
 section). The systemd unit can read both lobby config files, so it gets the
@@ -125,7 +128,8 @@ sequenceDiagram
   session-events and tmux-api, as the browser's own calls do. It lives as long
   as the request or WebSocket that brought it.
 
-Caches of lobby data (stage 3) are keyed by (OS user, session).
+Caches of lobby data are keyed by OS user first (`src/hub.ts` keeps one
+`UserHub` per OS user), and a live thread by (OS user, thread id).
 
 ## Protocol
 
@@ -134,6 +138,8 @@ Caches of lobby data (stage 3) are keyed by (OS user, session).
 | `GET /.well-known/t3/environment` | Descriptor, `orchestrationProtocolVersion: 2`, a host-derived stable `environmentId` |
 | `GET /api/auth/session` | `authenticated: true`; permissions `orchestration:read`, `orchestration:operate`, `filesystem:read` |
 | `GET /api/orchestration/shell` | Shell snapshot; 400 without `x-t3-orchestration-protocol: 2` |
+| `GET /api/orchestration/threads/:id/bounded` | The thread's projection; the window is the whole projection for now (`hasMoreHistory: false`); 404 for a thread the lobby does not list |
+| `GET /api/orchestration/threads/:id/history` | An empty page: there is no older history to fetch until paging lands |
 | `POST /api/observability/v1/traces` | 204 (the client posts traces unconditionally) |
 | `GET /ws?orchestrationProtocol=2` | Effect RPC, `RpcSerialization.layerJson`; 426 on any other version |
 | `GET *` | The web build; `index.html` for app routes; other `/api/`, `/ws`, `/.well-known/` paths 404 |
@@ -166,23 +172,72 @@ any sequence an earlier run handed out. `EventLog.resume` answers a resume from
 another run, from ahead of this run, or from before events already dropped
 with a full snapshot.
 
-## Extension points
+## Read path
 
-- Read path (stage 3): `SidecarDeps.shell` in `src/server.ts` and
-  `ConnectionContext` in `src/rpc/handlers.ts` take the user's lobby projects
-  and Claude sessions. `subscribeShell`, `subscribeThread`,
-  `getThreadProjection` and `GET /api/orchestration/threads/:id/bounded` read
-  from there, with sequences from the shared `SequenceClock` and replay from an
-  `EventLog` per stream.
-- Commands (stage 4): `orchestration.dispatchCommand` (all types other than
-  `thread.visit` are unserved today) and `orchestration.launchThread`, calling
-  session-events and tmux-api with `identity.relay`.
-- Models: `src/models.ts` mirrors the Claude rows of
-  `frontend-v2/src/lib/models.ts`.
+```mermaid
+flowchart LR
+  T["tmux-api<br/>/sessions, /layout"] --> D["SessionDirectory<br/>thread id = rename-proof key"]
+  D --> SH["UserHub shell rows<br/>shell EventLog"]
+  E["session-events<br/>GET /events/{name}?rev=1"] --> L["LiveThread<br/>one stream per (user, session)"]
+  L --> M["ThreadModel<br/>frames -> ThreadMapper -> domain events"]
+  M --> P["T3 client reducer<br/>applyOrchestrationV2ProjectionEvent"]
+  M --> LOG["thread EventLog"]
+  SH --> B["browser: subscribeShell"]
+  P --> B2["browser: bounded snapshot,<br/>subscribeThread"]
+  LOG --> B2
+```
+
+- Thread ids (`src/shell/directory.ts`): a session's birth name (`bornAs`),
+  else for a hand-named session the name it had when first seen, followed by
+  tmux's session id; a session T3 created keeps the id T3 minted for it
+  (`src/shell/aliases.ts`); someone else's session is `<owner>~<key>`. The
+  directory maps the id to the session's current name before every call.
+- Grouping follows the lobby's sidebar: layout projects, a session's own
+  `project`, Ungrouped, one System project for harness and Caller sessions,
+  one project per owner for shared sessions. Claude sessions only.
+- `LiveThread` (`src/threads/live.ts`) keeps one upstream stream per (OS user,
+  session), resumes it with `lastEventId` and `epoch`, follows renames through
+  the directory on a 404, and rebuilds the model (clients get one snapshot)
+  when `ready` names another log. It closes 60 s after its last subscriber.
+- `ThreadModel` (`src/threads/model.ts`) buffers `back` frames until `ready`,
+  folds `state` (mode, model; the queue is reconciled at `ready`), and passes
+  stored events and deltas to `ThreadMapper`. Its log starts at a floor taken
+  from the clock, so a client holding a sequence from a rebuilt log gets a
+  snapshot.
+- `ThreadMapper` (`src/threads/mapper.ts`) is the lobby-to-T3 mapping. How
+  the lobby's stream maps onto runs is described at the top of that file; the
+  tool table is T3's own (`src/threads/tools.ts`). Held dialogs become live
+  runtime requests keyed by the tool call (`request:<toolId>`).
+
+Tests: `test/threadModel.test.ts` feeds SSE captures of scratch sessions
+(`test/fixtures/lobby/`) through the model and checks the projections with
+the semantic integrity rules ported from T3's testkit (`test/helpers/projection.ts`).
+
+## Commands
+
+`src/commands/dispatch.ts`; the table at the top of that file lists each T3
+command and the lobby request it becomes. Every send records messageId -> text
+first (`src/threads/pending.ts`), so the user row Claude writes comes back
+under the browser's own message id. `deliveryIntent` is resolved with T3's own
+rule (`src/commands/policy.ts`). Two lobby additions back this:
+
+- session-events `POST /prompt {wait: true}` holds a prompt until the turn
+  ends instead of steering it (`queue_after_active`), and the held and asking
+  dialog bodies name their tool call.
+- tmux-api `POST /sessions/claim {project}` places a new session in a layout
+  project under the layout lock (`launchThread`).
 
 ## Open questions
 
-- Whether the web client behaves well when a unary call it makes later dies
-  (only boot and an idle draft page were exercised in stage 2).
+- History paging and images (second cut): the bounded snapshot carries the
+  whole window the lobby's reverse open delivered (about 100 KB of events).
+- T3 treats projects with the same workspace root as one in places (Ungrouped
+  and System both root at the home directory, and a new thread in System was
+  titled "What should we build in Ungrouped?").
+- A Stop does not hold T3's queue: held prompts run after the stopped turn,
+  as they do from the Text view without "restore queue".
+- Sessions on a model the composer does not list (for example
+  `claude-haiku-5-5` from a pre-warm alias) show the composer's default model;
+  a send then leaves the session's model alone.
 - Touch input, the soft keyboard and iOS Safari inside a cross-origin iframe
   are unverified; the phone check so far is a resized desktop Chromium.
