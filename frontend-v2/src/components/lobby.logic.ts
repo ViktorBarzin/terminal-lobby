@@ -32,6 +32,7 @@ import {
   type Layout,
   type LayoutProject,
   type Session,
+  type SessionGuest,
 } from "../types/lobby";
 import type { TitleSession } from "../notify/title";
 
@@ -645,7 +646,9 @@ export function renameSessionInLayout(layout: Layout, was: string, now: string):
   const ungrouped = swap(layout.ungrouped);
   const dock = layout.dock?.session === was ? { ...layout.dock, session: now } : layout.dock;
   const same =
-    ungrouped === layout.ungrouped && dock === layout.dock && projects.every((p, i) => p === layout.projects[i]);
+    ungrouped === layout.ungrouped &&
+    dock === layout.dock &&
+    projects.every((p, i) => p === layout.projects[i]);
   if (same) return layout;
   return { ...layout, projects, ungrouped, ...(dock ? { dock } : null) };
 }
@@ -823,6 +826,19 @@ export function workspaceHue(id: string): number {
     h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0;
   }
   return WORKSPACE_HUE_ANGLES[h % WORKSPACE_HUES]!;
+}
+
+/** The words for who a shared session of yours is shared with, for the row's
+ *  chip tooltip and its screen-reader label. */
+export function sharedTitle(guests: readonly SessionGuest[]): string {
+  const each = guests.map((g) => `${g.name} (${g.mode === "rw" ? "drive" : "watch"})`);
+  return `Shared with ${each.join(", ")}`;
+}
+
+/** The row's chip: the first guest, and how many more. */
+export function sharedChip(guests: readonly SessionGuest[]): string {
+  if (guests.length === 0) return "";
+  return guests.length === 1 ? guests[0]!.name : `${guests[0]!.name} +${guests.length - 1}`;
 }
 
 /**

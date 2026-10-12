@@ -24,6 +24,8 @@ import {
   backgroundLabel,
   formatWorking,
   relativeTime,
+  sharedChip,
+  sharedTitle,
   stateLabel,
   workspaceHue,
 } from "./lobby.logic";
@@ -161,6 +163,11 @@ export const SessionCard: Component<{
    */
   const unseen = (): boolean => props.isUnseen?.(s()) ?? false;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
+  /** Who else may open this session of yours. Empty on a foreign row: the
+   *  server never sends the owner's other guests to a guest. */
+  const guests = () => s().guests ?? [];
+  /** Someone else can open this session: you invited them, or it is theirs. */
+  const shared = () => foreign() || guests().length > 0;
 
   /**
    * The sweep took this session's claude process 72 hours after anybody last
@@ -966,6 +973,8 @@ export const SessionCard: Component<{
         "tl-card-ws": workspace() !== null,
         "tl-card-unseen": unseen(),
         "tl-card-foreign": foreign(),
+        // A ring round the row (sidebar.css), on both sides of a share.
+        "tl-card-shared": shared(),
         // Dimmed, which is what reads at a glance down a long sidebar — the
         // dot beside it is the precise signal and is 8px of colour. NOT
         // disabled: this row is the only way back into the session, so
@@ -977,7 +986,8 @@ export const SessionCard: Component<{
       aria-label={
         `session ${label()}` +
         (s().tool ? ", " + TOOL_LABELS[s().tool!] : "") +
-        (s().state ? ", " + stateLabel(s().state, unseen(), s().bg) : "")
+        (s().state ? ", " + stateLabel(s().state, unseen(), s().bg) : "") +
+        (guests().length > 0 ? ", " + sharedTitle(guests()).toLowerCase() : "")
       }
       onClick={activate}
       onKeyDown={onKey}
@@ -1033,6 +1043,14 @@ export const SessionCard: Component<{
           title={`${s().owner} · ${s().access === "rw" ? "read-write" : "read-only"}`}
         >
           {s().access === "rw" ? "✎" : "👁"} {s().owner}
+        </span>
+      </Show>
+
+      {/* Who you shared it with. A foreign row says whose it is in the badge
+          above, so the two never sit on one row. */}
+      <Show when={guests().length > 0}>
+        <span class="tl-card-guests" title={sharedTitle(guests())}>
+          👥 {sharedChip(guests())}
         </span>
       </Show>
 

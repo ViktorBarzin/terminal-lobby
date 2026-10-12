@@ -789,6 +789,29 @@
 .tl-card-active.tl-card-ws {
   border-color: oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue) / 0.9);
 }
+/* SHARED: somebody else can open this session, because you invited them
+   (tmux-api `guests`) or because it is theirs and they invited you. A ring
+   inside the border rather than the border itself, since the border already
+   carries a workspace's colour and a row can be both. Inset, so it costs no
+   layout. One fixed hue, painted at the theme's workspace lightness so it
+   reads on the light themes too; 175 sits between the green and cyan
+   workspace hues and is drawn at full strength where a workspace border is
+   half or less, and the chip beside the name says the rest in words. */
+.tl-card-shared {
+  --tl-shared: oklch(var(--ws-l) var(--ws-c) 175);
+  box-shadow: inset 0 0 0 1.5px var(--tl-shared);
+}
+.tl-card-guests {
+  font-size: 10px;
+  color: var(--tl-shared);
+  border: 1px solid color-mix(in srgb, var(--tl-shared) 60%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* Finished since you last looked. Measured on the resting sidebar backdrop, the
    seen/unseen opacity step on the dot alone is 3.35:1 on slate, 2.97:1 on carbon
    and 1.77:1 on catppuccin-latte — five of the eight themes fall under the 3:1

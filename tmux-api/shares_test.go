@@ -226,3 +226,51 @@ func TestInternalAttach(t *testing.T) {
 		t.Fatalf("unshared attach: got %d, want 403", rec.Code)
 	}
 }
+
+func TestAnnotateGuestsMarksTheOwnersSharedSessions(t *testing.T) {
+	ss := ShareSet{Shares: []Share{
+		{Owner: "wizard", Name: "alpha", Guest: "emo", Mode: shareModeRW, SessionID: "$1", SessionCreated: 100},
+		{Owner: "wizard", Name: "alpha", Guest: "ana", Mode: shareModeRO, SessionID: "$1", SessionCreated: 100},
+		// A row from before shares carried an id: matched by name.
+		{Owner: "wizard", Name: "beta", Guest: "emo", Mode: shareModeRO},
+		// The name was freed and taken by a newer session: not this one's grant.
+		{Owner: "wizard", Name: "gamma", Guest: "emo", Mode: shareModeRW, SessionID: "$9", SessionCreated: 50},
+		// Someone else's share of a session with the same name.
+		{Owner: "emo", Name: "delta", Guest: "wizard", Mode: shareModeRW, SessionID: "$4", SessionCreated: 400},
+	}}
+	sessions := []Session{
+		{ID: "$1", Name: "alpha", Created: 100},
+		{ID: "$2", Name: "beta", Created: 200},
+		{ID: "$3", Name: "gamma", Created: 300},
+		{ID: "$4", Name: "delta", Created: 400},
+	}
+	annotateGuests(sessions, "wizard", ss)
+
+	want := map[string][]SessionGuest{
+		"alpha": {{Name: "ana", Mode: shareModeRO}, {Name: "emo", Mode: shareModeRW}},
+		"beta":  {{Name: "emo", Mode: shareModeRO}},
+		"gamma": nil,
+		"delta": nil,
+	}
+	for _, s := range sessions {
+		got, _ := json.Marshal(s.Guests)
+		exp, _ := json.Marshal(want[s.Name])
+		if string(got) != string(exp) {
+			t.Errorf("%s guests = %s, want %s", s.Name, got, exp)
+		}
+	}
+}
+
+func TestSessionGuestsAreOmittedWhenUnshared(t *testing.T) {
+	b, err := json.Marshal(Session{ID: "$1", Name: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["guests"]; ok {
+		t.Errorf("unshared session carries guests: %s", b)
+	}
+}

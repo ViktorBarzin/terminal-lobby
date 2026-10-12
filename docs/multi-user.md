@@ -28,6 +28,10 @@ Projects and sessions can be **shared with other users on the same machine**
   beside them in the same colour. Removing someone (or a guest leaving)
   detaches their terminal at once and ends their Text view within 5 seconds. A
   grant is pinned to the session it was made for and ends with it (ADR-0043).
+  Killing the session ends it for everyone: a guest's open view closes with a
+  note, and a session the owner brings back from Restore is a new session, so
+  it needs a fresh Share. A shared session has a teal ring round its sidebar
+  row on both sides, and the owner's row names who it is shared with.
   A watcher cannot switch to the owner's other sessions or detach the owner's
   clients: on each watch attach, every tmux binding that switches sessions or
   detaches others is wrapped so it works only for read-write clients. A guest

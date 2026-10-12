@@ -145,6 +145,9 @@ func buildSessionsBody(osUser string) []byte {
 			own[i].Project = projectNameOf(ps, osUser, own[i].Name)
 		}
 	}
+	if serr == nil {
+		annotateGuests(own, osUser, ss)
+	}
 	result = append(result, own...)
 
 	// Foreign sessions: those owned by others that the caller may see via a

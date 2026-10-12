@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -246,6 +247,9 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 		logAndFail(w, "create share for %s failed: %v", osUser, err)
 		return
 	}
+	// Both lists change: the owner's row is now shared, the guest has a new one.
+	sessionsCacheInstance.invalidate(osUser)
+	sessionsCacheInstance.invalidate(guest)
 	events.Emit("share.granted", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.to": guest, "tl.kind": mode, "tl.client": "api",
 	})
@@ -296,6 +300,8 @@ func handleShareByPath(w http.ResponseWriter, r *http.Request) {
 		logAndFail(w, "revoke share for %s failed: %v", osUser, err)
 		return
 	}
+	sessionsCacheInstance.invalidate(owner)
+	sessionsCacheInstance.invalidate(guest)
 	// Row is gone (a racing reconnect now fails the attach check). Now kick the
 	// live client, if we recorded one.
 	if removedTty != "" && ttyRe.MatchString(removedTty) {
@@ -595,6 +601,33 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 }
 
 var errShareNotFound = errors.New("share not found")
+
+// SessionGuest is one person a session is shared with, as the owner's session
+// list carries it.
+type SessionGuest struct {
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+}
+
+// annotateGuests gives each of owner's sessions the people it is shared with,
+// sorted by name. A row is matched by name, and by tmux's id too once it
+// carries one, the identity an attach is checked against: a grant pinned to an
+// earlier session of the same name marks nothing.
+func annotateGuests(sessions []Session, owner string, ss ShareSet) {
+	for i := range sessions {
+		s := &sessions[i]
+		for _, sh := range ss.Shares {
+			if sh.Owner != owner || sh.Name != s.Name {
+				continue
+			}
+			if sh.SessionID != "" && (sh.SessionID != s.ID || sh.SessionCreated != s.Created) {
+				continue
+			}
+			s.Guests = append(s.Guests, SessionGuest{Name: sh.Guest, Mode: sh.Mode})
+		}
+		sort.Slice(s.Guests, func(a, b int) bool { return s.Guests[a].Name < s.Guests[b].Name })
+	}
+}
 
 // pruneShares drops this owner's share rows whose session has ended. live must
 // be a successful reading of the owner's sessions (runLinkSweep).

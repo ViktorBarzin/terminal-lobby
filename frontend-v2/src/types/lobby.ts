@@ -45,6 +45,12 @@ export type SettableState = (typeof SETTABLE_STATES)[number];
 /** How a viewer may attach a foreign session. */
 export type AttachAccess = "ro" | "rw";
 
+/** One person a session of yours is shared with, and what they may do. */
+export interface SessionGuest {
+  name: string;
+  mode: AttachAccess;
+}
+
 /**
  * Outstanding background work on a session, counted by kind (tmux-api
  * `Background`). Each key is omitted when zero, so an object with no keys never
@@ -156,6 +162,10 @@ export interface Session {
   owner?: string;
   /** For a foreign session, how the caller may attach it. Empty for own sessions. */
   access?: AttachAccess | "";
+  /** Who else this session is shared with by name, sorted (tmux-api
+   *  `annotateGuests`, ADR-0043). On your own sessions only, and absent while
+   *  nobody is invited. */
+  guests?: SessionGuest[];
   /** The session's browser (tmux-api reads its `@tl_browser`): `live` while
    *  it runs, `frozen` while it sits paused after ten idle minutes. Absent
    *  when the session has no browser open, and from a server that predates the

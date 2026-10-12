@@ -56,6 +56,11 @@ type Session struct {
 	// Access is how the CALLER may attach a foreign session: "ro" (watch) or
 	// "rw" (drive-as-owner). Empty for the caller's own sessions (full control).
 	Access string `json:"access,omitempty"`
+	// Guests is who else this session is shared with by name (ADR-0043), on
+	// the caller's OWN sessions only, so the sidebar can mark a shared row.
+	// Never sent on a foreign row: a guest has no business with the owner's
+	// other guests. Absent when nobody is invited.
+	Guests []SessionGuest `json:"guests,omitempty"`
 	// Viewers counts the people reading this session through a public link
 	// right now (links_transcript.go). Absent when nobody is.
 	Viewers int `json:"viewers,omitempty"`
