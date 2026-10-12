@@ -1,0 +1,360 @@
+diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
+index 00d5c05..5e9f71e 100644
+--- a/apps/web/src/components/AppSidebarLayout.tsx
++++ b/apps/web/src/components/AppSidebarLayout.tsx
+@@ -9,6 +9,7 @@ import {
+ } from "react";
+ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+ 
++import { EmbedBridge, isEmbedded } from "../embed";
+ import { isElectron } from "../env";
+ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
+ import {
+@@ -309,7 +310,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+       <SidebarProvider
+         className="h-dvh! min-h-0!"
+         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+-        defaultOpen
++        defaultOpen={!isEmbedded}
+         style={sidebarProviderStyle}
+       >
+         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
+@@ -343,7 +344,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+           <SidebarRail onDoubleClick={resetSidebarWidth} />
+         </Sidebar>
+         {children}
+-        <SidebarControl />
++        {isEmbedded ? <EmbedBridge /> : <SidebarControl />}
+         <NavigationHistoryShortcuts />
+         <MainAppLocationTracker />
+       </SidebarProvider>
+diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
+new file mode 100644
+index 0000000..469e8d0
+--- /dev/null
++++ b/apps/web/src/embed.logic.ts
+@@ -0,0 +1,167 @@
++// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
++// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
++
++export interface FrameChord {
++  readonly ctrl: boolean;
++  readonly shift: boolean;
++  readonly alt: boolean;
++  readonly meta: boolean;
++  readonly key: string;
++  readonly code?: string;
++  readonly notWhileEditing?: true;
++  readonly passive?: true;
++}
++
++export interface KeyLike {
++  readonly key: string;
++  readonly code: string;
++  readonly ctrlKey: boolean;
++  readonly metaKey: boolean;
++  readonly shiftKey: boolean;
++  readonly altKey: boolean;
++  readonly repeat: boolean;
++}
++
++export type LobbyMessage =
++  | { readonly type: "tl-bindings"; readonly v: 1; readonly chords: readonly FrameChord[] }
++  | { readonly type: "tl-open"; readonly v: 1; readonly threadId: string };
++
++export type FrameMessage =
++  | { type: "tl-ready"; v: 1; environmentId: string; threadId: string | null }
++  | ({ type: "tl-key"; v: 1 } & KeyLike);
++
++const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
++
++/** The lobby origin the frame may talk to, or null to run as upstream. */
++export function embedHost(
++  search: string,
++  frame: { readonly hostname: string },
++  framed: boolean,
++): string | null {
++  const params = new URLSearchParams(search);
++  const raw = params.get("host");
++  if (!framed || !params.has("embed") || raw === null) return null;
++  let url: URL;
++  try {
++    url = new URL(raw);
++  } catch {
++    return null;
++  }
++  if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) return null;
++  if (url.protocol === "https:") {
++    const domain = frame.hostname.split(".").slice(1).join(".");
++    if (!domain.includes(".")) return null;
++    return url.hostname === domain || url.hostname.endsWith(`.${domain}`) ? url.origin : null;
++  }
++  if (url.protocol === "http:" && LOOPBACK.has(frame.hostname) && LOOPBACK.has(url.hostname)) {
++    return url.origin;
++  }
++  return null;
++}
++
++/** A text field owns the keys a `notWhileEditing` chord would take. */
++export function isTextEntry(
++  element: { readonly tagName: string; readonly type?: string; readonly isContentEditable?: boolean } | null,
++): boolean {
++  if (element === null) return false;
++  if (element.isContentEditable === true) return true;
++  switch (element.tagName.toUpperCase()) {
++    case "TEXTAREA":
++    case "SELECT":
++      return true;
++    case "INPUT":
++      return !["button", "checkbox", "radio"].includes((element.type ?? "text").toLowerCase());
++    default:
++      return false;
++  }
++}
++
++function matches(e: KeyLike, c: FrameChord): boolean {
++  if (e.ctrlKey !== c.ctrl || e.shiftKey !== c.shift || e.altKey !== c.alt || e.metaKey !== c.meta) {
++    return false;
++  }
++  const key = e.key.toLowerCase();
++  return (key === "esc" ? "escape" : key) === c.key || (c.code !== undefined && e.code === c.code);
++}
++
++/** claim: take it from T3 and forward it. passive: forward only if T3 left it. */
++export function routeFrameKey(
++  e: KeyLike,
++  chords: readonly FrameChord[] | null,
++  editing: boolean,
++): "claim" | "passive" | "ignore" {
++  let passive = false;
++  for (const c of chords ?? []) {
++    if (!matches(e, c)) continue;
++    if (c.passive) passive = true;
++    else if (!(c.notWhileEditing && editing)) return "claim";
++  }
++  return passive ? "passive" : "ignore";
++}
++
++export function keyMessage(e: KeyLike): FrameMessage {
++  return {
++    type: "tl-key",
++    v: 1,
++    key: e.key,
++    code: e.code,
++    ctrlKey: e.ctrlKey,
++    metaKey: e.metaKey,
++    shiftKey: e.shiftKey,
++    altKey: e.altKey,
++    repeat: e.repeat,
++  };
++}
++
++export function readyMessage(environmentId: string, threadId: string | null): FrameMessage {
++  return { type: "tl-ready", v: 1, environmentId, threadId };
++}
++
++const isRecord = (v: unknown): v is Record<string, unknown> =>
++  typeof v === "object" && v !== null && !Array.isArray(v);
++
++function parseChord(v: unknown): FrameChord | null {
++  if (!isRecord(v)) return null;
++  const { ctrl, shift, alt, meta, key, code, notWhileEditing, passive } = v;
++  if (
++    typeof ctrl !== "boolean" ||
++    typeof shift !== "boolean" ||
++    typeof alt !== "boolean" ||
++    typeof meta !== "boolean" ||
++    typeof key !== "string" ||
++    key === "" ||
++    key.length > 32 ||
++    (code !== undefined && (typeof code !== "string" || code.length > 32)) ||
++    (notWhileEditing !== undefined && notWhileEditing !== true) ||
++    (passive !== undefined && passive !== true)
++  ) {
++    return null;
++  }
++  return {
++    ctrl,
++    shift,
++    alt,
++    meta,
++    key,
++    ...(typeof code === "string" ? { code } : {}),
++    ...(notWhileEditing === true ? { notWhileEditing } : {}),
++    ...(passive === true ? { passive } : {}),
++  };
++}
++
++/** A message from the lobby, or null for anything outside the contract. */
++export function parseLobbyMessage(data: unknown): LobbyMessage | null {
++  if (!isRecord(data) || data.v !== 1) return null;
++  if (data.type === "tl-bindings") {
++    if (!Array.isArray(data.chords) || data.chords.length > 256) return null;
++    const chords = data.chords.map(parseChord);
++    if (chords.some((c) => c === null)) return null;
++    return { type: "tl-bindings", v: 1, chords: chords.filter((c) => c !== null) };
++  }
++  if (data.type === "tl-open") {
++    const { threadId } = data;
++    if (typeof threadId !== "string" || threadId === "" || threadId.length > 256) return null;
++    return { type: "tl-open", v: 1, threadId };
++  }
++  return null;
++}
+diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
+new file mode 100644
+index 0000000..2f81458
+--- /dev/null
++++ b/apps/web/src/embed.tsx
+@@ -0,0 +1,123 @@
++// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed&host=,
++// the lobby draws the chrome: index.css hides T3's header and panels under
++// html[data-t3-embed], AppSidebarLayout drops the sidebar, and chords the
++// lobby names in tl-bindings go to it, since keys typed in a cross-origin
++// frame never reach the parent.
++import { useNavigate, useParams } from "@tanstack/react-router";
++import { useEffect } from "react";
++
++import {
++  embedHost,
++  isTextEntry,
++  keyMessage,
++  parseLobbyMessage,
++  readyMessage,
++  routeFrameKey,
++  type FrameChord,
++  type FrameMessage,
++} from "./embed.logic";
++import { usePrimaryEnvironmentId } from "./state/environments";
++import { resolveThreadRouteRef } from "./threadRoutes";
++
++const HOST_KEY = "t3-embed-host";
++
++// Kept for the frame's session: T3's own navigation can drop the query.
++function detectHost(): string | null {
++  const framed = window.parent !== window;
++  const fromUrl = embedHost(window.location.search, window.location, framed);
++  try {
++    if (fromUrl !== null) {
++      window.sessionStorage.setItem(HOST_KEY, fromUrl);
++      return fromUrl;
++    }
++    const saved = window.sessionStorage.getItem(HOST_KEY);
++    return saved === null
++      ? null
++      : embedHost(`?embed&host=${encodeURIComponent(saved)}`, window.location, framed);
++  } catch {
++    return fromUrl;
++  }
++}
++
++const host = detectHost();
++export const isEmbedded = host !== null;
++
++let chords: readonly FrameChord[] | null = null;
++let readySent = false;
++let pendingOpen: string | null = null;
++let openThread: ((threadId: string) => void) | null = null;
++
++function post(message: FrameMessage) {
++  if (host !== null) window.parent.postMessage(message, host);
++}
++
++function editing(event: KeyboardEvent): boolean {
++  let element = event.target instanceof Element ? event.target : null;
++  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
++  return isTextEntry(element instanceof HTMLElement ? element : null);
++}
++
++if (host !== null) {
++  document.documentElement.dataset.t3Embed = "";
++  // Capture on window, registered at startup, so it runs before T3's own.
++  window.addEventListener(
++    "keydown",
++    (event) => {
++      if (event.isComposing || routeFrameKey(event, chords, editing(event)) !== "claim") return;
++      event.preventDefault();
++      event.stopImmediatePropagation();
++      post(keyMessage(event));
++    },
++    true,
++  );
++  window.addEventListener("keydown", (event) => {
++    if (event.defaultPrevented || event.isComposing) return;
++    if (routeFrameKey(event, chords, editing(event)) === "passive") post(keyMessage(event));
++  });
++  window.addEventListener("message", (event) => {
++    if (event.source !== window.parent || event.origin !== host) return;
++    const message = parseLobbyMessage(event.data);
++    if (message?.type === "tl-bindings") {
++      chords = message.chords;
++    } else if (message?.type === "tl-open") {
++      if (openThread === null) pendingOpen = message.threadId;
++      else openThread(message.threadId);
++    }
++  });
++}
++
++/** Announces the environment to the lobby and follows its tl-open. */
++export function EmbedBridge() {
++  const navigate = useNavigate();
++  const environmentId = usePrimaryEnvironmentId();
++  const threadId = useParams({
++    strict: false,
++    select: (params) => resolveThreadRouteRef(params)?.threadId ?? null,
++  });
++
++  useEffect(() => {
++    if (environmentId === null || readySent) return;
++    readySent = true;
++    post(readyMessage(environmentId, threadId));
++  }, [environmentId, threadId]);
++
++  useEffect(() => {
++    if (environmentId === null) return;
++    // An href rather than typed search params: the thread route declares
++    // none, and the contract keeps ?embed&host on the URL.
++    openThread = (target) => {
++      const path = `/${encodeURIComponent(environmentId)}/${encodeURIComponent(target)}`;
++      void navigate({ href: `${path}?embed&host=${encodeURIComponent(host ?? "")}` });
++    };
++    if (pendingOpen !== null) {
++      const target = pendingOpen;
++      pendingOpen = null;
++      openThread(target);
++    }
++    return () => {
++      openThread = null;
++    };
++  }, [environmentId, navigate]);
++
++  return null;
++}
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index dfdf09a..50a20b5 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -2367,3 +2367,11 @@ code {
+     }
+   }
+ }
++
++/* terminal-lobby embed patch (embed.ts): the lobby draws this chrome. */
++html[data-t3-embed] [data-slot="sidebar"],
++html[data-t3-embed] [data-chat-header],
++html[data-t3-embed] [data-thread-details-panel],
++html[data-t3-embed] [data-workspace-titlebar-controls] {
++  display: none !important;
++}
+diff --git a/apps/web/src/main.tsx b/apps/web/src/main.tsx
+index 81d1c21..8221452 100644
+--- a/apps/web/src/main.tsx
++++ b/apps/web/src/main.tsx
+@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
+ import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
+ 
+ import "./index.css";
++import "./embed";
+ 
+ import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
+ import { isElectron } from "./env";
