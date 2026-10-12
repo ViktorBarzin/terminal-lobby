@@ -1,32 +1,34 @@
 /**
  * The WsRpcGroup handlers for one WebSocket connection.
  *
- * Real handlers cover what the web client needs to boot and to sit on a page:
- * config, lifecycle, probe, the shell, and the RPCs the stage 1 trace saw it
- * call unprompted, each answered with an honest empty value (no previews, no
- * VCS, no scheduled tasks). Everything else falls through to STUB_HANDLERS.
+ * Real handlers cover booting and sitting on a page (config, lifecycle,
+ * probe, and the RPCs the stage 1 trace saw the client call unprompted, each
+ * answered with an honest empty value), the read path (the shell and
+ * threads, from the hub) and the commands (commands/dispatch.ts). Everything
+ * else falls through to STUB_HANDLERS.
  *
- * Extension points for the next stages:
- * - Read path (stage 3): `ConnectionContext.lobby` grows the user's projects
- *   and sessions; subscribeShell and subscribeThread take their snapshots and
- *   live events from it, with sequences from `clock`.
- * - Commands (stage 4): orchestration.dispatchCommand and launchThread branch
- *   on the command type below and call session-events / tmux-api with
- *   `identity.relay` on every request.
+ * Every lobby call made for this connection relays `identity` (auth.ts), and
+ * every cache it reads is keyed by `identity.osUser` (hub.ts).
  */
 import {
   ORCHESTRATION_V2_WS_METHODS,
-  type OrchestrationV2ShellSnapshot,
+  OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetThreadProjectionError,
   type OrchestrationV2ShellStreamItem,
+  type OrchestrationV2ThreadStreamItem,
+  OrchestrationV2ThreadLaunchError,
   ProjectReadFileError,
   type ServerConfigStreamEvent,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { Identity } from "../auth.ts";
+import { CommandFailure, type Commands } from "../commands/dispatch.ts";
+import type { Hub } from "../hub.ts";
 import type { SequenceClock } from "../sequence.ts";
 import {
   type ConfigContext,
@@ -41,13 +43,41 @@ export interface ConnectionContext {
   readonly identity: Identity;
   readonly config: ConfigContext;
   readonly clock: SequenceClock;
-  /** The user's shell at the clock's current sequence. */
-  readonly shell: (identity: Identity) => Effect.Effect<OrchestrationV2ShellSnapshot>;
+  readonly hub: Hub;
+  readonly commands: Commands;
 }
 
 /** A finite prefix, then a subscription that stays open until the client ends it. */
 const thenStayOpen = <A>(items: ReadonlyArray<A>): Stream.Stream<A> =>
   Stream.concat(Stream.fromIterable(items), Stream.never);
+
+/**
+ * A stream fed by a subscription: `open` registers a listener and returns
+ * what to send first; the listener's items follow, in order, until the client
+ * ends the stream, which unsubscribes.
+ */
+function subscription<A>(
+  open: (emit: (item: A) => void) => Promise<{
+    readonly start: ReadonlyArray<A>;
+    readonly unsubscribe: () => void;
+  }>,
+): Stream.Stream<A> {
+  return Stream.callback<A>((queue) =>
+    Effect.acquireRelease(
+      Effect.promise(async () => {
+        const sub = await open((item) => {
+          Queue.offerUnsafe(queue, item);
+        });
+        for (const item of sub.start) Queue.offerUnsafe(queue, item);
+        return sub;
+      }),
+      (sub) => Effect.sync(() => sub.unsubscribe()),
+    ),
+  );
+}
+
+const failureMessage = (error: unknown): string =>
+  error instanceof CommandFailure || error instanceof Error ? error.message : String(error);
 
 export const MISSING_FAVICON_URL = "/api/assets/project-favicon-missing";
 const FAR_FUTURE_MS = Date.UTC(2100, 0, 1);
@@ -81,31 +111,98 @@ export function makeHandlers(context: ConnectionContext) {
     [WS_METHODS.subscribeServerLifecycle]: () => thenStayOpen(lifecycleEvents(context.config)),
 
     [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-      Stream.unwrap(
-        Effect.map(context.shell(context.identity), (snapshot) => {
-          // Stage 2 keeps no shell events, so every resume that is not
-          // already current is answered with the snapshot.
-          const items: OrchestrationV2ShellStreamItem[] =
-            input.afterSequence === snapshot.snapshotSequence
-              ? []
-              : [{ kind: "snapshot", snapshot }];
-          if (input.requestCompletionMarker === true) {
-            items.push({ kind: "synchronized" });
-          }
-          return thenStayOpen(items);
-        }),
-      ),
+      subscription<OrchestrationV2ShellStreamItem>(async (emit) => {
+        const user = context.hub.user(context.identity);
+        await user.refresh().catch(() => undefined);
+        const sub = user.subscribeShell(input.afterSequence, emit);
+        return {
+          start:
+            input.requestCompletionMarker === true
+              ? [...sub.start, { kind: "synchronized" }]
+              : sub.start,
+          unsubscribe: sub.unsubscribe,
+        };
+      }),
     [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
-      Effect.map(context.shell(context.identity), (snapshot) => ({
-        schemaVersion: SHELL_SCHEMA_VERSION,
-        snapshotSequence: snapshot.snapshotSequence,
-        projects: snapshot.projects,
-        threads: [],
-      })),
-    [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command, options) =>
-      command.type === "thread.visit"
-        ? Effect.sync(() => ({ sequence: context.clock.current() }))
-        : unavailable(command, { rpc: { _tag: `${options.rpc._tag} ${command.type}` } }),
+      Effect.promise(async () => {
+        const user = context.hub.user(context.identity);
+        await user.refresh().catch(() => undefined);
+        const snapshot = user.shellSnapshot();
+        return {
+          schemaVersion: SHELL_SCHEMA_VERSION,
+          snapshotSequence: snapshot.snapshotSequence,
+          projects: snapshot.projects,
+          threads: [],
+        };
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
+      subscription<OrchestrationV2ThreadStreamItem>(async (emit) => {
+        const live = await context.hub
+          .user(context.identity)
+          .thread(input.threadId, context.identity.relay);
+        if (live === undefined) {
+          // A thread the lobby does not list (deleted, or a draft T3 has not
+          // launched yet): nothing to stream, and the client keeps waiting.
+          return {
+            start: input.requestCompletionMarker === true ? [{ kind: "synchronized" }] : [],
+            unsubscribe: () => {},
+          };
+        }
+        await live.ready();
+        const sub = live.subscribe(input.afterSequence, emit);
+        const start = sub.start.kind === "snapshot" ? [sub.start.item] : sub.start.items;
+        return {
+          start:
+            input.requestCompletionMarker === true ? [...start, { kind: "synchronized" }] : start,
+          unsubscribe: sub.unsubscribe,
+        };
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
+      Effect.tryPromise({
+        try: async () => {
+          const live = await context.hub
+            .user(context.identity)
+            .thread(input.threadId, context.identity.relay);
+          if (live === undefined) throw new Error("The lobby lists no such session.");
+          await live.ready();
+          return live.projection;
+        },
+        catch: (error) =>
+          new OrchestrationV2GetThreadProjectionError({
+            threadId: input.threadId,
+            message: failureMessage(error),
+          }),
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
+      Effect.tryPromise({
+        try: async () => {
+          await context.commands.dispatch(context.identity, command);
+          return { sequence: context.clock.current() };
+        },
+        catch: (error) =>
+          new OrchestrationV2DispatchCommandError({
+            commandId: command.commandId,
+            commandType: command.type,
+            message: failureMessage(error),
+          }),
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
+      Effect.tryPromise({
+        try: async () => {
+          const result = await context.commands.launch(context.identity, input);
+          return {
+            threadId: result.projection.thread.id,
+            projection: result.projection,
+            resumed: false,
+          };
+        },
+        catch: (error) =>
+          new OrchestrationV2ThreadLaunchError({
+            commandId: input.commandId,
+            projectId: input.projectId,
+            message: failureMessage(error),
+          }),
+      }),
 
     // Called unprompted by the web client; each has nothing to report here.
     [WS_METHODS.previewReportProfiles]: () => Effect.void,

@@ -286,6 +286,21 @@ export class ThreadMapper {
     });
   }
 
+  /** A mode the lobby confirmed it set (POST /model {mode}), ahead of the transcript saying so. */
+  confirmMode(mode: string): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => this.#setMode(mode));
+  }
+
+  /** A model the lobby confirmed it set (POST /model), ahead of the transcript saying so. */
+  confirmModel(model: ModelState): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => this.#setModel(model));
+  }
+
+  /** A notice row about something the sidecar did or could not do (a refused model change). */
+  notice(message: string): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => this.#notice(message));
+  }
+
   /** The session has no stream yet (nomod.go): one notice, outside any run. */
   noStream(message: string): DomainEvent[] {
     return this.#batch(this.#o.now(), () => {

@@ -18,7 +18,8 @@ import {
   GRANTED_SCOPES,
 } from "../src/descriptor.ts";
 import { lifecycleEvents, serverConfig } from "../src/serverConfig.ts";
-import { placeholderShell } from "../src/shell.ts";
+import { projectShells, SessionDirectory } from "../src/shell/directory.ts";
+import { SHELL_SCHEMA_VERSION } from "../src/shell.ts";
 
 /** Encode with T3's JSON codec and decode the wire form back, as the client does. */
 function roundTrip<
@@ -106,10 +107,17 @@ describe("server config and lifecycle", () => {
 });
 
 describe("shell", () => {
-  const shell = roundTrip(
-    OrchestrationV2ShellSnapshot,
-    placeholderShell({ osUser: "wizard", snapshotSequence: 42, startedAt: context.startedAt }),
-  );
+  // A user with no layout and no sessions still has Ungrouped, which is what
+  // keeps the first-run gate shut.
+  const directory = new SessionDirectory("wizard");
+  directory.update([], { projects: [], ungrouped: [] });
+  const shell = roundTrip(OrchestrationV2ShellSnapshot, {
+    schemaVersion: SHELL_SCHEMA_VERSION,
+    snapshotSequence: 42,
+    threads: [],
+    archivedThreads: [],
+    projects: projectShells(directory.projects, context.startedAt),
+  });
 
   it("decodes as T3's shell snapshot at the given sequence", () => {
     expect(shell.snapshotSequence).toBe(42);

@@ -26,6 +26,12 @@ export interface SidecarConfig {
   readonly webDir: string;
   /** The environment's name in T3's UI. */
   readonly environmentLabel: string;
+  /**
+   * Where the sidecar keeps what must outlive a restart (prompts awaiting
+   * their row, the thread ids of sessions T3 created). Undefined keeps them in
+   * memory only.
+   */
+  readonly stateDir: string | undefined;
 }
 
 export class ConfigError extends Error {
@@ -79,5 +85,8 @@ export function loadConfig(env: Env, hostname: string): SidecarConfig {
     ),
     webDir: value(env, "TL_T3_VIEW_WEB_DIR") ?? "/usr/lib/terminal-lobby/tl-t3-view/web",
     environmentLabel: value(env, "TL_T3_VIEW_LABEL") ?? hostname,
+    // systemd's StateDirectory= sets STATE_DIRECTORY, colon-separated when
+    // the unit names several.
+    stateDir: value(env, "TL_T3_VIEW_STATE_DIR") ?? value(env, "STATE_DIRECTORY")?.split(":")[0],
   };
 }

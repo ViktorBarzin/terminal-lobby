@@ -6,15 +6,20 @@
 import { hostname } from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { join } from "node:path";
+
 import { ProxyAuthGate } from "./auth.ts";
+import { Commands } from "./commands/dispatch.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { environmentDescriptor, environmentIdFor } from "./descriptor.ts";
+import { Hub } from "./hub.ts";
+import { LobbyApi } from "./lobby/api.ts";
 import { SequenceClock } from "./sequence.ts";
 import { sidecarLayer } from "./server.ts";
-import { placeholderShell } from "./shell.ts";
+import { ThreadAliases } from "./shell/aliases.ts";
+import { PendingDispatches } from "./threads/pending.ts";
 import { tmuxApiWhoami } from "./whoami.ts";
 
 function start(): void {
@@ -41,9 +46,40 @@ function start(): void {
     whoami: tmuxApiWhoami(config.tmuxApiUrl),
   });
 
-  process.stderr.write(
-    `tl-t3-view: identity header ${config.authHeader}, tmux-api ${config.tmuxApiUrl}, ` +
-      `web ${config.webDir}, sequences from ${clock.base}\n`,
+  const log = (message: string) => process.stderr.write(`tl-t3-view: ${message}\n`);
+  const state = (name: string) =>
+    config.stateDir === undefined ? undefined : join(config.stateDir, name);
+  const api = new LobbyApi({
+    tmuxApiUrl: config.tmuxApiUrl,
+    sessionEventsUrl: config.sessionEventsUrl,
+  });
+  const pendingFile = state("pending.json");
+  const pending = new PendingDispatches(pendingFile === undefined ? {} : { file: pendingFile });
+  const aliases = new ThreadAliases(state("aliases.json"));
+  const hub = new Hub({ api, clock, pending, aliases, startedAt, log });
+  const commands = new Commands({
+    api,
+    pending,
+    now: Date.now,
+    thread: async (identity, threadId) => {
+      const user = hub.user(identity);
+      const live = await user.thread(threadId, identity.relay);
+      const entry = user.entry(threadId);
+      return live === undefined || entry === undefined ? undefined : { entry, live };
+    },
+    project: async (identity, projectId) => {
+      const user = hub.user(identity);
+      await user.refresh();
+      return user.directory.project(projectId);
+    },
+    alias: (identity, minted, threadId) => aliases.set(identity.osUser, minted, threadId),
+    log,
+  });
+
+  log(
+    `identity header ${config.authHeader}, tmux-api ${config.tmuxApiUrl}, ` +
+      `session-events ${config.sessionEventsUrl}, web ${config.webDir}, ` +
+      `state ${config.stateDir ?? "(memory)"}, sequences from ${clock.base}`,
   );
 
   NodeRuntime.runMain(
@@ -54,14 +90,8 @@ function start(): void {
           webDir: config.webDir,
           config: { descriptor, cwd: "/", startedAt },
           clock,
-          shell: (identity) =>
-            Effect.sync(() =>
-              placeholderShell({
-                osUser: identity.osUser,
-                snapshotSequence: clock.current(),
-                startedAt,
-              }),
-            ),
+          hub,
+          commands,
         },
         { host: config.bind, port: config.port },
       ),

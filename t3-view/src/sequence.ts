@@ -62,6 +62,7 @@ export class EventLog<E> {
   readonly #events: Sequenced<E>[] = [];
   /** Every sequence at or below this one is no longer replayable. */
   #droppedThrough: number;
+  #last: number;
 
   /** The sequence this log's own events start above. */
   readonly floor: number;
@@ -71,10 +72,17 @@ export class EventLog<E> {
     this.#capacity = capacity;
     this.floor = floor;
     this.#droppedThrough = floor;
+    this.#last = floor;
+  }
+
+  /** The newest sequence this log handed out, or its floor while it has none. */
+  get last(): number {
+    return this.#last;
   }
 
   append(event: E): number {
     const sequence = this.#clock.next();
+    this.#last = sequence;
     this.#events.push({ sequence, event });
     while (this.#events.length > this.#capacity) {
       const dropped = this.#events.shift();

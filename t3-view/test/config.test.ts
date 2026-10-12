@@ -13,7 +13,21 @@ describe("loadConfig", () => {
       sessionEventsUrl: "http://127.0.0.1:7685",
       webDir: "/usr/lib/terminal-lobby/tl-t3-view/web",
       environmentLabel: "devvm",
+      stateDir: undefined,
     });
+  });
+
+  it("keeps state where systemd's StateDirectory= puts it, or where TL_T3_VIEW_STATE_DIR says", () => {
+    expect(loadConfig({ STATE_DIRECTORY: "/var/lib/tl-t3-view" }, "h").stateDir).toBe(
+      "/var/lib/tl-t3-view",
+    );
+    expect(
+      loadConfig({ STATE_DIRECTORY: "/var/lib/a:/var/lib/b", TL_T3_VIEW_STATE_DIR: "/tmp/s" }, "h")
+        .stateDir,
+    ).toBe("/tmp/s");
+    expect(loadConfig({ STATE_DIRECTORY: "/var/lib/a:/var/lib/b" }, "h").stateDir).toBe(
+      "/var/lib/a",
+    );
   });
 
   it("reads the identity header name from TL_AUTH_HEADER, as every lobby service does", () => {

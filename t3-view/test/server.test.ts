@@ -7,6 +7,8 @@ import {
   AuthSessionState,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
+  OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadStreamItem,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -18,10 +20,14 @@ import { HttpServer } from "effect/http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ProxyAuthGate, type WhoamiFetch } from "../src/auth.ts";
+import { Commands } from "../src/commands/dispatch.ts";
 import { environmentDescriptor, environmentIdFor } from "../src/descriptor.ts";
+import { Hub } from "../src/hub.ts";
+import { LobbyApi } from "../src/lobby/api.ts";
 import { SequenceClock } from "../src/sequence.ts";
 import { sidecarLayer } from "../src/server.ts";
-import { placeholderShell } from "../src/shell.ts";
+import { PendingDispatches } from "../src/threads/pending.ts";
+import { BORN_AS, type FakeLobby, SESSION_NAME, startFakeLobby } from "./helpers/fakeLobby.ts";
 
 const ADMIN = { "x-authentik-username": "viktor", "x-tl-proxy-secret": "s3cret" };
 const NOT_ADMIN = { "x-authentik-username": "anca", "x-tl-proxy-secret": "s3cret" };
@@ -38,6 +44,8 @@ const whoami: WhoamiFetch = async (relay) => {
 let base = "";
 let webDir = "";
 let scope: Scope.Closeable | undefined;
+let lobby: FakeLobby | undefined;
+let hub: Hub | undefined;
 const clock = new SequenceClock(1_791_800_000_000);
 
 beforeAll(async () => {
@@ -46,6 +54,15 @@ beforeAll(async () => {
   mkdirSync(join(webDir, "assets"));
   writeFileSync(join(webDir, "assets", "index-AbCd1234.js"), "export {};");
   const startedAt = "2026-10-12T08:00:00.000Z";
+  lobby = await startFakeLobby({
+    identity: "viktor",
+    secret: "s3cret",
+    fixture: "01-open-first-turn.sse",
+  });
+  const api = new LobbyApi({ tmuxApiUrl: lobby.url, sessionEventsUrl: lobby.url });
+  const pending = new PendingDispatches();
+  const liveHub = new Hub({ api, clock, pending, startedAt });
+  hub = liveHub;
   const descriptor = environmentDescriptor({
     environmentId: environmentIdFor("test"),
     label: "test",
@@ -56,14 +73,20 @@ beforeAll(async () => {
       webDir,
       config: { descriptor, cwd: "/", startedAt },
       clock,
-      shell: (identity) =>
-        Effect.sync(() =>
-          placeholderShell({
-            osUser: identity.osUser,
-            snapshotSequence: clock.current(),
-            startedAt,
-          }),
-        ),
+      hub: liveHub,
+      commands: new Commands({
+        api,
+        pending,
+        now: Date.now,
+        thread: async (identity, threadId) => {
+          const user = liveHub.user(identity);
+          const live = await user.thread(threadId, identity.relay);
+          const entry = user.entry(threadId);
+          return live === undefined || entry === undefined ? undefined : { entry, live };
+        },
+        project: async (identity, projectId) => liveHub.user(identity).directory.project(projectId),
+        alias: () => {},
+      }),
     },
     { host: "127.0.0.1", port: 0 },
   );
@@ -74,6 +97,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  hub?.dispose();
+  await lobby?.close();
   if (scope) await Effect.runPromise(Scope.close(scope, Exit.void));
   rmSync(webDir, { recursive: true, force: true });
 });
@@ -152,12 +177,43 @@ describe("HTTP routes for an admin", () => {
     const shell = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ShellSnapshot))(
       await response.json(),
     );
-    expect(shell.snapshotSequence).toBe(clock.current());
-    expect(shell.projects[0]?.workspaceRoot).toBe("/home/wizard");
+    expect(shell.projects.map((p) => [p.title, p.workspaceRoot])).toEqual([
+      ["lobby", "/home/wizard/code/lobby"],
+      ["Ungrouped", "/home/wizard"],
+    ]);
+    expect(shell.threads.map((t) => [t.id, t.title, t.projectId])).toEqual([
+      [BORN_AS, "Running echo hi with Bash tool", "project:lobby"],
+    ]);
   });
 
   it("404s unknown API paths instead of serving index.html", async () => {
-    expect((await get("/api/orchestration/threads/x/bounded", ADMIN)).status).toBe(404);
+    expect((await get("/api/orchestration/unknown", ADMIN)).status).toBe(404);
+  });
+
+  it("serves a thread's bounded snapshot from its lobby stream, and 404 for a thread the lobby does not list", async () => {
+    const protocol = { ...ADMIN, "x-t3-orchestration-protocol": "2" };
+    const response = await get(
+      `/api/orchestration/threads/${BORN_AS}/bounded?compactTurnItems=1`,
+      protocol,
+    );
+    expect(response.status).toBe(200);
+    const bounded = Schema.decodeUnknownSync(
+      Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot),
+    )(await response.json());
+    expect(bounded.hasMoreHistory).toBe(false);
+    expect(bounded.projection.thread.id).toBe(BORN_AS);
+    expect(bounded.projection.visibleTurnItems.map((r) => r.item.type)).toEqual([
+      "user_message",
+      "command_execution",
+      "assistant_message",
+    ]);
+    expect((await get("/api/orchestration/threads/nope/bounded", protocol)).status).toBe(404);
+    const history = await get(`/api/orchestration/threads/${BORN_AS}/history?cursor=x`, protocol);
+    expect(await history.json()).toMatchObject({
+      items: [],
+      hasMoreHistory: false,
+      nextCursor: null,
+    });
   });
 
   it("accepts the client's trace upload with 204", async () => {
@@ -191,7 +247,13 @@ async function openRpc(headers: Record<string, string>) {
   const waiters: Array<() => void> = [];
   socket.addEventListener("message", (event) => {
     const parsed: unknown = JSON.parse(String(event.data));
-    for (const frame of Array.isArray(parsed) ? parsed : [parsed]) frames.push(frame);
+    for (const frame of Array.isArray(parsed) ? parsed : [parsed]) {
+      frames.push(frame);
+      // As the browser does: the server sends a stream's next chunk only
+      // after the last one is acknowledged.
+      if (frame._tag === "Chunk")
+        socket.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
+    }
     for (const wake of waiters.splice(0)) wake();
   });
   await new Promise<void>((resolve, reject) => {
@@ -215,7 +277,7 @@ async function openRpc(headers: Record<string, string>) {
     until((all) => all.find((f) => f._tag === "Exit" && f.requestId === id));
   const chunkOf = (id: string) =>
     until((all) => all.find((f) => f._tag === "Chunk" && f.requestId === id));
-  return { socket, request, exitOf, chunkOf };
+  return { socket, request, exitOf, chunkOf, until };
 }
 
 describe("RPC over /ws", () => {
@@ -243,6 +305,56 @@ describe("RPC over /ws", () => {
     const decode = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ShellStreamItem));
     const kinds = (chunk.values ?? []).map((v) => decode(v).kind);
     expect(kinds).toEqual(["snapshot", "synchronized"]);
+    rpc.socket.close();
+  });
+
+  it("streams a thread as a snapshot then the completion marker, then live events", async () => {
+    const rpc = await openRpc(ADMIN);
+    const id = rpc.request("orchestration.subscribeThread", {
+      threadId: BORN_AS,
+      requestCompletionMarker: true,
+    });
+    const chunk = await rpc.chunkOf(id);
+    const decode = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadStreamItem));
+    const items = (chunk.values ?? []).map((v) => decode(v));
+    expect(items.map((i) => i.kind)).toEqual(["snapshot", "synchronized"]);
+    const snapshot = items[0];
+    expect(snapshot?.kind === "snapshot" && snapshot.projection.runs.length).toBe(1);
+    lobby?.push(
+      `id: 18\ndata: ${JSON.stringify({ id: 18, kind: "user", session: SESSION_NAME, turnId: "t2", body: "next", at: 1 })}\n\n`,
+    );
+    const live = await rpc.until((all) =>
+      all.find(
+        (f) =>
+          f._tag === "Chunk" &&
+          f.requestId === id &&
+          JSON.stringify(f.values).includes('"text":"next"'),
+      ),
+    );
+    expect(JSON.stringify(live.values)).toContain('"text":"next"');
+    rpc.socket.close();
+  });
+
+  it("sends a message to the session as the user, with the command id as the prompt id", async () => {
+    const rpc = await openRpc(ADMIN);
+    const exit = await rpc.exitOf(
+      rpc.request("orchestration.dispatchCommand", {
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: "cmd-1",
+        threadId: BORN_AS,
+        messageId: "client-m1",
+        text: "hello from T3",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      }),
+    );
+    expect(exit.exit?._tag).toBe("Success");
+    expect(lobby?.posts.at(-1)).toEqual({
+      path: `/prompt/${SESSION_NAME}`,
+      body: { text: "hello from T3", id: "cmd-1" },
+    });
     rpc.socket.close();
   });
 

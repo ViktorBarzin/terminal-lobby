@@ -11,6 +11,8 @@
  *   GET  /.well-known/t3/environment   environment descriptor (protocol 2)
  *   GET  /api/auth/session             authenticated, chat scopes only
  *   GET  /api/orchestration/shell      shell snapshot; needs the protocol header
+ *   GET  /api/orchestration/threads/:id/bounded   a thread's snapshot (the whole window for now)
+ *   GET  /api/orchestration/threads/:id/history   older rows (none: the bounded window is complete)
  *   POST /api/observability/v1/traces  204: the client posts traces unconditionally
  *   GET  /ws?orchestrationProtocol=2   Effect RPC (WsRpcGroup), JSON frames; 426 on mismatch
  *   GET  *                             the web build, index.html for app routes
@@ -24,7 +26,8 @@ import {
   AuthSessionState,
   ExecutionEnvironmentDescriptor,
   OrchestrationV2ShellSnapshot,
-  type OrchestrationV2ShellSnapshot as ShellSnapshot,
+  OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadHistoryPage,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -35,7 +38,9 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 
 import type { Identity, ProxyAuthGate } from "./auth.ts";
+import type { Commands } from "./commands/dispatch.ts";
 import { authSessionState } from "./descriptor.ts";
+import type { Hub } from "./hub.ts";
 import {
   hasCompatibleOrchestrationProtocol,
   hasOrchestrationProtocolHeader,
@@ -51,7 +56,8 @@ export interface SidecarDeps {
   readonly webDir: string;
   readonly config: ConfigContext;
   readonly clock: SequenceClock;
-  readonly shell: (identity: Identity) => Effect.Effect<ShellSnapshot>;
+  readonly hub: Hub;
+  readonly commands: Commands;
 }
 
 /**
@@ -133,7 +139,13 @@ function serveWebBuild(webDir: string, pathname: string) {
 
 function rpcOverWebSocket(deps: SidecarDeps, identity: Identity) {
   const handlers = WsRpcGroup.toLayer(
-    makeHandlers({ identity, config: deps.config, clock: deps.clock, shell: deps.shell }),
+    makeHandlers({
+      identity,
+      config: deps.config,
+      clock: deps.clock,
+      hub: deps.hub,
+      commands: deps.commands,
+    }),
   );
   return Effect.gen(function* () {
     const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
@@ -168,12 +180,61 @@ export function routes(deps: SidecarDeps) {
       "/api/orchestration/shell",
       guarded(gate, (identity, request) =>
         hasOrchestrationProtocolHeader(request.headers)
-          ? Effect.map(deps.shell(identity), (snapshot) =>
-              schemaJson(OrchestrationV2ShellSnapshot, snapshot),
-            )
+          ? Effect.promise(async () => {
+              const user = deps.hub.user(identity);
+              await user.refresh().catch(() => undefined);
+              return schemaJson(OrchestrationV2ShellSnapshot, user.shellSnapshot());
+            })
           : Effect.succeed(
               HttpServerResponse.jsonUnsafe(protocolIncompatibleBody, { status: 400 }),
             ),
+      ),
+    ),
+    HttpRouter.add(
+      "GET",
+      "/api/orchestration/threads/:threadId/bounded",
+      guarded(gate, (identity, request) =>
+        Effect.gen(function* () {
+          if (!hasOrchestrationProtocolHeader(request.headers)) {
+            return HttpServerResponse.jsonUnsafe(protocolIncompatibleBody, { status: 400 });
+          }
+          const { threadId } = yield* HttpRouter.params;
+          if (threadId === undefined) return HttpServerResponse.text("not found", { status: 404 });
+          return yield* Effect.promise(async () => {
+            const live = await deps.hub.user(identity).thread(threadId, identity.relay);
+            if (live === undefined) return HttpServerResponse.text("not found", { status: 404 });
+            await live.ready();
+            // Paging is the second cut: the window is the whole projection,
+            // so there is no older history to fetch.
+            return schemaJson(OrchestrationV2ThreadBoundedSnapshot, {
+              snapshotSequence: live.model.snapshotSequence,
+              projection: live.projection,
+              historyCursor: null,
+              hasMoreHistory: false,
+              latestLocalTurnOrdinal: live.model.latestLocalTurnOrdinal,
+            });
+          });
+        }),
+      ),
+    ),
+    HttpRouter.add(
+      "GET",
+      "/api/orchestration/threads/:threadId/history",
+      guarded(gate, (identity, request) =>
+        Effect.gen(function* () {
+          if (!hasOrchestrationProtocolHeader(request.headers)) {
+            return HttpServerResponse.jsonUnsafe(protocolIncompatibleBody, { status: 400 });
+          }
+          const { threadId } = yield* HttpRouter.params;
+          const live =
+            threadId === undefined ? undefined : deps.hub.user(identity).liveThread(threadId);
+          return schemaJson(OrchestrationV2ThreadHistoryPage, {
+            snapshotSequence: live?.model.snapshotSequence ?? deps.clock.current(),
+            items: [],
+            nextCursor: null,
+            hasMoreHistory: false,
+          });
+        }),
       ),
     ),
     HttpRouter.add(

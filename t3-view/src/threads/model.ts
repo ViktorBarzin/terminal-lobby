@@ -89,7 +89,6 @@ export class ThreadModel {
   readonly mapper: ThreadMapper;
   readonly log: EventLog<DomainEvent>;
   #projection: OrchestrationV2ThreadProjection;
-  #lastSequence: number;
   /** The newest stored lobby event id applied: the resume cursor. */
   lastEventId = 0;
   /** The lobby log this model was built from; undefined until the first `ready`. */
@@ -113,7 +112,6 @@ export class ThreadModel {
       options.thread,
     );
     this.log = new EventLog(options.clock, options.logCapacity, options.clock.next());
-    this.#lastSequence = this.log.floor;
     this.#projection = emptyProjection(options.thread);
   }
 
@@ -123,7 +121,7 @@ export class ThreadModel {
 
   /** The sequence a snapshot of the projection stands at. */
   get snapshotSequence(): number {
-    return this.#lastSequence;
+    return this.log.last;
   }
 
   /** The largest turn item ordinal, for the bounded snapshot's watermark. */
@@ -141,9 +139,7 @@ export class ThreadModel {
     for (const event of events) {
       this.#projection =
         applyOrchestrationV2ProjectionEvent(this.#projection, event) ?? this.#projection;
-      const sequence = this.log.append(event);
-      this.#lastSequence = sequence;
-      out.push({ sequence, event });
+      out.push({ sequence: this.log.append(event), event });
     }
     return out;
   }
