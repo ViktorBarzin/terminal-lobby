@@ -500,6 +500,21 @@ func TestAPermissionPromptIsDecidedThroughTheMod(t *testing.T) {
 	}
 }
 
+// The card names the call it is about, so the Text view can keep it up while
+// other agents write to the stream (a workflow's agents run side by side).
+func TestAPermissionReadingNamesItsToolCall(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModPermissionEvent, ToolID: "toolu_b", Tool: "Bash",
+		Input: json.RawMessage(`{"command":"ls"}`)}})
+	fs, _ := rg.source("wizard", "demo")
+	var d sessionio.Dialog
+	if err := json.Unmarshal([]byte(lastMeta(fs, sessionio.MetaAsking)), &d); err != nil || d.ToolID != "toolu_b" {
+		t.Fatalf("reading = %+v (%v), want toolId toolu_b", d, err)
+	}
+}
+
 // The mod draws its own Allow / Deny dialog as an AskUserQuestion call of its
 // own. That call must not turn the permission card into a question card.
 func TestTheModsOwnDialogIsNotAQuestion(t *testing.T) {

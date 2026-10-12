@@ -81,6 +81,11 @@ type Dialog struct {
 	Title  string   `json:"title,omitempty"`
 	Detail []string `json:"detail,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
+	// ToolID is the call a mod-held permission prompt is about. With it the
+	// Text view keeps the card up until that call's result or the mod clears
+	// the reading, instead of dropping it at the first event from another
+	// agent. A pane reading has none.
+	ToolID string `json:"toolId,omitempty"`
 }
 
 // DialogQuestion mirrors one question of an AskUserQuestion call.

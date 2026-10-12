@@ -98,6 +98,7 @@ func (c *modConn) showDialogs(fs *sessionio.FileSource) {
 			Kind: sessionio.DialogKindPermission, Title: asking.title,
 			Detail: asking.detail, Prompt: "Do you want to proceed?",
 			Options: []sessionio.PlanOption{{Number: 1, Label: "Yes"}, {Number: 2, Label: "No"}},
+			ToolID:  asking.toolID,
 		})
 		reading = string(body)
 	}
