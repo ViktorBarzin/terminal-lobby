@@ -93,6 +93,22 @@ export class SessionDirectory {
     return this.#entries.get(id as ThreadId);
   }
 
+  /**
+   * The user's own thread for a key the lobby frames it by (frontend-v2
+   * keyOf: bornAs, else the name now). That is the thread id itself except
+   * for a session T3 created, which keeps T3's id, and a hand-named session
+   * renamed while this directory watched, which keeps its first name.
+   */
+  resolve(key: string): DirectoryEntry | undefined {
+    const direct = this.#entries.get(key as ThreadId);
+    if (direct !== undefined) return direct;
+    for (const entry of this.#entries.values()) {
+      if (entry.owner !== undefined) continue;
+      if (entry.session.bornAs === key || entry.name === key) return entry;
+    }
+    return undefined;
+  }
+
   project(id: string): DirectoryProject | undefined {
     return this.#projects.find((p) => p.id === id);
   }

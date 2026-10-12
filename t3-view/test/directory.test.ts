@@ -92,4 +92,30 @@ describe("SessionDirectory", () => {
     d.update([claude("say-hi", { id: "$9", bornAs: "bw8k5gt9v314" })], layout);
     expect(d.byId("5992c13c-t3-draft")?.name).toBe("say-hi");
   });
+
+  describe("resolve, from the key the lobby frames a thread by", () => {
+    it("finds a session T3 created by its birth name, under T3's own thread id", () => {
+      const d = new SessionDirectory("wizard", {
+        alias: (minted) => (minted === "bw8k5gt9v314" ? "5992c13c-t3-draft" : undefined),
+      });
+      d.update([claude("say-hi", { id: "$9", bornAs: "bw8k5gt9v314" })], layout);
+      expect(d.resolve("bw8k5gt9v314")?.threadId).toBe("5992c13c-t3-draft");
+      expect(d.resolve("5992c13c-t3-draft")?.threadId).toBe("5992c13c-t3-draft");
+    });
+
+    it("finds a hand-named session by its name now, after a rename this directory followed", () => {
+      const d = new SessionDirectory("wizard");
+      d.update([claude("notes", { id: "$3" })], layout);
+      d.update([claude("notes-renamed", { id: "$3" })], layout);
+      expect(d.resolve("notes-renamed")?.threadId).toBe("notes");
+    });
+
+    it("knows nothing of a key no session of the user's answers to", () => {
+      const d = new SessionDirectory("wizard");
+      d.update([claude("theirs", { owner: "emo", access: "ro", bornAs: "k9x" })], layout);
+      expect(d.resolve("nope")).toBeUndefined();
+      expect(d.resolve("k9x")).toBeUndefined();
+      expect(d.resolve("theirs")).toBeUndefined();
+    });
+  });
 });

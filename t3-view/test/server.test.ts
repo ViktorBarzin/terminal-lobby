@@ -148,6 +148,36 @@ describe("HTTP routes for an admin", () => {
     expect((await get("/assets/missing-AbCd1234.js", ADMIN)).status).toBe(404);
   });
 
+  it("names the user's thread for the key the lobby frames a session by", async () => {
+    const byName = await get(`/.well-known/t3/thread/${SESSION_NAME}`, ADMIN);
+    expect(byName.status).toBe(200);
+    expect(byName.headers.get("cache-control")).toBe("no-store");
+    expect(await byName.json()).toEqual({ threadId: BORN_AS });
+    expect(await (await get(`/.well-known/t3/thread/${BORN_AS}`, ADMIN)).json()).toEqual({
+      threadId: BORN_AS,
+    });
+    expect((await get("/.well-known/t3/thread/nope", ADMIN)).status).toBe(404);
+    expect((await get(`/.well-known/t3/thread/${SESSION_NAME}`)).status).toBe(401);
+  });
+
+  it("redirects a thread route framed by another key of the same session to its thread id", async () => {
+    const env = environmentIdFor("test");
+    const moved = await fetch(`${base}/${env}/${SESSION_NAME}?embed`, {
+      headers: ADMIN,
+      redirect: "manual",
+    });
+    expect(moved.status).toBe(302);
+    expect(moved.headers.get("location")).toBe(`/${env}/${BORN_AS}?embed`);
+    const direct = await get(`/${env}/${BORN_AS}?embed`, ADMIN);
+    expect(direct.status).toBe(200);
+    expect(await direct.text()).toContain("<title>T3</title>");
+    const unknown = await fetch(`${base}/${env}/nope?embed`, {
+      headers: ADMIN,
+      redirect: "manual",
+    });
+    expect(unknown.status).toBe(200);
+  });
+
   it("does not serve files outside the web build", async () => {
     const response = await get("/..%2f..%2fetc%2fpasswd", ADMIN);
     expect([400, 404]).toContain(response.status);
@@ -292,6 +322,14 @@ describe("RPC over /ws", () => {
     expect(config.exit?.value).toMatchObject({ providers: [{ instanceId: "claudeAgent" }] });
     const probe = await rpc.exitOf(rpc.request("server.probe", {}));
     expect(probe.exit).toEqual({ _tag: "Success", value: {} });
+    rpc.socket.close();
+  });
+
+  it("answers vcs.refreshStatus as a directory with no repository, as the VCS stream does", async () => {
+    const rpc = await openRpc(ADMIN);
+    const status = await rpc.exitOf(rpc.request("vcs.refreshStatus", { cwd: "/home/wizard" }));
+    expect(status.exit?._tag).toBe("Success");
+    expect(status.exit?.value).toMatchObject({ isRepo: false, hasUpstream: false, pr: null });
     rpc.socket.close();
   });
 

@@ -169,6 +169,13 @@ export class UserHub {
     return this.directory.byId(threadId);
   }
 
+  /** The user's own thread for a key the lobby frames it by (directory.ts resolve). */
+  async resolve(key: string): Promise<DirectoryEntry | undefined> {
+    await this.refresh();
+    if (this.directory.resolve(key) === undefined) await this.refresh(true);
+    return this.directory.resolve(key);
+  }
+
   /** The live thread for an entry the directory lists, created on first use. */
   async thread(threadId: string, relay: RelayCredentials): Promise<LiveThread | undefined> {
     this.use(relay);

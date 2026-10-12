@@ -9,13 +9,16 @@
  *
  * Routes:
  *   GET  /.well-known/t3/environment   environment descriptor (protocol 2)
+ *   GET  /.well-known/t3/thread/:key   the thread id for a key the lobby frames a session by
  *   GET  /api/auth/session             authenticated, chat scopes only
  *   GET  /api/orchestration/shell      shell snapshot; needs the protocol header
  *   GET  /api/orchestration/threads/:id/bounded   a thread's snapshot (the whole window for now)
  *   GET  /api/orchestration/threads/:id/history   older rows (none: the bounded window is complete)
  *   POST /api/observability/v1/traces  204: the client posts traces unconditionally
  *   GET  /ws?orchestrationProtocol=2   Effect RPC (WsRpcGroup), JSON frames; 426 on mismatch
- *   GET  *                             the web build, index.html for app routes
+ *   GET  *                             the web build, index.html for app routes; a
+ *                                      thread route named by another key of the same
+ *                                      session redirects to its thread id
  */
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -137,6 +140,35 @@ function serveWebBuild(webDir: string, pathname: string) {
   });
 }
 
+/**
+ * The lobby frames a session by its birth name (frontend-v2 keyOf), and the
+ * thread id differs for a session T3 created or a hand-named one renamed
+ * while the sidecar watched. T3's client sends a route whose thread is not in
+ * the shell to a draft, so the sidecar answers such a route with a redirect
+ * to the thread's own id.
+ */
+function threadRedirect(deps: SidecarDeps, identity: Identity, url: URL) {
+  return Effect.promise(async (): Promise<HttpServerResponse.HttpServerResponse | undefined> => {
+    const match = /^\/([^/]+)\/([^/.]+)$/.exec(url.pathname);
+    if (match === null || match[1] !== deps.config.descriptor.environmentId) return undefined;
+    let key: string;
+    try {
+      key = decodeURIComponent(match[2] ?? "");
+    } catch {
+      return undefined;
+    }
+    const entry = await deps.hub
+      .user(identity)
+      .resolve(key)
+      .catch(() => undefined);
+    if (entry === undefined || entry.threadId === key) return undefined;
+    return HttpServerResponse.redirect(
+      `/${match[1]}/${encodeURIComponent(entry.threadId)}${url.search}`,
+      { status: 302, headers: { "cache-control": "no-store" } },
+    );
+  });
+}
+
 function rpcOverWebSocket(deps: SidecarDeps, identity: Identity) {
   const handlers = WsRpcGroup.toLayer(
     makeHandlers({
@@ -166,6 +198,28 @@ export function routes(deps: SidecarDeps) {
       "/.well-known/t3/environment",
       guarded(gate, () =>
         Effect.succeed(schemaJson(ExecutionEnvironmentDescriptor, deps.config.descriptor)),
+      ),
+    ),
+    HttpRouter.add(
+      "GET",
+      "/.well-known/t3/thread/:key",
+      guarded(gate, (identity) =>
+        Effect.gen(function* () {
+          const { key } = yield* HttpRouter.params;
+          if (key === undefined) return HttpServerResponse.text("not found", { status: 404 });
+          return yield* Effect.promise(async () => {
+            const entry = await deps.hub
+              .user(identity)
+              .resolve(key)
+              .catch(() => undefined);
+            return entry === undefined
+              ? HttpServerResponse.text("not found", { status: 404 })
+              : HttpServerResponse.jsonUnsafe(
+                  { threadId: entry.threadId },
+                  { headers: { "cache-control": "no-store" } },
+                );
+          });
+        }),
       ),
     ),
     HttpRouter.add(
@@ -259,11 +313,16 @@ export function routes(deps: SidecarDeps) {
     HttpRouter.add(
       "GET",
       "*",
-      guarded(gate, (_identity, request) => {
+      guarded(gate, (identity, request) => {
         const url = HttpServerRequest.toURL(request);
-        return Option.isNone(url)
-          ? Effect.succeed(HttpServerResponse.text("bad request", { status: 400 }))
-          : serveWebBuild(deps.webDir, url.value.pathname);
+        if (Option.isNone(url)) {
+          return Effect.succeed(HttpServerResponse.text("bad request", { status: 400 }));
+        }
+        return Effect.flatMap(threadRedirect(deps, identity, url.value), (redirect) =>
+          redirect === undefined
+            ? serveWebBuild(deps.webDir, url.value.pathname)
+            : Effect.succeed(redirect),
+        );
       }),
     ),
   );
