@@ -79,11 +79,17 @@ else
 	git -C "$work/repo" archive "$commit" | tar -x -C "$src"
 	rm -rf "$work/repo"
 
+	# Stop git's repository discovery at the work dir. When the work dir sits
+	# inside another checkout (CI builds in out/t3 of the lobby's own clone),
+	# git apply otherwise treats $src as a subdirectory of that repo, skips
+	# every path outside it and still exits 0, so nothing is patched. The
+	# reverse check proves each patch is now in the tree.
 	shopt -s nullglob
 	for p in "$here"/patches/*.patch; do
 		echo "build-web: applying $(basename "$p")"
-		git -C "$src" apply --check "$p"
-		git -C "$src" apply "$p"
+		GIT_CEILING_DIRECTORIES="$work" git -C "$src" apply --check "$p"
+		GIT_CEILING_DIRECTORIES="$work" git -C "$src" apply "$p"
+		GIT_CEILING_DIRECTORIES="$work" git -C "$src" apply --reverse --check "$p"
 	done
 	shopt -u nullglob
 
