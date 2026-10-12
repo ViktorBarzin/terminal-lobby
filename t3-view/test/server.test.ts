@@ -408,6 +408,27 @@ describe("RPC over /ws", () => {
     rpc.socket.close();
   });
 
+  it("offers the model a live session is on as a provider row when the catalogue lacks it", async () => {
+    // The fixture session answers on claude-haiku-5-5, which the catalogue
+    // does not list: the composer would otherwise show its default.
+    const rpc = await openRpc(ADMIN);
+    const config = rpc.request("subscribeServerConfig", {});
+    await rpc.chunkOf(config);
+    rpc.request("orchestration.subscribeThread", { threadId: BORN_AS });
+    const offered = await rpc.until((all) =>
+      all.find(
+        (f) =>
+          f._tag === "Chunk" &&
+          f.requestId === config &&
+          JSON.stringify(f.values).includes('"slug":"claude-haiku-5-5"'),
+      ),
+    );
+    expect(JSON.stringify(offered.values)).toContain('"name":"claude-haiku-5-5"');
+    const got = await rpc.exitOf(rpc.request("server.getConfig", {}));
+    expect(JSON.stringify(got.exit?.value)).toContain('"slug":"claude-haiku-5-5"');
+    rpc.socket.close();
+  });
+
   it("sends a message to the session as the user, with the command id as the prompt id", async () => {
     const rpc = await openRpc(ADMIN);
     const exit = await rpc.exitOf(

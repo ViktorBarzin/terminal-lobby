@@ -267,12 +267,17 @@ hand-back as each prompt leaving the queue, so at its first `ready` it holds
 those runs again, and makes a held run for a prompt the bounded log no
 longer shows.
 
+The composer's models are the lobby's catalogue (`src/models.ts`, a copy of
+frontend-v2's) plus, as a row named by its slug, each model one of the user's
+live sessions is on that the catalogue lacks (for example `claude-haiku-5-5`
+from a pre-warm alias). A change is sent on `subscribeServerConfig` as
+`providerStatuses`. A send's model selection is applied only when the
+session's model was among the rows the user was offered, so the composer's
+fallback default is never applied as a choice.
+
 ## Open questions
 
 - History paging and images (second cut): the bounded snapshot carries the
   whole window the lobby's reverse open delivered (about 100 KB of events).
-- Sessions on a model the composer does not list (for example
-  `claude-haiku-5-5` from a pre-warm alias) show the composer's default model;
-  a send then leaves the session's model alone.
 - Touch input, the soft keyboard and iOS Safari inside a cross-origin iframe
   are unverified; the phone check so far is a resized desktop Chromium.

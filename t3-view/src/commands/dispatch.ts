@@ -66,8 +66,11 @@ export interface CommandDeps {
   ) => Promise<DirectoryProject | undefined>;
   /** Records the thread id T3 minted for a session the sidecar created (aliases.ts). */
   readonly alias: (identity: Identity, minted: string, threadId: string) => void;
-  /** The models the composer offers (models.ts); a send leaves any other model alone. */
-  readonly knownModels?: ReadonlySet<string>;
+  /**
+   * The models the composer offers this user (models.ts: the catalogue and the
+   * models their live sessions are on); a send leaves any other model alone.
+   */
+  readonly knownModels?: (identity: Identity) => ReadonlySet<string>;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly mintName?: () => string;
   readonly log?: (message: string) => void;
@@ -337,14 +340,15 @@ export class Commands {
         return;
       }
     }
-    // The composer can only show a model the provider lists. On a session
-    // running another (a pre-warm alias such as claude-haiku-5-5) it falls
-    // back to its default, so its selection there is not a choice to apply.
+    // The composer can only show a model the provider lists. The provider
+    // lists the models live sessions are on, but a session whose model this
+    // user was not offered yet would show the composer's default, so its
+    // selection there is not a choice to apply.
     const current = mapper.thread.modelSelection.model;
     if (
       command.modelSelection !== undefined &&
       mapper.activeRun === undefined &&
-      (this.#d.knownModels === undefined || this.#d.knownModels.has(current))
+      (this.#d.knownModels === undefined || this.#d.knownModels(identity).has(current))
     ) {
       await this.#setModel(handle, relay, command.modelSelection, false);
     }

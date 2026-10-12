@@ -67,6 +67,7 @@ function setup(
     frames?: string[];
     api?: ReturnType<typeof fakeApi>;
     draftListed?: boolean;
+    offered?: ReadonlyArray<string>;
   } = {},
 ) {
   const logs: string[] = [];
@@ -117,7 +118,12 @@ function setup(
     alias: (_identity, minted, threadId) => aliases.push([minted, threadId]),
     sleep: async () => {},
     mintName: () => "bw8k5gt9v314",
-    knownModels: new Set(["claude-opus-5-5", "claude-haiku-4-5-20251001"]),
+    knownModels: (who) =>
+      new Set([
+        "claude-opus-5-5",
+        "claude-haiku-4-5-20251001",
+        ...(who.osUser === "wizard" ? (options.offered ?? []) : []),
+      ]),
     log: (line) => logs.push(line),
   });
   return { commands, calls, live, pending, aliases, logs };
@@ -182,6 +188,20 @@ describe("message.dispatch", () => {
       message({ modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: "claude-opus-5-5" } }),
     );
     expect(calls.map((c) => c.op)).toEqual(["prompt"]);
+  });
+
+  it("changes the model when the session's own unlisted model is offered as a row", async () => {
+    // The fixture session is on claude-haiku-5-5; once the composer lists it,
+    // the Opus in the send is the person's pick.
+    const { commands, calls } = setup({ offered: ["claude-haiku-5-5"] });
+    await commands.dispatch(
+      identity,
+      message({ modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: "claude-opus-5-5" } }),
+    );
+    expect(calls.map((c) => [c.op, c.args[2]])).toEqual([
+      ["model", { model: "claude-opus-5-5" }],
+      ["prompt", { text: "hello there", id: base.commandId }],
+    ]);
   });
 
   it("changes the model before a send when the person picked another one", async () => {

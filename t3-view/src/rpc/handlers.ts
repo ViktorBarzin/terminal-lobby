@@ -96,28 +96,37 @@ const NO_REPO = {
 } as const;
 
 export function makeHandlers(context: ConnectionContext) {
-  const config = () => serverConfig(context.config);
+  const liveModels = () => context.hub.user(context.identity).liveModels;
+  const config = () => serverConfig(context.config, liveModels());
+  const provider = () => claudeProvider(context.config.startedAt, liveModels());
 
   return WsRpcGroup.of({
     ...STUB_HANDLERS,
 
     [WS_METHODS.serverProbe]: () => Effect.succeed({}),
     [WS_METHODS.serverGetConfig]: () => Effect.sync(config),
-    [WS_METHODS.serverRefreshProviders]: () =>
-      Effect.sync(() => ({ providers: [claudeProvider(context.config.startedAt)] })),
+    [WS_METHODS.serverRefreshProviders]: () => Effect.sync(() => ({ providers: [provider()] })),
 
-    [WS_METHODS.subscribeServerConfig]: (input) => {
-      const events: ServerConfigStreamEvent[] = [
-        { version: 1, type: "snapshot", config: config() },
-      ];
-      if (input.usageLimitSources === true) {
-        events.push({ version: 1, type: "usageLimitSourcesUpdated", payload: { sources: [] } });
-      }
-      if (input.environmentThemes === true) {
-        events.push({ version: 1, type: "environmentThemesUpdated", payload: { themes: [] } });
-      }
-      return thenStayOpen(events);
-    },
+    // The provider's models follow the user's live sessions (models.ts), so a
+    // change is sent as providerStatuses after the snapshot.
+    [WS_METHODS.subscribeServerConfig]: (input) =>
+      subscription<ServerConfigStreamEvent>(async (emit) => {
+        const events: ServerConfigStreamEvent[] = [
+          { version: 1, type: "snapshot", config: config() },
+        ];
+        if (input.usageLimitSources === true) {
+          events.push({ version: 1, type: "usageLimitSourcesUpdated", payload: { sources: [] } });
+        }
+        if (input.environmentThemes === true) {
+          events.push({ version: 1, type: "environmentThemesUpdated", payload: { themes: [] } });
+        }
+        const unsubscribe = context.hub
+          .user(context.identity)
+          .subscribeModels(() =>
+            emit({ version: 1, type: "providerStatuses", payload: { providers: [provider()] } }),
+          );
+        return { start: events, unsubscribe };
+      }),
     [WS_METHODS.subscribeServerLifecycle]: () => thenStayOpen(lifecycleEvents(context.config)),
 
     [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>

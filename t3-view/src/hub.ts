@@ -30,6 +30,7 @@ import { type DirectoryEntry, projectShells, SessionDirectory } from "./shell/di
 import { appThreadOf, threadShellOf, titleOf } from "./shell/threadShell.ts";
 import { SHELL_SCHEMA_VERSION } from "./shell.ts";
 import type { HeldPrompts } from "./threads/held.ts";
+import { LOBBY_CLAUDE_SLUGS } from "./models.ts";
 import { LiveThread } from "./threads/live.ts";
 import type { PendingDispatches } from "./threads/pending.ts";
 
@@ -92,6 +93,8 @@ export class UserHub {
   #poll: ReturnType<typeof setInterval> | undefined;
   #rowsTimer: ReturnType<typeof setTimeout> | undefined;
   #loaded = false;
+  #liveModels: ReadonlyArray<string> = [];
+  readonly #modelListeners = new Set<() => void>();
 
   constructor(osUser: string, options: HubOptions) {
     this.osUser = osUser;
@@ -209,9 +212,13 @@ export class UserHub {
             ? undefined
             : { name: now.name, ...(now.owner === undefined ? {} : { owner: now.owner }) };
         },
-        onChange: () => this.#scheduleRows(),
+        onChange: () => {
+          this.#noteModels();
+          this.#scheduleRows();
+        },
         onIdle: () => {
           this.#threads.delete(id);
+          this.#noteModels();
           this.#scheduleRows();
         },
         ...(this.#o.threadIdleMs === undefined ? {} : { idleMs: this.#o.threadIdleMs }),
@@ -225,6 +232,34 @@ export class UserHub {
 
   liveThread(threadId: string): LiveThread | undefined {
     return this.#threads.get(threadId as ThreadId);
+  }
+
+  /** The models the user's live sessions are on that the catalogue lacks, sorted. */
+  get liveModels(): ReadonlyArray<string> {
+    return this.#liveModels;
+  }
+
+  /** Called whenever liveModels changes. */
+  subscribeModels(listener: () => void): () => void {
+    this.#modelListeners.add(listener);
+    return () => {
+      this.#modelListeners.delete(listener);
+    };
+  }
+
+  // Synchronous on a thread's change, which runs before the thread's events
+  // reach a subscriber, so a composer gets the model's row no later than the
+  // projection that names the model.
+  #noteModels(): void {
+    const slugs = new Set<string>();
+    for (const live of this.#threads.values()) {
+      const slug = live.model.mapper.thread.modelSelection.model;
+      if (!LOBBY_CLAUDE_SLUGS.has(slug)) slugs.add(slug);
+    }
+    const next = [...slugs].sort();
+    if (next.join("\n") === this.#liveModels.join("\n")) return;
+    this.#liveModels = next;
+    for (const listener of this.#modelListeners) listener();
   }
 
   #scheduleRows(): void {

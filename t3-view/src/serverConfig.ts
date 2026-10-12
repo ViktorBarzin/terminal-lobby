@@ -19,11 +19,15 @@ import {
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import { AUTH_DESCRIPTOR } from "./descriptor.ts";
-import { LOBBY_CLAUDE_MODELS, toProviderModel } from "./models.ts";
+import { providerModels } from "./models.ts";
 
 export const CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 
-export function claudeProvider(checkedAt: string): ServerProvider {
+/** `liveModels`: the models the user's live sessions are on (models.ts providerModels). */
+export function claudeProvider(
+  checkedAt: string,
+  liveModels: ReadonlyArray<string> = [],
+): ServerProvider {
   return {
     instanceId: CLAUDE_INSTANCE_ID,
     driver: ProviderDriverKind.make("claudeAgent"),
@@ -36,7 +40,7 @@ export function claudeProvider(checkedAt: string): ServerProvider {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt,
-    models: LOBBY_CLAUDE_MODELS.map((model, index) => toProviderModel(model, index === 0)),
+    models: providerModels(liveModels),
     slashCommands: [],
     skills: [],
   };
@@ -53,7 +57,10 @@ export interface ConfigContext {
   readonly startedAt: string;
 }
 
-export function serverConfig(context: ConfigContext): ServerConfig {
+export function serverConfig(
+  context: ConfigContext,
+  liveModels: ReadonlyArray<string> = [],
+): ServerConfig {
   return {
     environment: context.descriptor,
     auth: AUTH_DESCRIPTOR,
@@ -61,7 +68,7 @@ export function serverConfig(context: ConfigContext): ServerConfig {
     keybindingsConfigPath: "/dev/null",
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     issues: [],
-    providers: [claudeProvider(context.startedAt)],
+    providers: [claudeProvider(context.startedAt, liveModels)],
     availableEditors: [],
     observability: {
       logsDirectoryPath: "/dev/null",

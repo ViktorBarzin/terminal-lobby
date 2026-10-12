@@ -34,6 +34,27 @@ export const LOBBY_CLAUDE_MODELS: ReadonlyArray<LobbyClaudeModel> = [
   { slug: "claude-opus-4-8", name: "Claude Opus 4.8", efforts: FIVE_RUNGS },
 ];
 
+/** The catalogue's slugs: the models the composer offers whatever sessions run. */
+export const LOBBY_CLAUDE_SLUGS: ReadonlySet<string> = new Set(
+  LOBBY_CLAUDE_MODELS.map((m) => m.slug),
+);
+
+/**
+ * The provider's model rows: the catalogue, then each model a live session is
+ * on that the catalogue lacks (a pre-warm alias such as claude-haiku-5-5),
+ * named by its slug. Without its row the composer would show its default
+ * model for such a session, and a send would carry that default.
+ */
+export function providerModels(liveModels: ReadonlyArray<string>): ServerProviderModel[] {
+  const extra = [...new Set(liveModels)]
+    .filter((slug) => slug !== "" && !LOBBY_CLAUDE_SLUGS.has(slug))
+    .sort();
+  return [
+    ...LOBBY_CLAUDE_MODELS.map((model, index) => toProviderModel(model, index === 0)),
+    ...extra.map((slug) => toProviderModel({ slug, name: slug, efforts: [] }, false)),
+  ];
+}
+
 export function toProviderModel(model: LobbyClaudeModel, isDefault: boolean): ServerProviderModel {
   return {
     slug: model.slug,
