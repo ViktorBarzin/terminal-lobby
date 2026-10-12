@@ -1,7 +1,7 @@
 # T3 view: T3 Code's chat UI as a third view of a lobby session
 
-**Status:** built on branch, first cut, not released (designed 2026-10-12,
-built 2026-10-12 on `wizard/t3-view`) · **Scope:** new `t3-view/` (Node/TS
+**Status:** first cut released in terminal-lobby 0.125.2 (designed, built
+and released 2026-10-12) · **Scope:** new `t3-view/` (Node/TS
 sidecar `tl-t3-view` plus the pinned T3 web build and its embed patch),
 `frontend-v2` (view switcher, iframe host), `session-events` (dialog ids, a
 prompt that waits for the turn's end), `tmux-api` (a claim that places its
@@ -324,37 +324,43 @@ The switcher records `view.switched` with `tl.to` set to `terminal`, `text`
 or `t3`. Time per view comes from consecutive switches per device, since the
 journey design's dwell events are not built.
 
-Must-haves, with the last live check (2026-10-12, a scratch Haiku session on
-the live lobby, the sidecar and patched web run from the branch behind a
-token-gated proxy that plays Traefik). Phone means a desktop Chromium resized
-to 390x844, not a phone.
+Must-haves, with the last live check. The "T3 desktop" and "T3 at 390px"
+columns are the branch check (2026-10-12: the sidecar and patched web run
+from the branch behind a token-gated proxy that plays Traefik, 390px being a
+resized desktop Chromium). The "Released" column is the check after release:
+the installed 0.125.x sidecar and web build on the devvm, the lobby frontend
+at the released commit, a scratch Haiku session, desktop Chromium plus the
+shared Android emulator's Chrome for the phone rows. Both still go through
+the token-gated proxy rather than Authentik and Traefik, because no automated
+browser login exists for wizard; the Traefik route, framing header and
+firewall were checked separately (see "Released").
 
-| Must-have | Planned for | Text view | T3 desktop | T3 at 390px |
-|---|---|---|---|---|
-| Streaming replies and tool rows | first cut | pass | pass | pass |
-| Thinking | first cut | not seen (scratch sessions streamed none) | pass, on a real session's stored thinking | not seen |
-| Permission card | first cut | pass | pass | pass |
-| Question card | first cut | pass | pass | pass |
-| Plan card | first cut | pass | pass after `f5db5b8f` | not run |
-| Send, with the message id echoed | first cut | pass | pass, no duplicate row | pass |
-| Stop | first cut | pass | pass | not run |
-| Model, effort, mode | first cut | pass | pass | not run |
-| `dontAsk` notice | first cut | pass | pass | not run |
-| Steer mid-turn | first cut | pass | pass | not run |
-| Queue after the turn | first cut | pass | partial: steered, because production session-events lacks the wait flag | not run |
-| New thread | first cut | n/a | pass | not run |
-| New thread placed in its project | first cut | n/a | fail until release: production tmux-api ignores `project` | not run |
-| Read-only shared session refuses a send | first cut | not run | not run (no session shared to wizard) | not run |
-| Lobby chords from inside the frame (Ctrl-J) | first cut | n/a | pass | not run |
-| Switching views, one frame | first cut | pass | pass | n/a |
-| Sidecar restart mid-session | first cut | n/a | pass: open tab resynced with no reload | n/a |
-| Phone layout inside the lobby, touch and soft keyboard | first cut | not run on a phone | not run on a phone | resized desktop only |
-| Inline pictures and image attachments | second cut | | | |
-| Load earlier turns | second cut | | | |
-| Find in session | not planned yet | | | |
-| Subagent panel and steering a subagent | not planned yet | | | |
-| Guests and public links | not planned yet | | | |
-| Presence and live drafts | not planned yet | | | |
+| Must-have | Planned for | Text view | T3 desktop | T3 at 390px | Released |
+|---|---|---|---|---|---|
+| Streaming replies and tool rows | first cut | pass | pass | pass | pass |
+| Thinking | first cut | not seen (scratch sessions streamed none) | pass, on a real session's stored thinking | not seen | not run |
+| Permission card | first cut | pass | pass | pass | pass |
+| Question card | first cut | pass | pass | pass | not run |
+| Plan card | first cut | pass | pass after `f5db5b8f` | not run | pass; Build restored after approval (`48743255`). Claude's short "Exit plan mode?" prompt (no plan file) is not read by either view |
+| Send, with the message id echoed | first cut | pass | pass, no duplicate row | pass | pass, desktop and Android |
+| Stop | first cut | pass | pass | not run | not run |
+| Model, effort, mode | first cut | pass | pass | not run | mode follows the pane after a change made outside T3 (`d0ee2cec`) |
+| `dontAsk` notice | first cut | pass | pass | not run | not run |
+| Steer mid-turn | first cut | pass | pass | not run | not run |
+| Queue after the turn | first cut | pass | partial: steered, because production session-events lacked the wait flag | not run | pass: QUEUED in both views, ran after the turn |
+| New thread | first cut | n/a | pass | not run | pass; the lobby follows the new thread (`08e4524c`) |
+| New thread placed in its project | first cut | n/a | fail until release: production tmux-api ignored `project` | not run | pass (health, Muse-ai) |
+| Read-only shared session refuses a send | first cut | not run | not run (no session shared to wizard) | not run | not run |
+| Lobby chords from inside the frame (Ctrl-J) | first cut | n/a | pass | not run | not run |
+| Switching views, one frame | first cut | pass | pass | n/a | pass |
+| Sidecar restart mid-session | first cut | n/a | pass: open tab resynced with no reload | n/a | pass: the package upgrade restarted it under an open tab |
+| Phone layout inside the lobby, touch and soft keyboard | first cut | not run on a phone | not run on a phone | resized desktop only | Android Chrome: pass (tap, soft keyboard inside the cross-origin frame, send). iOS Safari not run |
+| Inline pictures and image attachments | second cut | | | | |
+| Load earlier turns | second cut | | | | |
+| Find in session | not planned yet | | | | |
+| Subagent panel and steering a subagent | not planned yet | | | | |
+| Guests and public links | not planned yet | | | | |
+| Presence and live drafts | not planned yet | | | | |
 
 ## Testing
 
@@ -363,8 +369,8 @@ sidecar's output with T3's own projection. That does not work: those fixtures
 are Claude Agent SDK stream frames, not lobby events, and `plan_questions` and
 `proposed_plan` have no Claude goldens. What was built instead:
 
-- The mapper and every command were written test-first with vitest (18
-  files, 274 tests at the last run; `npm test` and `npm run typecheck`
+- The mapper and every command were written test-first with vitest (21
+  files, 301 tests at release; `npm test` and `npm run typecheck`
   against T3's contracts at the pin).
 - `t3-view/test/fixtures/lobby/` holds SSE captures recorded from scratch
   lobby sessions: a first turn, a permission, a question, a steer, a steer at
@@ -378,10 +384,11 @@ are Claude Agent SDK stream frames, not lobby events, and `plan_questions` and
   (`claim_test.go`) and `release` (`t3view_test.go`, `manifest_test.go`).
 - Frontend: `T3Host.test.tsx`, `SessionView.t3.test.tsx`,
   `t3.embed.logic.test.ts`, `viewmode.t3.test.ts`, `engine.test.ts`.
-- Live checks as in the table above. The shared Android emulator could not be
-  driven for this (the dev proxy's SameSite=Strict cookie does not ride a
-  cross-site `adb am start`), and `homelab ios` was not run, so they belong to
-  the release.
+- Live checks as in the table above. On the shared Android emulator the dev
+  proxy's SameSite=Strict cookie does not ride the redirect after a
+  cross-site `adb am start`; a reload started on the phone (`adb shell input
+  keycombination 113 46`, Ctrl+R) sends it. Typing a URL with `adb shell
+  input text` can land in a search instead, so open links with intents.
 
 ## What changed during the build
 
@@ -398,25 +405,47 @@ are Claude Agent SDK stream frames, not lobby events, and `plan_questions` and
 | Static RPC trace | Measured trace (`TRACE.md`) | Settled which stubs need real empty answers |
 | Golden projection diffs | Lobby SSE captures with semantic assertions | T3's fixtures are a different stream |
 
-## Remaining to release
+## Released
 
-1. Land the lobby branch `wizard/t3-view` on master. `t3-web.yml` and
-   `release.yml` both start; the release builds the web itself if the
-   `t3-web` cache entry is not there yet.
-2. Land the infra branch `wizard/t3view-host` (86 commits behind master when
-   last checked, so it merges master first) and run the devvm playbook for
-   the firewall rule. CI applies the terminal stack.
-3. Wait for the deb to deploy, then check `tl-t3-view` is active and its
-   advisory probe answers 401, and that `https://t3view.viktorbarzin.me`
-   loads inside the lobby for wizard.
-4. Re-run the two must-haves that need the release: queue after the turn
-   (the wait flag) and a new thread placed in its project.
-5. Phone checks: the T3 view inside the lobby on the shared Android emulator
-   and on `homelab ios`, for touch, the soft keyboard in a cross-origin
-   frame, and the composer at phone width.
+Released 2026-10-12 as terminal-lobby 0.125.0, with fixes in 0.125.1 and
+0.125.2.
+
+- Infra (`stacks/terminal/t3view.tf`, the AdminNetworkPolicy and the devvm
+  firewall) is applied. The first CI apply hit a transient
+  `etcdserver: request timed out` on the network policies after the change
+  had taken; a local `homelab tf apply terminal` recorded it and the re-plan
+  is clean. The devvm playbook loaded the 7690 rules.
+- On the box: `tl-t3-view` is active with `MemoryMax=512M`, the proxy secret
+  is not in its environment, the unauthenticated probe answers 401, and
+  `https://t3view.viktorbarzin.me` answers through the login gate from
+  outside and inside.
+- Found at release and fixed:
+
+| Version | Problem | Fix |
+|---|---|---|
+| 0.125.0 | The first release failed in CI: `git apply` run inside the lobby's own clone skipped the embed patch and still exited 0 | `b55106ed`: git's repository discovery stops at the build dir, and a reverse check proves each patch applied |
+| 0.125.1 | A mode picked on the pane (a plan exit, Shift+Tab in the Terminal) left T3 on the old mode | `d0ee2cec`: the sidecar reads the pane again as each turn starts and ends |
+| 0.125.2 | A new thread made its session in the right project, but the frame bounced back to the old session | `08e4524c`: the frame asks again until the sidecar has claimed the session |
+
+Not verified yet:
+
+- iOS Safari: `homelab ios` could not reach the phone (locked, and
+  WebDriverAgent not installed).
+- The whole path through Authentik and Traefik in a browser, including the
+  `frame-ancestors` header with the real lobby origin. Opening
+  terminal.viktorbarzin.me as wizard and switching a session to T3 settles it.
+- A read-only shared session refusing a send (nothing is shared to wizard).
 
 ## Open questions
 
+- Claude Code's short "Exit plan mode?" prompt, shown when `ExitPlanMode` is
+  called without a plan file, is not read by `sessionio`'s plan parser, so
+  neither view can answer it (`not-drawn`); the pane can.
+- session-events' `state` frame can carry a stale mode (it said
+  `bypassPermissions` while the pane said manual). Both views work around it
+  by reading the pane; the frame itself is unchanged.
+- Projects that share a folder get a distinct root by a leading `/./` per
+  clash, so T3's new-thread menu shows roots like `/./././home/wizard`.
 - Once, a message typed 6 s after a send stayed in T3's composer and was never
   dispatched; two retries did not reproduce it.
 - The lobby header's status lagged T3's run (idle while T3 showed Working).

@@ -1,6 +1,6 @@
 # T3 Code renders a session through its own protocol
 
-Status: built on branch, first cut, not released (2026-10-12, `wizard/t3-view`).
+Status: accepted; first cut released in terminal-lobby 0.125.2 (2026-10-12).
 
 Viktor, 2026-10-12: *"I'm keen on reusing t3 code into my terminal lobby,
 especially the text mode. Theo is putting a lot of work into making t3 code and
