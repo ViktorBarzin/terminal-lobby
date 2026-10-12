@@ -150,3 +150,55 @@ func TestAClaimIgnoresANonsenseSize(t *testing.T) {
 		t.Fatalf("resized to %+v", *resizes)
 	}
 }
+
+// A claim that names a project places the new session in it on the server,
+// under the layout store's lock. A client with no terminal of its own (the T3
+// view's sidecar) creates sessions this way, and a read-modify-write of the
+// whole layout from there would race the SPA's own PUT /layout.
+func TestAClaimPlacesTheSessionInTheProjectItNames(t *testing.T) {
+	me, _ := actAsFixture(t)
+	withTempLayoutStore(t)
+	stubClaim(t, true)
+	if err := layoutStoreInstance.save(me, Layout{Version: 1, Projects: []Project{
+		{Name: "lobby", Sessions: []string{"older"}},
+		{Name: "other", Sessions: []string{}},
+	}, Ungrouped: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	rec, got := postClaim(t, "/sessions/claim", `{"name":"bw8k5gt9v314","cmd":"claude","project":"lobby"}`, "adminauth")
+	if rec.Code != http.StatusOK || got["claimed"] != true || got["placed"] != true {
+		t.Fatalf("status %d body %v", rec.Code, got)
+	}
+	l, _ := layoutStoreInstance.load(me)
+	if fmt.Sprint(l.Projects[0].Sessions) != "[older bw8k5gt9v314]" || len(l.Projects[1].Sessions) != 0 {
+		t.Fatalf("layout %+v", l.Projects)
+	}
+	// A second claim of the same name does not place it twice.
+	postClaim(t, "/sessions/claim", `{"name":"bw8k5gt9v314","cmd":"claude","project":"other"}`, "adminauth")
+	l, _ = layoutStoreInstance.load(me)
+	if fmt.Sprint(l.Projects[0].Sessions) != "[older bw8k5gt9v314]" || len(l.Projects[1].Sessions) != 0 {
+		t.Fatalf("placed twice: %+v", l.Projects)
+	}
+}
+
+func TestAClaimPlacesNothingItDidNotClaimOrCannotFind(t *testing.T) {
+	me, _ := actAsFixture(t)
+	withTempLayoutStore(t)
+	if err := layoutStoreInstance.save(me, Layout{Version: 1, Projects: []Project{{Name: "lobby", Sessions: []string{}}}, Ungrouped: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	stubClaim(t, false)
+	_, got := postClaim(t, "/sessions/claim", `{"name":"bw8k5gt9v314","cmd":"claude","project":"lobby"}`, "adminauth")
+	if got["placed"] == true {
+		t.Fatalf("placed an unclaimed session: %v", got)
+	}
+	stubClaim(t, true)
+	_, got = postClaim(t, "/sessions/claim", `{"name":"cw8k5gt9v314","cmd":"claude","project":"no such"}`, "adminauth")
+	if got["claimed"] != true || got["placed"] == true {
+		t.Fatalf("body %v", got)
+	}
+	l, _ := layoutStoreInstance.load(me)
+	if len(l.Projects[0].Sessions) != 0 || len(l.Ungrouped) != 0 {
+		t.Fatalf("layout changed: %+v", l)
+	}
+}

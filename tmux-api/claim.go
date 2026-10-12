@@ -29,6 +29,13 @@ import (
 // The answer is always 200 {"claimed": bool}, and a refusal is just false: the
 // browser fires this and moves on, and its attach covers every case this does
 // not.
+//
+// "project" names a project of the caller's layout to put a claimed session
+// in, server-side and under the layout store's lock, and the answer then says
+// "placed". It is for a client with no terminal and no layout of its own (the
+// T3 view's sidecar, ADR-0044): a read-modify-write of the whole layout from
+// there would race the SPA's PUT /layout. The browser places its sessions
+// itself and sends none.
 
 // claimTimeout bounds the script. A claim is a rename and a few stamps, about
 // 135ms of sudo and bash on the box; the bound is for a wedged tmux.
@@ -77,13 +84,14 @@ func handleClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name   string `json:"name"`
-		Dir    string `json:"dir"`
-		Cmd    string `json:"cmd"`
-		Model  string `json:"model"`
-		Effort string `json:"effort"`
-		Cols   int    `json:"cols"`
-		Rows   int    `json:"rows"`
+		Name    string `json:"name"`
+		Dir     string `json:"dir"`
+		Cmd     string `json:"cmd"`
+		Model   string `json:"model"`
+		Effort  string `json:"effort"`
+		Cols    int    `json:"cols"`
+		Rows    int    `json:"rows"`
+		Project string `json:"project"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
@@ -93,9 +101,14 @@ func handleClaim(w http.ResponseWriter, r *http.Request) {
 	// found is what the script found (claimed, stale or none), which the
 	// composer reports beside the first prompt's timing; empty when the script
 	// was not asked.
+	placed := false
 	answer := func(claimed bool, found string) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"claimed": claimed, "found": found})
+		body := map[string]any{"claimed": claimed, "found": found}
+		if placed {
+			body["placed"] = true
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	}
 	// An administrator acting as someone attaches to their sessions and never
 	// creates one (tmux-attach.sh's foreign branch); a claim would create one.
@@ -131,6 +144,16 @@ func handleClaim(w http.ResponseWriter, r *http.Request) {
 	// The status line takes a row of the browser's terminal.
 	if claimed && body.Cols >= 10 && body.Cols <= 1000 && body.Rows >= 3 && body.Rows <= 1000 {
 		_ = resizeClaimed(osUser, body.Name, body.Cols, body.Rows-1)
+	}
+	if claimed && body.Project != "" {
+		ok, err := layoutStoreInstance.placeSession(osUser, body.Name, body.Project)
+		if err != nil {
+			log.Printf("claim: placing %s in %q for %s: %v", body.Name, body.Project, osUser, err)
+		}
+		if ok {
+			placed = true
+			sessionsCacheInstance.invalidate(osUser)
+		}
 	}
 	answer(claimed, found)
 }

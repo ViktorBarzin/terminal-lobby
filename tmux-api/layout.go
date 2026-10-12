@@ -227,6 +227,30 @@ func (s *layoutStore) renameSession(osUser, oldName, newName string) error {
 	return s.saveLocked(osUser, l)
 }
 
+// placeSession puts a session that has no place yet at the end of the named
+// project, under the store's lock, and reports whether it did. A name the
+// layout already holds anywhere keeps its place, and a project the layout
+// does not have places nothing: the session then shows where any unplaced
+// session does.
+func (s *layoutStore) placeSession(osUser, name, project string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, err := s.loadLocked(osUser)
+	if err != nil {
+		return false, err
+	}
+	if layoutHasSession(&l, name) {
+		return false, nil
+	}
+	for i := range l.Projects {
+		if l.Projects[i].Name == project {
+			l.Projects[i].Sessions = append(l.Projects[i].Sessions, name)
+			return true, s.saveLocked(osUser, l)
+		}
+	}
+	return false, nil
+}
+
 // mutateSessions applies fn to every session reference; fn returns the
 // (possibly changed) name and whether to keep the entry. The file is only
 // rewritten when something changed.
