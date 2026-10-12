@@ -382,7 +382,7 @@ describe("queue, stop, mode and model", () => {
     expect(message?.text).toBe("later, edited");
   });
 
-  it("stops the turn and shows the request", async () => {
+  it("stops the turn and shows the request, leaving the queue to run when Stop does not hold it", async () => {
     const { commands, calls, live } = setup();
     runningFrames(live);
     const run = live.model.mapper.activeRun;
@@ -390,12 +390,122 @@ describe("queue, stop, mode and model", () => {
       type: "run.interrupt",
       ...base,
       runId: run?.id ?? RunId.make("x"),
-      holdQueue: true,
     });
     expect(calls).toEqual([
       { op: "cancel", args: ["running-echo-hi-with-bash-tool", undefined, false] },
     ]);
     expect(live.projection.turnItems.some((i) => i.type === "run_interrupt_request")).toBe(true);
+  });
+
+  describe("a Stop that holds the queue, as T3's Stop button does", () => {
+    const meta = (id: number, kind: string, body: string) => ({
+      event: "message",
+      data: JSON.stringify({ id, kind: "meta", session: "s", meta: kind, body }),
+    });
+    const lobbyEvent = (o: Record<string, unknown>) => ({
+      event: "message",
+      data: JSON.stringify({ session: "s", ...o }),
+    });
+
+    async function stopHolding(returned: ReadonlyArray<string> = ["later please"]) {
+      const api = fakeApi({ cancel: () => ({ restored: returned.length > 0, queue: returned }) });
+      const t = setup({ api });
+      runningFrames(t.live);
+      t.live.model.onFrame(meta(901, "queued", "later please"));
+      const queuedId = t.live.model.mapper.queuedRuns[0]?.run.id ?? RunId.make("none");
+      await t.commands.dispatch(identity, {
+        type: "run.interrupt",
+        ...base,
+        runId: t.live.model.mapper.activeRun?.id ?? RunId.make("x"),
+        holdQueue: true,
+      });
+      // session-events takes the held prompts off its queue, then the turn ends.
+      t.live.model.onFrame(meta(902, "unqueued", "later please"));
+      t.live.model.onFrame(lobbyEvent({ id: 903, kind: "turn_end", turnId: "t-stop" }));
+      return { ...t, queuedId };
+    }
+
+    const held = (live: LiveThread) =>
+      live.model.mapper.queuedRuns.map((q) => [q.run.id, q.run.status, q.run.queueHeld, q.text]);
+
+    it("takes the queue back from the lobby, and keeps its runs queued with queueHeld", async () => {
+      const { calls, live, queuedId } = await stopHolding();
+      expect(calls).toEqual([
+        { op: "cancel", args: ["running-echo-hi-with-bash-tool", undefined, true] },
+      ]);
+      expect(held(live)).toEqual([[queuedId, "queued", true, "later please"]]);
+      expect(live.projection.runs.find((r) => r.id === queuedId)?.queuePosition).toBe(1);
+    });
+
+    it("holds a prompt the lobby handed back that was not shown queued, as a run of its own", async () => {
+      const { live, queuedId } = await stopHolding(["later please", "and this"]);
+      const runs = held(live);
+      expect(runs[0]).toEqual([queuedId, "queued", true, "later please"]);
+      expect(runs.slice(1).map((r) => r.slice(1))).toEqual([["queued", true, "and this"]]);
+    });
+
+    it("resends the held prompts on queue.resume, and the same run starts", async () => {
+      const { commands, calls, live, queuedId } = await stopHolding();
+      calls.length = 0;
+      await commands.dispatch(identity, { type: "queue.resume", ...base });
+      expect(calls).toEqual([
+        {
+          op: "prompt",
+          args: ["running-echo-hi-with-bash-tool", undefined, { text: "later please", wait: true }],
+        },
+      ]);
+      expect(live.projection.runs.find((r) => r.id === queuedId)?.queueHeld).toBe(false);
+      live.model.onFrame(
+        lobbyEvent({ id: 904, kind: "user", turnId: "t-next", body: "later please" }),
+      );
+      const started = live.projection.runs.find((r) => r.id === queuedId);
+      expect(started).toMatchObject({ status: "running", queueHeld: false });
+      expect(live.projection.runs.filter((r) => r.status === "queued")).toEqual([]);
+    });
+
+    it("keeps one run when a resumed prompt is queued behind a turn again", async () => {
+      const { commands, live, queuedId } = await stopHolding();
+      live.model.onFrame(lobbyEvent({ id: 905, kind: "user", turnId: "t-other", body: "other" }));
+      await commands.dispatch(identity, { type: "queue.resume", ...base });
+      live.model.onFrame(meta(906, "queued", "later please"));
+      expect(held(live)).toEqual([[queuedId, "queued", false, "later please"]]);
+    });
+
+    it("cancels and edits a held prompt where it is, since the lobby no longer has it", async () => {
+      const { commands, calls, live, queuedId } = await stopHolding(["later please", "and this"]);
+      const second = live.model.mapper.queuedRuns[1]?.run.id ?? RunId.make("none");
+      calls.length = 0;
+      await commands.dispatch(identity, {
+        type: "queued-run.edit",
+        ...base,
+        runId: queuedId,
+        text: "later, edited",
+      });
+      await commands.dispatch(identity, { type: "queued-run.cancel", ...base, runId: second });
+      expect(calls).toEqual([]);
+      expect(held(live)).toEqual([[queuedId, "queued", true, "later, edited"]]);
+      expect(live.projection.runs.find((r) => r.id === second)?.status).toBe("cancelled");
+    });
+
+    it("lets the queue go again when the lobby refuses the Stop", async () => {
+      const api = fakeApi({
+        cancel: () => {
+          throw new LobbyError(409, "the session's Claude did not stop the turn: idle");
+        },
+      });
+      const { commands, live } = setup({ api });
+      runningFrames(live);
+      live.model.onFrame(meta(901, "queued", "later please"));
+      await expect(
+        commands.dispatch(identity, {
+          type: "run.interrupt",
+          ...base,
+          runId: live.model.mapper.activeRun?.id ?? RunId.make("x"),
+          holdQueue: true,
+        }),
+      ).rejects.toThrow("did not stop the turn");
+      expect(held(live).map((r) => r[2])).toEqual([false]);
+    });
   });
 
   it("sets the mode and moves the composer on the lobby's confirmation", async () => {

@@ -233,6 +233,14 @@ rule (`src/commands/policy.ts`). Two lobby additions back this:
 - tmux-api `POST /sessions/claim {project}` places a new session in a layout
   project under the layout lock (`launchThread`).
 
+T3's Stop sends `run.interrupt` with `holdQueue`. The sidecar then stops the
+turn with `POST /cancel {restoreQueue}`, so session-events hands its held
+prompts back instead of sending them at the turn's end, and keeps them as
+queued runs with `queueHeld: true`, as T3's own server does. `queue.resume`
+sends them again with `wait`, oldest first, under their own runs and message
+ids. While a run is held only the sidecar has its text, so cancelling or
+editing it changes it there without a lobby call.
+
 ## Open questions
 
 - History paging and images (second cut): the bounded snapshot carries the
@@ -240,8 +248,9 @@ rule (`src/commands/policy.ts`). Two lobby additions back this:
 - T3 treats projects with the same workspace root as one in places (Ungrouped
   and System both root at the home directory, and a new thread in System was
   titled "What should we build in Ungrouped?").
-- A Stop does not hold T3's queue: held prompts run after the stopped turn,
-  as they do from the Text view without "restore queue".
+- A held queue lives in the sidecar's memory. A sidecar restart or a stream
+  rebuild while prompts are held shows them cancelled (the log records the
+  hand-back as `unqueued`), and the text is gone from the queue.
 - Sessions on a model the composer does not list (for example
   `claude-haiku-5-5` from a pre-warm alias) show the composer's default model;
   a send then leaves the session's model alone.

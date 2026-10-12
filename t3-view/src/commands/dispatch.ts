@@ -10,6 +10,9 @@
  *   queued-run.cancel                    POST /prompt/cancel-queued, by text (the queue has no ids)
  *   queued-run.edit                      cancel-queued, then the new text queued under the same message
  *   run.interrupt                        POST /cancel
+ *   run.interrupt, holdQueue             POST /cancel {restoreQueue}: the prompts come back and wait as held runs
+ *   queue.resume                         each held run's text, POST /prompt {wait}, oldest first
+ *   a held run's cancel or edit          the sidecar alone holds its text, so it changes there
  *   runtime-request.respond              POST /answer naming the tool call
  *   runtime / interaction mode           POST /model {mode}
  *   thread.model-selection.set           POST /model {model, effort}; 409 while a turn runs
@@ -142,17 +145,30 @@ export class Commands {
         return this.#message(identity, handle, command);
       case "run.interrupt": {
         refuseIfReadOnly();
-        live.commit(live.model.mapper.interruptRequested());
+        // T3's Stop holds the queue: without restoreQueue the turn's end
+        // would send every held prompt straight after the interrupt.
+        const hold = command.holdQueue === true;
+        const mapper = live.model.mapper;
+        if (hold) live.commit(mapper.holdQueue());
+        live.commit(mapper.interruptRequested());
         try {
-          await call(() => this.#d.api.cancel(relay, where.session, where.owner, false));
+          const reply = await call(() =>
+            this.#d.api.cancel(relay, where.session, where.owner, hold),
+          );
+          if (hold) live.commit(mapper.holdReturned(reply.queue));
         } catch (error) {
-          live.model.mapper.interruptRefused();
+          mapper.interruptRefused();
+          if (hold) live.commit(mapper.releaseHold());
           throw error;
         }
         return;
       }
       case "queued-run.cancel": {
         refuseIfReadOnly();
+        if (live.model.mapper.isHeld(command.runId)) {
+          live.commit(live.model.mapper.cancelHeld(command.runId));
+          return;
+        }
         const queued = live.model.mapper.queuedRuns.find((q) => q.run.id === command.runId);
         if (queued === undefined) throw new CommandFailure("That message is no longer queued.");
         const reply = await call(() =>
@@ -164,6 +180,10 @@ export class Commands {
       case "queued-run.edit": {
         refuseIfReadOnly();
         const mapper = live.model.mapper;
+        if (mapper.isHeld(command.runId)) {
+          live.commit(mapper.retextHeld(command.runId, command.text));
+          return;
+        }
         const queued = mapper.queuedRuns.find((q) => q.run.id === command.runId);
         if (queued === undefined || !mapper.expectEdit(command.runId, command.text)) {
           throw new CommandFailure("That message is no longer queued.");
@@ -182,6 +202,18 @@ export class Commands {
       }
       case "queued-message.promote-to-steer": {
         refuseIfReadOnly();
+        const mapper = live.model.mapper;
+        const heldRun = mapper.heldRuns.find((r) => r.runId === command.queuedRunId);
+        if (heldRun !== undefined) {
+          live.commit(mapper.resumeHeld([heldRun.runId]));
+          try {
+            await this.#send(handle, relay, heldRun.messageId, heldRun.text, {});
+          } catch (error) {
+            live.commit(mapper.reholdHeld([heldRun.runId]));
+            throw error;
+          }
+          return;
+        }
         const queued = live.model.mapper.queuedRuns.find((q) => q.run.id === command.queuedRunId);
         if (queued === undefined) throw new CommandFailure("That message is no longer queued.");
         const reply = await call(() =>
@@ -191,8 +223,23 @@ export class Commands {
         await this.#send(handle, relay, queued.run.userMessageId, queued.text, {});
         return;
       }
-      case "queue.resume":
+      case "queue.resume": {
+        refuseIfReadOnly();
+        const mapper = live.model.mapper;
+        const held = mapper.heldRuns;
+        live.commit(mapper.resumeHeld(held.map((r) => r.runId)));
+        // With wait, each goes behind whatever turn runs, and the first one
+        // starts a turn on an idle session that the rest then wait for.
+        for (const [i, run] of held.entries()) {
+          try {
+            await this.#send(handle, relay, run.messageId, run.text, { wait: true });
+          } catch (error) {
+            live.commit(mapper.reholdHeld(held.slice(i).map((r) => r.runId)));
+            throw error;
+          }
+        }
         return;
+      }
       case "runtime-request.respond":
       case "thread.user-input.dismiss": {
         refuseIfReadOnly();

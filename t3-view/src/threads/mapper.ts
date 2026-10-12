@@ -26,6 +26,9 @@
  *   `unqueued` takes one back (edited, cancelled, or delivered as a steer),
  *   `queue-cleared` drops them all. A queued prompt is a queued run until its
  *   `user` event starts it.
+ * - A T3 Stop holds the queue (holdQueue): the lobby hands the held prompts
+ *   back, and their runs stay queued with queueHeld until queue.resume sends
+ *   them again, so the `unqueued` that hand-back emits leaves them alone.
  * - `meta held` and `meta asking` carry the dialogs the mod holds: a
  *   question card, and a permission prompt or plan approval. Each becomes a
  *   runtime request with its node and turn item, keyed by the tool call's id.
@@ -93,6 +96,12 @@ interface RunRecord {
   stopRequested: boolean;
   /** Queued while another run was open (T3's queued_turn). */
   readonly queuedBehind: boolean;
+  /**
+   * A Stop held this queued run: "held" while only the sidecar has its text,
+   * "resending" once queue.resume (or a steer) sent it to the lobby again, so
+   * the lobby's own queued or user event takes it over.
+   */
+  hold: "held" | "resending" | undefined;
 }
 
 interface ToolRecord {
@@ -271,7 +280,10 @@ export class ThreadMapper {
       const unmatched = [...want];
       for (const rec of this.#queue) {
         const i = unmatched.findIndex((t) => samePrompt(t, rec.text));
-        if (i === -1) {
+        if (i === -1 && rec.hold === "held") {
+          // A Stop took it back from the lobby: it waits here for queue.resume.
+          keep.push(rec);
+        } else if (i === -1) {
           this.#cancelQueued(rec);
         } else {
           unmatched.splice(i, 1);
@@ -336,6 +348,121 @@ export class ThreadMapper {
   /** The lobby refused the Stop: the run carries on, and its end is not an interrupt. */
   interruptRefused(): void {
     if (this.#open !== undefined) this.#open.stopRequested = false;
+  }
+
+  /**
+   * A Stop that holds the queue (T3's Stop button): every queued run waits
+   * for queue.resume, as T3's own server marks them (holdStoppedThread).
+   */
+  holdQueue(): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      for (const rec of this.#queue) {
+        if (rec.run.status !== "queued" || rec.hold !== undefined) continue;
+        rec.hold = "held";
+        this.#setRun(rec, { queueHeld: true });
+      }
+    });
+  }
+
+  /**
+   * The prompts the lobby handed back on that Stop. One no queued run shows
+   * (the mod had taken it to steer with) becomes a held run of its own, so
+   * nothing the person queued disappears.
+   */
+  holdReturned(texts: ReadonlyArray<string>): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      const shown = this.#queue.filter((r) => r.hold === "held");
+      for (const text of texts) {
+        if (isTaskNotification(text)) continue;
+        const i = shown.findIndex((r) => samePrompt(r.text, text));
+        if (i >= 0) {
+          shown.splice(i, 1);
+          continue;
+        }
+        const messageId =
+          this.#o.messages.take(text) ??
+          this.#takeUnqueued(text) ??
+          Ids.syntheticMessageId(this.#o.threadId, this.#epoch, ++this.#synthetic);
+        const rec = this.#newRecord(text, messageId, "queued");
+        rec.hold = "held";
+        rec.run = { ...rec.run, queueHeld: true };
+        this.#queue.push(rec);
+        this.#emit("run.created", rec.run, rec.run.id);
+        this.#emit("node.updated", this.#rootNode(rec, "pending"), rec.run.id);
+        this.#message(rec, messageId, "user", text, null);
+      }
+      this.#renumberQueue();
+    });
+  }
+
+  /** The lobby refused the Stop: its queue still holds the prompts, so nothing waits here. */
+  releaseHold(): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      for (const rec of this.#queue) {
+        if (rec.hold !== "held") continue;
+        rec.hold = undefined;
+        this.#setRun(rec, { queueHeld: false });
+      }
+    });
+  }
+
+  /** Whether a queued run is held by a Stop, so only the sidecar has its text. */
+  isHeld(runId: RunId): boolean {
+    return this.#queue.some((r) => r.run.id === runId && r.hold === "held");
+  }
+
+  /** The held runs, oldest first, as queue.resume sends them. */
+  get heldRuns(): ReadonlyArray<{
+    readonly runId: RunId;
+    readonly messageId: MessageId;
+    readonly text: string;
+  }> {
+    return this.#queue
+      .filter((r) => r.hold === "held")
+      .map((r) => ({ runId: r.run.id, messageId: r.messageId, text: r.text }));
+  }
+
+  /** queue.resume (or a steer) is sending these held runs to the lobby again. */
+  resumeHeld(runIds: ReadonlyArray<RunId>): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      for (const rec of this.#queue) {
+        if (rec.hold !== "held" || !runIds.includes(rec.run.id)) continue;
+        rec.hold = "resending";
+        this.#setRun(rec, { queueHeld: false });
+      }
+    });
+  }
+
+  /** A resend that failed: those runs are held again. */
+  reholdHeld(runIds: ReadonlyArray<RunId>): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      for (const rec of this.#queue) {
+        if (rec.hold !== "resending" || !runIds.includes(rec.run.id)) continue;
+        rec.hold = "held";
+        this.#setRun(rec, { queueHeld: true });
+      }
+    });
+  }
+
+  /** queued-run.cancel of a held run: only the sidecar has it, so it goes here. */
+  cancelHeld(runId: RunId): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      const i = this.#queue.findIndex((r) => r.run.id === runId && r.hold === "held");
+      if (i === -1) return;
+      const [rec] = this.#queue.splice(i, 1);
+      if (rec !== undefined) this.#cancelQueued(rec);
+      this.#renumberQueue();
+    });
+  }
+
+  /** queued-run.edit of a held run: retexted where it waits. */
+  retextHeld(runId: RunId, text: string): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      const rec = this.#queue.find((r) => r.run.id === runId && r.hold === "held");
+      if (rec === undefined) return;
+      rec.text = text;
+      this.#message(rec, rec.messageId, "user", text, null);
+    });
   }
 
   /** A mode the lobby confirmed it set (POST /model {mode}), ahead of the transcript saying so. */
@@ -431,8 +558,8 @@ export class ThreadMapper {
       case "unqueued":
         return this.#unqueue(body);
       case "queue-cleared":
-        for (const rec of this.#queue) this.#cancelQueued(rec);
-        this.#queue = [];
+        for (const rec of this.#queue) if (rec.hold !== "held") this.#cancelQueued(rec);
+        this.#queue = this.#queue.filter((r) => r.hold === "held");
         return;
       case "held":
         return this.#held(body, e.id);
@@ -488,12 +615,22 @@ export class ThreadMapper {
       editTo: undefined,
       turnIds: new Set(),
       queuedBehind: this.#open !== undefined,
+      hold: undefined,
     };
     this.#runs.set(id, rec);
     return rec;
   }
 
   #enqueue(text: string): void {
+    // A held run the lobby queues again (queue.resume, or a Stop it put back):
+    // the same run, no longer held.
+    const resumed = this.#queue.find((r) => r.hold !== undefined && samePrompt(r.text, text));
+    if (resumed !== undefined) {
+      resumed.hold = undefined;
+      this.#o.messages.take(text);
+      if (resumed.run.queueHeld === true) this.#setRun(resumed, { queueHeld: false });
+      return;
+    }
     // The new text of a queued prompt T3 is editing: the same run, retexted.
     const edited = this.#queue.find((r) => r.editTo !== undefined && samePrompt(r.editTo, text));
     if (edited !== undefined) {
@@ -524,7 +661,9 @@ export class ThreadMapper {
   }
 
   #dequeue(): void {
-    const rec = this.#queue.find((r) => r.run.status === "queued" || r.run.status === "starting");
+    const rec = this.#queue.find(
+      (r) => (r.run.status === "queued" || r.run.status === "starting") && r.hold !== "held",
+    );
     if (rec === undefined || rec.run.status === "starting") return;
     this.#setRun(rec, { status: "starting", queuePosition: null });
     this.#renumberQueue();
@@ -535,6 +674,8 @@ export class ThreadMapper {
     if (i === -1) return;
     // Taken off to be replaced by its edit (queued-run.edit): it stays.
     if (this.#queue[i]?.editTo !== undefined) return;
+    // Handed back on a Stop that holds the queue: it waits for queue.resume.
+    if (this.#queue[i]?.hold === "held") return;
     const [rec] = this.#queue.splice(i, 1);
     if (rec === undefined) return;
     this.#cancelQueued(rec);
@@ -561,6 +702,8 @@ export class ThreadMapper {
     let rec: RunRecord;
     if (queued >= 0) {
       rec = this.#queue.splice(queued, 1)[0] as RunRecord;
+      if (rec.hold !== undefined && text !== undefined) this.#o.messages.take(text);
+      rec.hold = undefined;
     } else {
       const messageId =
         (text === undefined
@@ -577,6 +720,7 @@ export class ThreadMapper {
       queuePosition: null,
       startedAt: utc(this.#at),
       activeAttemptId: attempt,
+      ...(rec.run.queueHeld === undefined ? {} : { queueHeld: false }),
     });
     this.#emit("run-attempt.created", this.#attempt(rec, "running"), rec.run.id);
     this.#emit("node.updated", this.#rootNode(rec, "running"), rec.run.id);
