@@ -246,6 +246,15 @@ describe("HTTP routes for an admin", () => {
     });
   });
 
+  it("refuses a write a browser marks as sent from another origin", async () => {
+    const response = await fetch(`${base}/api/observability/v1/traces`, {
+      method: "POST",
+      headers: { ...ADMIN, "sec-fetch-site": "same-site" },
+      body: "{}",
+    });
+    expect(response.status).toBe(403);
+  });
+
   it("accepts the client's trace upload with 204", async () => {
     const response = await fetch(`${base}/api/observability/v1/traces`, {
       method: "POST",
@@ -256,7 +265,7 @@ describe("HTTP routes for an admin", () => {
   });
 
   it("answers 426 on /ws with another protocol version", async () => {
-    const response = await get("/ws?orchestrationProtocol=1", ADMIN);
+    const response = await get("/ws?orchestrationProtocol=1", { ...ADMIN, origin: base });
     expect(response.status).toBe(426);
     expect(await response.json()).toMatchObject({ orchestrationProtocolVersion: 2 });
   });
@@ -270,9 +279,11 @@ interface Frame {
 }
 
 /** A raw Effect RPC client over the JSON protocol, as the browser speaks it. */
-async function openRpc(headers: Record<string, string>) {
+async function openRpc(headers: Record<string, string>, origin: string | null = base) {
   const url = `${base.replace("http", "ws")}/ws?orchestrationProtocol=2`;
-  const socket = new WebSocket(url, { headers });
+  const socket = new WebSocket(url, {
+    headers: origin === null ? headers : { ...headers, origin },
+  });
   const frames: Frame[] = [];
   const waiters: Array<() => void> = [];
   socket.addEventListener("message", (event) => {
@@ -313,6 +324,18 @@ async function openRpc(headers: Record<string, string>) {
 describe("RPC over /ws", () => {
   it("refuses the upgrade without credentials", async () => {
     await expect(openRpc({})).rejects.toThrow("websocket refused");
+  });
+
+  it("refuses an admin's upgrade opened by a page on another origin, or with no Origin", async () => {
+    await expect(openRpc(ADMIN, "https://pages.viktorbarzin.me")).rejects.toThrow(
+      "websocket refused",
+    );
+    await expect(openRpc(ADMIN, null)).rejects.toThrow("websocket refused");
+    const foreign = await get("/ws?orchestrationProtocol=2", {
+      ...ADMIN,
+      origin: "https://pages.viktorbarzin.me",
+    });
+    expect(foreign.status).toBe(403);
   });
 
   it("answers server.getConfig and server.probe", async () => {

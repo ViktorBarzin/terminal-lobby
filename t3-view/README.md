@@ -123,6 +123,11 @@ sequenceDiagram
 - Only admins are admitted (`/whoami`'s `admin`), and an answer that carries
   `realUser` (acting as someone else) is refused.
 - tmux-api unreachable: 502.
+- The `/ws` upgrade must carry an `Origin` whose host is the request's `Host`,
+  or it gets 403, as session-events' `sameOrigin` does (`src/origin.ts`). The
+  Authentik cookie covers the whole `viktorbarzin.me` site, so a page on any
+  sibling host would otherwise reach the gate with the admin's identity. A
+  write whose `Sec-Fetch-Site` names another origin is refused the same way.
 - The secret a request presented travels with its `Identity`, because later
   stages relay the identity header and the secret on every call to
   session-events and tmux-api, as the browser's own calls do. It lives as long

@@ -5,7 +5,9 @@
  * Every route goes through `guarded`, which runs the auth gate (auth.ts)
  * before anything else, so an unauthenticated caller learns nothing, not even
  * whether a path exists or which protocol version the sidecar speaks. The
- * WebSocket upgrade is a GET to /ws and takes the same path.
+ * WebSocket upgrade is a GET to /ws and takes the same path, then must carry
+ * an Origin naming this host, and a write a browser marks as sent from another
+ * origin is refused (origin.ts).
  *
  * Routes:
  *   GET  /.well-known/t3/environment   environment descriptor (protocol 2)
@@ -49,6 +51,7 @@ import {
   hasOrchestrationProtocolHeader,
   protocolIncompatibleBody,
 } from "./protocol.ts";
+import { isCrossSiteWrite, isSameOriginUpgrade } from "./origin.ts";
 import { rpcScopeAuthorization } from "./rpc/authorization.ts";
 import { makeHandlers } from "./rpc/handlers.ts";
 import type { SequenceClock } from "./sequence.ts";
@@ -88,14 +91,19 @@ function guarded<E, R>(
   return (request: HttpServerRequest.HttpServerRequest) =>
     Effect.flatMap(
       Effect.promise(() => gate.check(request.headers)),
-      (decision): Effect.Effect<HttpServerResponse.HttpServerResponse, E, R> =>
-        decision.ok
-          ? handler(decision.identity, request)
-          : Effect.succeed(
-              HttpServerResponse.text(decision.status === 502 ? "lobby unavailable" : "forbidden", {
-                status: decision.status,
-              }),
-            ),
+      (decision): Effect.Effect<HttpServerResponse.HttpServerResponse, E, R> => {
+        if (!decision.ok) {
+          return Effect.succeed(
+            HttpServerResponse.text(decision.status === 502 ? "lobby unavailable" : "forbidden", {
+              status: decision.status,
+            }),
+          );
+        }
+        if (isCrossSiteWrite(request.method, request.headers)) {
+          return Effect.succeed(HttpServerResponse.text("forbidden", { status: 403 }));
+        }
+        return handler(decision.identity, request);
+      },
     );
 }
 
@@ -301,6 +309,9 @@ export function routes(deps: SidecarDeps) {
       "/ws",
       guarded(gate, (identity, request) =>
         Effect.gen(function* () {
+          if (!isSameOriginUpgrade(request.headers)) {
+            return HttpServerResponse.text("forbidden", { status: 403 });
+          }
           const url = HttpServerRequest.toURL(request);
           if (Option.isNone(url) || !hasCompatibleOrchestrationProtocol(url.value)) {
             return HttpServerResponse.jsonUnsafe(protocolIncompatibleBody, { status: 426 });
