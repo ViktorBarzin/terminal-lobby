@@ -1,0 +1,17 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  // Formatting matches frontend-v2/biome.jsonc (two spaces, 100 columns) so
+  // the repo's TypeScript reads one way. node_modules here is a generated
+  // link farm into the pinned T3 checkout and is never formatted.
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true, "defaultBranch": "master" },
+  "files": { "includes": ["src/**", "test/**", "scripts/**", "*.ts", "*.json", "*.jsonc"] },
+  "assist": { "enabled": false },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "suspicious": { "noExplicitAny": "error" }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "tl-t3-view",
+  "private": true,
+  "type": "module",
+  "description": "Serves T3 Code's web client against lobby sessions by speaking T3's orchestration protocol v2.",
+  "scripts": {
+    "test": "node node_modules/vitest/vitest.mjs run",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit -p .",
+    "build": "scripts/build-sidecar.sh dist"
+  }
+}
