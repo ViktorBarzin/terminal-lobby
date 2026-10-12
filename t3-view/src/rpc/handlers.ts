@@ -85,6 +85,16 @@ const FAR_FUTURE_MS = Date.UTC(2100, 0, 1);
 /** The id under which this process's preview state would reset; there is none. */
 const PREVIEW_EPOCH = "tl-t3-view";
 
+/** The VCS status of a session's directory: the sidecar reports no repository. */
+const NO_REPO = {
+  isRepo: false,
+  hasPrimaryRemote: false,
+  isDefaultRef: false,
+  refName: null,
+  hasWorkingTreeChanges: false,
+  workingTree: { files: [], insertions: 0, deletions: 0 },
+} as const;
+
 export function makeHandlers(context: ConnectionContext) {
   const config = () => serverConfig(context.config);
 
@@ -210,20 +220,15 @@ export function makeHandlers(context: ConnectionContext) {
     [WS_METHODS.subscribeProjectClones]: () => thenStayOpen([[]]),
     [WS_METHODS.scheduledTasksSubscribe]: () => thenStayOpen([{ tasks: [] }]),
     [WS_METHODS.subscribeVcsStatus]: () =>
-      thenStayOpen([
-        {
-          _tag: "snapshot" as const,
-          local: {
-            isRepo: false,
-            hasPrimaryRemote: false,
-            isDefaultRef: false,
-            refName: null,
-            hasWorkingTreeChanges: false,
-            workingTree: { files: [], insertions: 0, deletions: 0 },
-          },
-          remote: null,
-        },
-      ]),
+      thenStayOpen([{ _tag: "snapshot" as const, local: NO_REPO, remote: null }]),
+    [WS_METHODS.vcsRefreshStatus]: () =>
+      Effect.succeed({
+        ...NO_REPO,
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
+      }),
     [WS_METHODS.vcsListRefs]: () =>
       Effect.succeed({
         refs: [],
