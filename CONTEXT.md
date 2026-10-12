@@ -1042,6 +1042,13 @@ Claude.
 _Avoid_: chat view, console view, text mode (the mode is the switch's state,
 the view is the thing rendered)
 
+**T3 view**:
+The third view the session bar switches between: T3 Code's own web client,
+iframed into the session pane and served by `tl-t3-view`, rendering the same
+Session as a T3 thread (ADR-0044). Shown to admins while it is compared with the
+**Text view**. Not T3's server and not a second Claude.
+_Avoid_: T3 mode, T3 bridge (the bridge was ADR-0009's, removed in ADR-0029)
+
 **Blank** (Text view):
 A **Text view** that has been on screen for two seconds with no rows drawn. It
 says nothing about why: a conversation with no messages yet is blank, and so is
