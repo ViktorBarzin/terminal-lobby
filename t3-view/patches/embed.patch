@@ -30,10 +30,10 @@ index 00d5c05..5e9f71e 100644
        </SidebarProvider>
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..633000b
+index 0000000..7cff7b3
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,290 @@
 +// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
 +// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
 +
@@ -299,21 +299,49 @@ index 0000000..633000b
 +  const ok = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= 256;
 +  return ok(key) && ok(name) ? { key, name } : null;
 +}
++
++/** A server thread's two modes, the ones T3's composer draft can also hold. */
++export interface ThreadModes {
++  readonly interactionMode: string;
++  readonly runtimeMode: string;
++}
++
++/**
++ * Which of the composer draft's mode fields to clear so the draft follows the
++ * server thread. T3 keeps the Plan/Build and runtime pickers in a sticky
++ * per-thread draft and applies it on the next send when it differs from the
++ * server, so a mode the server left (a plan approved from its card, a mode
++ * changed in the lobby) would come back. A field is cleared, and the composer
++ * shows the server's mode again, whenever that mode differs from the one
++ * last seen on this page; `seen` is undefined the first time.
++ */
++export function draftModesToClear(
++  seen: ThreadModes | undefined,
++  server: ThreadModes,
++): { interactionMode: boolean; runtimeMode: boolean } {
++  return {
++    interactionMode: seen?.interactionMode !== server.interactionMode,
++    runtimeMode: seen?.runtimeMode !== server.runtimeMode,
++  };
++}
 diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
 new file mode 100644
-index 0000000..c17ee0d
+index 0000000..dc3eb89
 --- /dev/null
 +++ b/apps/web/src/embed.tsx
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,230 @@
 +// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed,
 +// the lobby draws the chrome: index.css hides T3's header and panels under
 +// html[data-t3-embed], AppSidebarLayout drops the sidebar, and chords the
 +// lobby names in tl-bindings go to it, since keys typed in a cross-origin
 +// frame never reach the parent.
++import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 +import { useNavigate, useParams } from "@tanstack/react-router";
-+import { useEffect } from "react";
++import { useEffect, useMemo } from "react";
 +
++import { useComposerDraftStore } from "./composerDraftStore";
 +import {
++  draftModesToClear,
 +  embedFlag,
 +  embedHost,
 +  isTextEntry,
@@ -331,7 +359,9 @@ index 0000000..c17ee0d
 +  type FrameChord,
 +  type FrameMessage,
 +  type RouteSession,
++  type ThreadModes,
 +} from "./embed.logic";
++import { useThreadShell } from "./state/entities";
 +import { usePrimaryEnvironmentId } from "./state/environments";
 +import { resolveThreadRouteRef } from "./threadRoutes";
 +
@@ -442,8 +472,43 @@ index 0000000..c17ee0d
 +  });
 +}
 +
++// The server thread's modes last seen on this page, by scoped thread key.
++const seenModes = new Map<string, ThreadModes>();
++
++// The composer draft's Plan/Build and runtime picks follow the server thread:
++// a mode the server leaves (a plan approved from its card, a mode changed in
++// the lobby) is cleared from the draft, so the next send does not restore it.
++function useDraftFollowsServerModes() {
++  const routeKey = useParams({
++    strict: false,
++    select: (params) => {
++      const ref = resolveThreadRouteRef(params);
++      return ref === null ? null : scopedThreadKey(ref);
++    },
++  });
++  const threadRef = useMemo(
++    () => (routeKey === null ? null : parseScopedThreadKey(routeKey)),
++    [routeKey],
++  );
++  const shell = useThreadShell(threadRef);
++  const interactionMode = shell?.interactionMode;
++  const runtimeMode = shell?.runtimeMode;
++
++  useEffect(() => {
++    if (routeKey === null || threadRef === null) return;
++    if (interactionMode === undefined || runtimeMode === undefined) return;
++    const server = { interactionMode, runtimeMode };
++    const clear = draftModesToClear(seenModes.get(routeKey), server);
++    seenModes.set(routeKey, server);
++    const drafts = useComposerDraftStore.getState();
++    if (clear.interactionMode) drafts.setInteractionMode(threadRef, null);
++    if (clear.runtimeMode) drafts.setRuntimeMode(threadRef, null);
++  }, [routeKey, threadRef, interactionMode, runtimeMode]);
++}
++
 +/** Announces the environment to the lobby and follows its tl-open. */
 +export function EmbedBridge() {
++  useDraftFollowsServerModes();
 +  const navigate = useNavigate();
 +  const environmentId = usePrimaryEnvironmentId();
 +  const threadId = useParams({

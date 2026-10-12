@@ -147,6 +147,18 @@ Details of the patch's side:
 - In embed mode the patch turns T3's `planModeEnabled` client setting on when
   the person has not chosen, since T3 hides its plan toggle otherwise and the
   embed has no Settings page.
+- In embed mode the composer's Plan/Build and runtime-mode picks follow the
+  server thread. T3 keeps them in a sticky per-thread draft
+  (`composerDraftStore`) and applies the draft on the next send when it
+  differs from the server, so a mode the session left on its own (a plan
+  approved from its card, a mode changed in the lobby or the terminal) would
+  come back with the next message. Whenever the routed thread's
+  `interactionMode` or `runtimeMode` differs from the one last seen on the
+  page, including the first time the page sees the thread, the patch clears
+  that field of the draft, and the composer shows the server's mode again
+  (`draftModesToClear` in `embed.logic.ts`, `useDraftFollowsServerModes` in
+  `embed.tsx`). A pick made since the last change is kept until the send
+  applies it. A pick left unsent across a reload is dropped.
 
 A `FrameChord` is:
 

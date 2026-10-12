@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 // @t3tools/web at the patched checkout, so this fails to import when the
 // patch did not apply.
 import {
+  draftModesToClear,
   embedFlag,
   embedHost,
   type FrameChord,
@@ -348,6 +349,39 @@ describe("route reports", () => {
       v: 1,
       threadId: null,
       session: null,
+    });
+  });
+});
+
+describe("draftModesToClear", () => {
+  const DEFAULT = { interactionMode: "default", runtimeMode: "approval-required" };
+
+  it("clears both draft fields the first time the page sees a thread", () => {
+    expect(draftModesToClear(undefined, DEFAULT)).toEqual({
+      interactionMode: true,
+      runtimeMode: true,
+    });
+  });
+
+  it("clears the plan pick once the server leaves plan mode (an approved plan)", () => {
+    const plan = { ...DEFAULT, interactionMode: "plan" };
+    expect(draftModesToClear(plan, DEFAULT)).toEqual({
+      interactionMode: true,
+      runtimeMode: false,
+    });
+  });
+
+  it("clears the runtime pick once the server's runtime mode moves", () => {
+    expect(draftModesToClear(DEFAULT, { ...DEFAULT, runtimeMode: "full-access" })).toEqual({
+      interactionMode: false,
+      runtimeMode: true,
+    });
+  });
+
+  it("keeps a pick the person made while the server's modes stay put", () => {
+    expect(draftModesToClear(DEFAULT, { ...DEFAULT })).toEqual({
+      interactionMode: false,
+      runtimeMode: false,
     });
   });
 });
