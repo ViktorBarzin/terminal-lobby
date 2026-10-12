@@ -63,9 +63,7 @@ describe("frameAncestors", () => {
 
   it("lets a loopback lobby frame a loopback sidecar, for the local check", () => {
     for (const host of ["127.0.0.1:17691", "localhost:17691", "[::1]:17691"]) {
-      expect(frameAncestors(host)).toBe(
-        "frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*",
-      );
+      expect(frameAncestors(host)).toBe("frame-ancestors http://localhost:* http://127.0.0.1:*");
     }
   });
 

@@ -50,7 +50,10 @@ export function isCrossSiteWrite(method: string, headers: RequestHeaders): boole
 /** The lobby's host name, beside the sidecar's own (t3view.example.org -> terminal.example.org). */
 const LOBBY_LABEL = "terminal";
 
-const LOOPBACK_ANCESTORS = "frame-ancestors http://localhost:* http://127.0.0.1:* http://[::1]:*";
+// CSP host sources cannot name an IPv6 literal (Chrome logs "does not support
+// the source expression" for http://[::1]:* and ignores it), so a loopback
+// lobby is framed by name or by 127.0.0.1.
+const LOOPBACK_ANCESTORS = "frame-ancestors http://localhost:* http://127.0.0.1:*";
 
 /**
  * The CSP that names who may frame the sidecar's pages: the lobby beside it,
