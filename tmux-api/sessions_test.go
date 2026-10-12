@@ -253,7 +253,7 @@ func TestParseSessionsFields(t *testing.T) {
 			in:   row("$3", "work", "1", "1700000000", "1690000000", "", "running", "4242", "claude", "Deploy the thing", "~/code"),
 			want: []Session{{
 				ID: "$3", Name: "work", Attached: 1, LastActivity: 1700000000,
-				Created: 1690000000, State: "running", PanePID: 4242,
+				Created: 1690000000, TmuxCreated: 1690000000, State: "running", PanePID: 4242,
 				Command: "claude", Title: "Deploy the thing", PaneTitle: "~/code",
 			}},
 		},
@@ -261,7 +261,7 @@ func TestParseSessionsFields(t *testing.T) {
 			name: "a pipe in either title survives verbatim",
 			in:   row("$4", "logs", "0", "1700000001", "1690000001", "", "", "77", "zsh", "Deploy | stage 2", "make | tee build.log"),
 			want: []Session{{
-				ID: "$4", Name: "logs", LastActivity: 1700000001, Created: 1690000001,
+				ID: "$4", Name: "logs", LastActivity: 1700000001, Created: 1690000001, TmuxCreated: 1690000001,
 				PanePID: 77, Command: "zsh",
 				Title: "Deploy | stage 2", PaneTitle: "make | tee build.log",
 			}},
@@ -270,7 +270,7 @@ func TestParseSessionsFields(t *testing.T) {
 			name: "a title in any script survives verbatim",
 			in:   row("$5", "testova-sesiya", "0", "1", "2", "", "", "9", "claude", "тестова сесия 🚀", ""),
 			want: []Session{{
-				ID: "$5", Name: "testova-sesiya", LastActivity: 1, Created: 2,
+				ID: "$5", Name: "testova-sesiya", LastActivity: 1, Created: 2, TmuxCreated: 2,
 				PanePID: 9, Command: "claude", Title: "тестова сесия 🚀",
 			}},
 		},
@@ -278,7 +278,7 @@ func TestParseSessionsFields(t *testing.T) {
 			name: "no title is no title — every session that predates the feature",
 			in:   row("$6", "bare", "0", "1", "2", "", "done", "9", "", "", ""),
 			want: []Session{{
-				ID: "$6", Name: "bare", LastActivity: 1, Created: 2,
+				ID: "$6", Name: "bare", LastActivity: 1, Created: 2, TmuxCreated: 2,
 				State: "done", PanePID: 9,
 			}},
 		},
@@ -304,7 +304,7 @@ func TestParseSessionsFields(t *testing.T) {
 				row("$10", "__terminal_lobby_prewarmed_pool_slot__home_wizard_code",
 					"0", "1", "2", "", "", "9", "claude", "", ""),
 			want: []Session{{
-				ID: "$9", Name: "work", LastActivity: 1, Created: 2,
+				ID: "$9", Name: "work", LastActivity: 1, Created: 2, TmuxCreated: 2,
 				PanePID: 9, Command: "claude",
 			}},
 		},
@@ -332,9 +332,9 @@ func TestParseSessionsFields(t *testing.T) {
 				"broken" + listSep + "line\n" +
 				row("$2", "also-ok", "2", "30", "40", "", "", "55", "bash", "", ""),
 			want: []Session{
-				{ID: "$1", Name: "ok", LastActivity: 10, Created: 20, State: "awaiting",
+				{ID: "$1", Name: "ok", LastActivity: 10, Created: 20, TmuxCreated: 20, State: "awaiting",
 					PanePID: 31, Command: "vim", Title: "Edit the thing", PaneTitle: "edit"},
-				{ID: "$2", Name: "also-ok", Attached: 2, LastActivity: 30, Created: 40,
+				{ID: "$2", Name: "also-ok", Attached: 2, LastActivity: 30, Created: 40, TmuxCreated: 40,
 					PanePID: 55, Command: "bash"},
 			},
 		},
@@ -399,7 +399,7 @@ func TestParseSessionsReadsOrigin(t *testing.T) {
 				"$3", "work", "0", "1700000000", "1690000000", "", "running",
 				"4242", "claude", "Deploy the thing", "~/code") + "\n"))
 			want := []Session{{
-				ID: "$3", Name: "work", LastActivity: 1700000000, Created: 1690000000,
+				ID: "$3", Name: "work", LastActivity: 1700000000, Created: 1690000000, TmuxCreated: 1690000000,
 				State: "running", PanePID: 4242, Command: "claude",
 				Title: "Deploy the thing", PaneTitle: "~/code", Origin: tc.want,
 				Caller: tc.wantCaller,
@@ -421,7 +421,7 @@ func TestOriginSurvivesATabInThePaneTitle(t *testing.T) {
 		"$3", "work", "0", "1", "2", "", "", "9", "claude", "",
 		"make\tinstall") + "\n"))
 	want := []Session{{
-		ID: "$3", Name: "work", LastActivity: 1, Created: 2, PanePID: 9,
+		ID: "$3", Name: "work", LastActivity: 1, Created: 2, TmuxCreated: 2, PanePID: 9,
 		Command: "claude", Origin: originUser, PaneTitle: "make\tinstall",
 	}}
 	if !reflect.DeepEqual(got, want) {

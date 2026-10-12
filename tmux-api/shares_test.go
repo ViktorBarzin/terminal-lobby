@@ -239,10 +239,10 @@ func TestAnnotateGuestsMarksTheOwnersSharedSessions(t *testing.T) {
 		{Owner: "emo", Name: "delta", Guest: "wizard", Mode: shareModeRW, SessionID: "$4", SessionCreated: 400},
 	}}
 	sessions := []Session{
-		{ID: "$1", Name: "alpha", Created: 100},
-		{ID: "$2", Name: "beta", Created: 200},
-		{ID: "$3", Name: "gamma", Created: 300},
-		{ID: "$4", Name: "delta", Created: 400},
+		{ID: "$1", Name: "alpha", Created: 100, TmuxCreated: 100},
+		{ID: "$2", Name: "beta", Created: 200, TmuxCreated: 200},
+		{ID: "$3", Name: "gamma", Created: 300, TmuxCreated: 300},
+		{ID: "$4", Name: "delta", Created: 400, TmuxCreated: 400},
 	}
 	annotateGuests(sessions, "wizard", ss)
 
@@ -272,5 +272,31 @@ func TestSessionGuestsAreOmittedWhenUnshared(t *testing.T) {
 	}
 	if _, ok := m["guests"]; ok {
 		t.Errorf("unshared session carries guests: %s", b)
+	}
+}
+
+// A session claimed from the pre-warm pool lists Created as the moment of the
+// claim (@tl_created), while a share pins tmux's own session_created. The
+// share still belongs to it.
+func TestAnnotateGuestsMatchesAClaimedSessionByTmuxCreated(t *testing.T) {
+	ss := ShareSet{Shares: []Share{
+		{Owner: "wizard", Name: "claimed", Guest: "emo", Mode: shareModeRW, SessionID: "$106", SessionCreated: 1000},
+	}}
+	sessions := []Session{{ID: "$106", Name: "claimed", Created: 1040, TmuxCreated: 1000}}
+	annotateGuests(sessions, "wizard", ss)
+	if len(sessions[0].Guests) != 1 || sessions[0].Guests[0].Name != "emo" {
+		t.Errorf("claimed session guests = %+v, want emo", sessions[0].Guests)
+	}
+}
+
+func TestParseSessionsKeepsTmuxCreatedBesideTheClaimStamp(t *testing.T) {
+	in := rowCreated("", "", "1040",
+		"$7", "claimed", "1", "1700000000", "1000", "", "running", "4242", "claude", "", "")
+	got := parseSessions([]byte(in + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d sessions, want 1", len(got))
+	}
+	if got[0].Created != 1040 || got[0].TmuxCreated != 1000 {
+		t.Errorf("Created=%d TmuxCreated=%d, want 1040 and 1000", got[0].Created, got[0].TmuxCreated)
 	}
 }

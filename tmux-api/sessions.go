@@ -227,6 +227,7 @@ func parseSessions(out []byte) []Session {
 		attached, errA := strconv.Atoi(parts[2])
 		activity, errB := strconv.ParseInt(parts[3], 10, 64)
 		created, errC := strconv.ParseInt(parts[4], 10, 64)
+		tmuxCreated := created
 		if errA != nil || errB != nil || errC != nil {
 			continue
 		}
@@ -284,6 +285,7 @@ func parseSessions(out []byte) []Session {
 			LastActivity: activity,
 			LastDrive:    lastDrive,
 			Created:      created,
+			TmuxCreated:  tmuxCreated,
 			State:        state,
 			Background:   parseBackground(parts[7]),
 			PanePID:      panePID,

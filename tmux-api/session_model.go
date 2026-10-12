@@ -41,6 +41,11 @@ type Session struct {
 	AgentOwner    string `json:"-"`
 	AgentLastTurn int64  `json:"-"`
 	Created       int64  `json:"created"`
+	// TmuxCreated is tmux's own #{session_created}, before the claim stamp
+	// above replaces it. A share is pinned to this one (Share.SessionCreated),
+	// so it is what tells whether a grant belongs to the session. Not on the
+	// wire.
+	TmuxCreated int64 `json:"-"`
 	// State of the Claude conversation inside the session: "running",
 	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
 	// old wire shape for stateless sessions (external /sessions pollers).

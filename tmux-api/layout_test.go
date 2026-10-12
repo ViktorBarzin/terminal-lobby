@@ -413,8 +413,8 @@ func TestParseSessionsAllFields(t *testing.T) {
 		row("$1", "beta", "0", "1751800001", "1751700001", "", "", "991", "zsh", "", "devvm") + "\n")
 	got := parseSessions(out)
 	want := []Session{
-		{ID: "$0", Name: "alpha", Attached: 1, LastActivity: 1751800000, Created: 1751700000, State: "running", PanePID: 4242, Command: "claude", Title: "Alpha work", PaneTitle: "~/code"},
-		{ID: "$1", Name: "beta", Attached: 0, LastActivity: 1751800001, Created: 1751700001, PanePID: 991, Command: "zsh", PaneTitle: "devvm"},
+		{ID: "$0", Name: "alpha", Attached: 1, LastActivity: 1751800000, Created: 1751700000, TmuxCreated: 1751700000, State: "running", PanePID: 4242, Command: "claude", Title: "Alpha work", PaneTitle: "~/code"},
+		{ID: "$1", Name: "beta", Attached: 0, LastActivity: 1751800001, Created: 1751700001, TmuxCreated: 1751700001, PanePID: 991, Command: "zsh", PaneTitle: "devvm"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parse:\n got %+v\nwant %+v", got, want)

@@ -610,9 +610,10 @@ type SessionGuest struct {
 }
 
 // annotateGuests gives each of owner's sessions the people it is shared with,
-// sorted by name. A row is matched by name, and by tmux's id too once it
-// carries one, the identity an attach is checked against: a grant pinned to an
-// earlier session of the same name marks nothing.
+// sorted by name. A row is matched by name, and by tmux's id and creation time
+// too once it carries them, the identity an attach is checked against: a grant
+// pinned to an earlier session of the same name marks nothing. TmuxCreated, not
+// Created: a session claimed from the pre-warm pool lists the claim time.
 func annotateGuests(sessions []Session, owner string, ss ShareSet) {
 	for i := range sessions {
 		s := &sessions[i]
@@ -620,7 +621,7 @@ func annotateGuests(sessions []Session, owner string, ss ShareSet) {
 			if sh.Owner != owner || sh.Name != s.Name {
 				continue
 			}
-			if sh.SessionID != "" && (sh.SessionID != s.ID || sh.SessionCreated != s.Created) {
+			if sh.SessionID != "" && (sh.SessionID != s.ID || sh.SessionCreated != s.TmuxCreated) {
 				continue
 			}
 			s.Guests = append(s.Guests, SessionGuest{Name: sh.Guest, Mode: sh.Mode})
