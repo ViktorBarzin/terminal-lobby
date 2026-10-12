@@ -248,6 +248,56 @@ describe("a reply stored after its turn ended", () => {
   });
 });
 
+describe("a streamed reply whose turn_end lands before its stored text", () => {
+  const event = (o: Record<string, unknown>) => ({
+    event: "message",
+    data: JSON.stringify({ session: "s", ...o }),
+  });
+
+  it("keeps the streamed row and gives it the stored text, instead of drawing the reply twice", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    model.onFrame(event({ id: 50, kind: "user", turnId: "t2", body: "say hi" }));
+    model.onFrame(
+      event({ id: 0, kind: "delta", turnId: "t2", stream: "text", block: 0, body: "Hi" }),
+    );
+    model.onFrame(
+      event({ id: 0, kind: "delta", turnId: "t2", stream: "text", block: 0, body: " there" }),
+    );
+    const streamed = ofType(model.projection.turnItems, "assistant_message").at(-1);
+    model.onFrame(event({ id: 51, kind: "turn_end", turnId: "t2" }));
+    model.onFrame(event({ id: 52, kind: "text", turnId: "t2", body: "Hi there" }));
+    const run = model.projection.runs.at(-1);
+    const items = model.projection.turnItems.filter((i) => i.runId === run?.id);
+    expect(items.map((i) => i.type)).toEqual(["user_message", "assistant_message"]);
+    const [reply] = ofType(items, "assistant_message");
+    expect(reply).toMatchObject({ id: streamed?.id, text: "Hi there", streaming: false });
+    expect(visibleTypes(model.projection).slice(-2)).toEqual(["user_message", "assistant_message"]);
+    assertSemanticProjectionIntegrity(model.projection);
+  });
+
+  it("does not hand a settled row of one turn to the next turn's reply", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    model.onFrame(event({ id: 50, kind: "user", turnId: "t2", body: "one" }));
+    model.onFrame(
+      event({ id: 0, kind: "delta", turnId: "t2", stream: "text", block: 0, body: "A" }),
+    );
+    model.onFrame(event({ id: 51, kind: "turn_end", turnId: "t2" }));
+    model.onFrame(event({ id: 52, kind: "user", turnId: "t3", body: "two" }));
+    model.onFrame(event({ id: 53, kind: "text", turnId: "t3", body: "B" }));
+    model.onFrame(event({ id: 54, kind: "turn_end", turnId: "t3" }));
+    const [second, third] = model.projection.runs.slice(-2);
+    const textsOf = (runId: string | undefined) =>
+      ofType(
+        model.projection.turnItems.filter((i) => i.runId === runId),
+        "assistant_message",
+      ).map((i) => i.text);
+    expect(textsOf(second?.id)).toEqual(["A"]);
+    expect(textsOf(third?.id)).toEqual(["B"]);
+  });
+});
+
 describe("stops and wakes", () => {
   const event = (o: Record<string, unknown>) => ({
     event: "message",

@@ -110,6 +110,11 @@ interface StreamSlot {
   readonly runId: RunId;
   readonly startedAt: number;
   text: string;
+  /**
+   * Drawn as completed at its turn's end, and kept for the stored block that
+   * replaces it: the mod's turn_end can land before Claude's stored text.
+   */
+  settled?: true;
 }
 
 export type DialogKind = "ask" | "permission" | "plan";
@@ -576,6 +581,9 @@ export class ThreadMapper {
     this.#emit("run-attempt.created", this.#attempt(rec, "running"), rec.run.id);
     this.#emit("node.updated", this.#rootNode(rec, "running"), rec.run.id);
     this.#emit("provider-turn.updated", this.#providerTurn(rec, "running"), rec.run.id);
+    // A stored block reaches only the open run or the last one (#ensureOpen),
+    // so a settled slot of an earlier run has nothing left to wait for.
+    this.#streams = this.#streams.filter((s) => !s.settled);
     this.#open = rec;
     this.#last = rec;
     this.#renumberQueue();
@@ -793,7 +801,7 @@ export class ThreadMapper {
     rec.hasOutput = true;
     const block = e.block ?? 0;
     let slot = this.#streams.find(
-      (s) => s.runId === rec.run.id && s.stream === stream && s.block === block,
+      (s) => s.runId === rec.run.id && s.stream === stream && s.block === block && !s.settled,
     );
     if (slot === undefined) {
       slot = {
@@ -832,10 +840,17 @@ export class ThreadMapper {
     this.#item(rec, fields, slot.itemId, slot.ordinal, slot.startedAt);
   }
 
+  /**
+   * Draws the turn's open streams as completed. The slots stay until the
+   * stored block for each arrives (#reply), so that block keeps the streamed
+   * row's id and place instead of drawing the reply a second time.
+   */
   #closeStreams(rec: RunRecord): void {
-    const left = this.#streams.filter((s) => s.runId === rec.run.id);
-    this.#streams = this.#streams.filter((s) => s.runId !== rec.run.id);
-    for (const slot of left) this.#emitStream(rec, slot, false);
+    for (const slot of this.#streams) {
+      if (slot.runId !== rec.run.id || slot.settled) continue;
+      slot.settled = true;
+      this.#emitStream(rec, slot, false);
+    }
   }
 
   #toolUse(e: LobbyEvent): void {
