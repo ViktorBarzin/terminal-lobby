@@ -84,6 +84,13 @@ const READ_ONLY = "This session is shared with you to watch, not to drive.";
  * stays the same however often it is asked.
  */
 const TRANSIENT_MODE_REASONS = new Set(["unreadable", "unverified", "dialog-open"]);
+
+/**
+ * Waits before each try of a new session's first prompt, in ms: the browser's
+ * own ladder (frontend-v2 lib/first-prompt.ts) with a longer last rung. Each
+ * try is held by session-events until the Claude says hello, up to 25s.
+ */
+const FIRST_PROMPT_LADDER: readonly number[] = [0, 1600, 3000, 6000, 10_000];
 const MINT_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
 function mintSessionName(): string {
@@ -130,7 +137,20 @@ export class Commands {
     if (!("threadId" in command)) {
       throw new CommandFailure(`${command.type} is not something a lobby session can do yet.`);
     }
-    this.#d.log?.(`${identity.osUser}: ${command.type} on ${command.threadId}`);
+    const what = `${identity.osUser}: ${command.type} on ${command.threadId}`;
+    this.#d.log?.(what);
+    try {
+      await this.#dispatch(identity, command);
+    } catch (error) {
+      this.#d.log?.(`${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  async #dispatch(
+    identity: Identity,
+    command: Extract<OrchestrationV2Command, { readonly threadId: unknown }>,
+  ): Promise<void> {
     const handle = await this.#d.thread(identity, command.threadId);
     if (handle === undefined) throw new CommandFailure("The lobby lists no such session.");
     const { entry, live } = handle;
@@ -373,14 +393,28 @@ export class Commands {
     messageId: MessageId | undefined,
     text: string,
     options: { readonly wait?: boolean; readonly id?: string; readonly awaitReady?: boolean },
+    unready?: { readonly ladder: readonly number[]; readonly sleep: (ms: number) => Promise<void> },
   ): Promise<void> {
     const key = handle.live.pendingKey;
     if (messageId !== undefined) this.#d.pending.add(key, { messageId, text, at: this.#d.now() });
-    try {
-      await this.#d.api.prompt(relay, handle.entry.name, handle.entry.owner, { text, ...options });
-    } catch (error) {
-      if (messageId !== undefined) this.#d.pending.remove(key, messageId);
-      throw new CommandFailure(lobbyReason(error));
+    const ladder = unready?.ladder ?? [0];
+    for (let rung = 0; ; rung++) {
+      if (rung > 0) await unready?.sleep(ladder[rung] ?? 0);
+      try {
+        await this.#d.api.prompt(relay, handle.entry.name, handle.entry.owner, {
+          text,
+          ...options,
+        });
+        return;
+      } catch (error) {
+        // 503 is session-events saying the session's Claude has not said hello
+        // yet. Each attempt looks for the mod again (a claimed slot's mod is
+        // still under the slot's name until asked), as the browser's ladder does.
+        const notReady = error instanceof LobbyError && error.status === 503;
+        if (notReady && rung + 1 < ladder.length) continue;
+        if (messageId !== undefined) this.#d.pending.remove(key, messageId);
+        throw new CommandFailure(lobbyReason(error));
+      }
     }
   }
 
@@ -499,6 +533,20 @@ export class Commands {
     identity: Identity,
     input: OrchestrationV2ThreadLaunchInput,
   ): Promise<{ readonly threadId: string; readonly projection: OrchestrationV2ThreadProjection }> {
+    const what = `${identity.osUser}: launch ${input.threadId ?? "(no thread id)"}`;
+    this.#d.log?.(`${what} in ${input.projectId}`);
+    try {
+      return await this.#launch(identity, input);
+    } catch (error) {
+      this.#d.log?.(`${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  async #launch(
+    identity: Identity,
+    input: OrchestrationV2ThreadLaunchInput,
+  ): Promise<{ readonly threadId: string; readonly projection: OrchestrationV2ThreadProjection }> {
     const project = await this.#d.project(identity, input.projectId);
     if (project === undefined || project.id.startsWith("shared:")) {
       throw new CommandFailure("New sessions go in one of your own projects.");
@@ -514,6 +562,58 @@ export class Commands {
       ...(effort === undefined ? {} : { effort }),
     };
     const sleep = this.#d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    // T3 sends the launch again when the first attempt failed after the
+    // session was claimed (its first prompt refused, say). The thread id is
+    // aliased by then, so that session takes the prompt rather than a second
+    // one being started beside it.
+    const started =
+      input.threadId === undefined ? undefined : await this.#d.thread(identity, input.threadId);
+    const handle =
+      started ?? (await this.#claimNew(identity, project, name, threadId, slot, sleep));
+    const wantMode = lobbyModeForInteraction(input.interactionMode, input.runtimeMode);
+    const message = input.initialMessage;
+    if (message !== undefined && message.text.trim() !== "") {
+      await this.#modeBeforeFirstPrompt(handle, relay, wantMode, sleep);
+      const messageId = message.messageId;
+      await this.#send(
+        handle,
+        relay,
+        messageId,
+        message.text,
+        {
+          awaitReady: true,
+          ...(promptIdOf(input.commandId) === undefined
+            ? {}
+            : { id: promptIdOf(input.commandId) as string }),
+        },
+        { ladder: FIRST_PROMPT_LADDER, sleep },
+      );
+    } else {
+      // No prompt rides on it, so a mode that did not take is a notice; the
+      // composer shows the mode the session reports.
+      await this.#setMode(handle, relay, wantMode).catch((error: unknown) => {
+        this.#d.log?.(`launch ${handle.entry.name}: mode ${wantMode}: ${String(error)}`);
+        handle.live.commit(
+          handle.live.model.mapper.notice(
+            `Mode not set: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      });
+    }
+    await handle.live.ready(5_000);
+    return { threadId: handle.entry.threadId, projection: handle.live.projection };
+  }
+
+  /** A pre-warm slot claimed under a minted name, aliased to T3's thread id, once it is listed. */
+  async #claimNew(
+    identity: Identity,
+    project: DirectoryProject,
+    name: string,
+    threadId: string,
+    slot: { readonly dir: string; readonly model?: string; readonly effort?: string },
+    sleep: (ms: number) => Promise<void>,
+  ): Promise<ThreadHandle> {
+    const relay = identity.relay;
     try {
       await this.#d.api.prewarm(relay, slot);
       let claimed = false;
@@ -536,39 +636,12 @@ export class Commands {
     this.#d.alias(identity, name, threadId);
     // tmux-api serves /sessions from a cache of a few seconds, so the claimed
     // session can take that long to be listed.
-    let handle: ThreadHandle | undefined;
-    for (let attempt = 0; attempt < 20 && handle === undefined; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
       if (attempt > 0) await sleep(750);
-      handle = await this.#d.thread(identity, threadId);
+      const handle = await this.#d.thread(identity, threadId);
+      if (handle !== undefined) return handle;
     }
-    if (handle === undefined) {
-      throw new CommandFailure("The new session did not appear in the lobby.");
-    }
-    const wantMode = lobbyModeForInteraction(input.interactionMode, input.runtimeMode);
-    const message = input.initialMessage;
-    if (message !== undefined && message.text.trim() !== "") {
-      await this.#modeBeforeFirstPrompt(handle, relay, wantMode, sleep);
-      const messageId = message.messageId;
-      await this.#send(handle, relay, messageId, message.text, {
-        awaitReady: true,
-        ...(promptIdOf(input.commandId) === undefined
-          ? {}
-          : { id: promptIdOf(input.commandId) as string }),
-      });
-    } else {
-      // No prompt rides on it, so a mode that did not take is a notice; the
-      // composer shows the mode the session reports.
-      await this.#setMode(handle, relay, wantMode).catch((error: unknown) => {
-        this.#d.log?.(`launch ${name}: mode ${wantMode}: ${String(error)}`);
-        handle.live.commit(
-          handle.live.model.mapper.notice(
-            `Mode not set: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        );
-      });
-    }
-    await handle.live.ready(5_000);
-    return { threadId: handle.entry.threadId, projection: handle.live.projection };
+    throw new CommandFailure("The new session did not appear in the lobby.");
   }
 }
 

@@ -62,8 +62,14 @@ function fakeApi(
 }
 
 function setup(
-  options: { access?: string; frames?: string[]; api?: ReturnType<typeof fakeApi> } = {},
+  options: {
+    access?: string;
+    frames?: string[];
+    api?: ReturnType<typeof fakeApi>;
+    draftListed?: boolean;
+  } = {},
 ) {
+  const logs: string[] = [];
   const pending = new PendingDispatches({ now: () => 1_791_794_200_000 });
   const live = new LiveThread({
     osUser: "wizard",
@@ -103,7 +109,8 @@ function setup(
     thread: async (_identity, id) => {
       // The draft's session is listed only on the second look, as tmux-api's
       // session cache makes a fresh claim wait.
-      if (id === "t3-draft") return ++draftLooks >= 2 ? handle : undefined;
+      if (id === "t3-draft")
+        return options.draftListed === true || ++draftLooks >= 2 ? handle : undefined;
       return id === entry.threadId ? handle : undefined;
     },
     project: async (_identity, id) => (id === project.id ? project : undefined),
@@ -111,8 +118,9 @@ function setup(
     sleep: async () => {},
     mintName: () => "bw8k5gt9v314",
     knownModels: new Set(["claude-opus-5-5", "claude-haiku-4-5-20251001"]),
+    log: (line) => logs.push(line),
   });
-  return { commands, calls, live, pending, aliases };
+  return { commands, calls, live, pending, aliases, logs };
 }
 
 const base = {
@@ -533,6 +541,22 @@ describe("queue, stop, mode and model", () => {
     ).rejects.toThrow("stayed in its mode (dialog-open)");
   });
 
+  it("logs a command the lobby refused, with the reason", async () => {
+    const api = fakeApi({ mode: () => ({ applied: false, reason: "dialog-open" }) });
+    const { commands, logs } = setup({ api });
+    await expect(
+      commands.dispatch(identity, {
+        type: "thread.interaction-mode.set",
+        ...base,
+        interactionMode: "plan",
+      }),
+    ).rejects.toThrow();
+    expect(logs).toEqual([
+      "wizard: thread.interaction-mode.set on scratch",
+      "wizard: thread.interaction-mode.set on scratch failed: The session stayed in its mode (dialog-open).",
+    ]);
+  });
+
   it("surfaces a busy session's refusal of a model change", async () => {
     const api = fakeApi({
       model: () => {
@@ -656,5 +680,65 @@ describe("launchThread", () => {
         workspaceStrategy: { type: "root" },
       }),
     ).rejects.toThrow("your own projects");
+  });
+  it("asks again while the new session's Claude has not said hello yet", async () => {
+    let prompts = 0;
+    const api = fakeApi({
+      mode: () => ({ applied: true, mode: "bypassPermissions" }),
+      prompt: () => {
+        if (++prompts < 3) {
+          throw new LobbyError(
+            503,
+            "session is not ready for input: its Claude has not connected to the lobby",
+          );
+        }
+      },
+    });
+    const { commands, calls, pending, live } = setup({ api });
+    await commands.launch(identity, launchInput("default"));
+    // The same id each time, so session-events joins an attempt still waiting.
+    expect(calls.filter((c) => c.op === "prompt").map((c) => c.args.at(-1))).toEqual([
+      { text: "plan it", awaitReady: true, id: "c-launch" },
+      { text: "plan it", awaitReady: true, id: "c-launch" },
+      { text: "plan it", awaitReady: true, id: "c-launch" },
+    ]);
+    expect(pending.list(live.pendingKey).map((p) => p.messageId)).toEqual(["first-m"]);
+  });
+
+  it("does not ask again when the lobby refuses the first prompt for another reason", async () => {
+    const api = fakeApi({
+      mode: () => ({ applied: true, mode: "bypassPermissions" }),
+      prompt: () => {
+        throw new LobbyError(409, "session scratch is suspended — resume it before sending");
+      },
+    });
+    const { commands, calls } = setup({ api });
+    await expect(commands.launch(identity, launchInput("default"))).rejects.toThrow("suspended");
+    expect(calls.filter((c) => c.op === "prompt")).toHaveLength(1);
+  });
+
+  it("sends a retried launch into the session it already started, not a new one", async () => {
+    const api = fakeApi({ mode: () => ({ applied: true, mode: "bypassPermissions" }) });
+    const { commands, calls, aliases } = setup({ api, draftListed: true });
+    const result = await commands.launch(identity, {
+      ...launchInput("default"),
+      reuseExistingThread: true,
+    });
+    expect(calls.map((c) => c.op)).toEqual(["mode", "prompt"]);
+    expect(aliases).toEqual([]);
+    expect(result.threadId).toBe("scratch");
+  });
+
+  it("logs a launch and why it failed, never the first prompt's text", async () => {
+    const api = fakeApi({ mode: () => ({ applied: false, reason: "unavailable" }) });
+    const { commands, logs } = setup({ api });
+    await expect(
+      commands.launch(identity, launchInput("default", "approval-required")),
+    ).rejects.toThrow("first message was not sent");
+    expect(logs.filter((l) => l.startsWith("wizard: launch"))).toEqual([
+      "wizard: launch t3-draft in project:lobby",
+      "wizard: launch t3-draft failed: The new session could not be put in manual mode (unavailable), so the first message was not sent.",
+    ]);
+    expect(logs.some((l) => l.includes("plan it"))).toBe(false);
   });
 });
