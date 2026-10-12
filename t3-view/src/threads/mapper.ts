@@ -1331,7 +1331,10 @@ export class ThreadMapper {
       // The mod holds the dialog in the running Claude, so an answer lands
       // now: T3's "live". ("message" would make T3 answer a question by
       // sending a new prompt, and draw an approval as unanswerable.)
-      responseCapability: { type: "live", providerSessionId: Ids.providerSessionId(this.#o.threadId) },
+      responseCapability: {
+        type: "live",
+        providerSessionId: Ids.providerSessionId(this.#o.threadId),
+      },
       createdAt: utc(this.#at),
       resolvedAt: status === "pending" ? null : utc(this.#at),
     };

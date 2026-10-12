@@ -271,11 +271,16 @@ describe("stops and wakes", () => {
     const { model } = makeModel();
     feed(model, fixture("01-open-first-turn.sse"));
     const note =
-      "<task-notification>\n<task-id>b1</task-id>\n<summary>Background command \"loop\" completed (exit code 0)</summary>\n</task-notification>";
+      '<task-notification>\n<task-id>b1</task-id>\n<summary>Background command "loop" completed (exit code 0)</summary>\n</task-notification>';
     model.onFrame(event({ id: 60, kind: "meta", meta: "queued", turnId: "t1", body: note }));
     model.onFrame(event({ id: 61, kind: "meta", meta: "unqueued", turnId: "t1", body: note }));
     model.onFrame(
-      event({ id: 62, kind: "state", turnId: "t1", body: 'Background command "loop" completed (exit code 0)' }),
+      event({
+        id: 62,
+        kind: "state",
+        turnId: "t1",
+        body: 'Background command "loop" completed (exit code 0)',
+      }),
     );
     model.onFrame(event({ id: 63, kind: "text", turnId: "t2", body: "The loop finished." }));
     model.onFrame(event({ id: 64, kind: "turn_end", turnId: "t2" }));
