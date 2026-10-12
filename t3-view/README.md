@@ -78,12 +78,20 @@ umask 077; sudo sed -n 's/^TL_PROXY_SECRET=//p' /etc/terminal-lobby.local.conf >
 TL_T3_VIEW_PORT=17690 TL_T3_VIEW_WEB_DIR="$W/web" node dist/tl-t3-view.mjs &
 node scripts/dev-proxy.mjs --listen 127.0.0.1:17691 --target 127.0.0.1:17690 \
   --identity <an identity that maps to an admin> --secret-file "$W/proxy-secret" &
-# open http://127.0.0.1:17691/
+# open the http://127.0.0.1:17691/?token=... link the proxy prints on stderr
 ```
 
 The proxy adds the identity header and the real proxy secret to every request
 and WebSocket upgrade, as Traefik's middleware does. The sidecar then checks
 them with the production tmux-api.
+
+Whoever gets through the proxy acts as that identity, with the real secret,
+and every OS user on the devvm can reach a loopback port. So the proxy mints a
+random token at startup and prints a link carrying it, once. Opening the link
+sets an HttpOnly cookie for that port, and the proxy answers 401 to every
+request and upgrade without it, forwarding nothing. Keep the link to
+yourself, and stop the proxy when the check is done. Prefer an identity that
+maps to a throwaway admin over your own where one exists.
 
 ## Inbound auth
 
