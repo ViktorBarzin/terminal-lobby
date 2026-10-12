@@ -30,10 +30,10 @@ index 00d5c05..5e9f71e 100644
        </SidebarProvider>
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..beae5fe
+index 0000000..66f2734
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,223 @@
 +// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
 +// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
 +
@@ -227,12 +227,42 @@ index 0000000..beae5fe
 +  }
 +  return null;
 +}
++
++/**
++ * The client's stored settings with plan mode on, or null to leave them: the
++ * lobby's sessions take plan mode, but T3 hides its toggle until a Settings
++ * switch is on, and the embed has no Settings page. A choice already made
++ * stays.
++ */
++export function withPlanModeDefault(raw: string | null): string | null {
++  if (raw === null) return JSON.stringify({ planModeEnabled: true });
++  let value: unknown;
++  try {
++    value = JSON.parse(raw);
++  } catch {
++    return null;
++  }
++  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
++  if ("planModeEnabled" in value) return null;
++  return JSON.stringify({ ...value, planModeEnabled: true });
++}
++
++/** Where the sidecar answers which thread a lobby key names (a session T3 created keeps T3's id). */
++export function threadLookupPath(key: string): string {
++  return `/.well-known/t3/thread/${encodeURIComponent(key)}`;
++}
++
++export function threadFromLookup(body: unknown): string | null {
++  if (typeof body !== "object" || body === null) return null;
++  const threadId: unknown = (body as { threadId?: unknown }).threadId;
++  return typeof threadId === "string" && threadId !== "" ? threadId : null;
++}
 diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
 new file mode 100644
-index 0000000..169fec2
+index 0000000..b83d330
 --- /dev/null
 +++ b/apps/web/src/embed.tsx
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,156 @@
 +// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed,
 +// the lobby draws the chrome: index.css hides T3's header and panels under
 +// html[data-t3-embed], AppSidebarLayout drops the sidebar, and chords the
@@ -250,6 +280,9 @@ index 0000000..169fec2
 +  parseLobbyMessage,
 +  readyMessage,
 +  routeFrameKey,
++  threadFromLookup,
++  threadLookupPath,
++  withPlanModeDefault,
 +  type FrameChord,
 +  type FrameMessage,
 +} from "./embed.logic";
@@ -257,6 +290,7 @@ index 0000000..169fec2
 +import { resolveThreadRouteRef } from "./threadRoutes";
 +
 +const FLAG_KEY = "t3-embed";
++const CLIENT_SETTINGS_KEY = "t3code:client-settings:v1";
 +
 +// The flag is kept for the frame's session, since T3's own navigation drops
 +// the query; the parent's origin is read from the browser every time.
@@ -302,8 +336,25 @@ index 0000000..169fec2
 +  return isTextEntry(element instanceof HTMLElement ? element : null);
 +}
 +
++// The lobby's thread key, as the sidecar names that thread.
++async function resolveThread(key: string): Promise<string> {
++  try {
++    const response = await fetch(threadLookupPath(key), { credentials: "same-origin" });
++    if (!response.ok) return key;
++    return threadFromLookup(await response.json()) ?? key;
++  } catch {
++    return key;
++  }
++}
++
 +if (host !== null) {
 +  document.documentElement.dataset.t3Embed = "";
++  try {
++    const settings = withPlanModeDefault(window.localStorage.getItem(CLIENT_SETTINGS_KEY));
++    if (settings !== null) window.localStorage.setItem(CLIENT_SETTINGS_KEY, settings);
++  } catch {
++    // Without storage the toggle stays hidden; plan mode still shows from the lobby.
++  }
 +  // Capture on window, registered at startup, so it runs before T3's own.
 +  window.addEventListener(
 +    "keydown",
@@ -351,8 +402,10 @@ index 0000000..169fec2
 +    // An href rather than typed search params: the thread route declares
 +    // none, and the contract keeps ?embed on the URL.
 +    openThread = (target) => {
-+      const path = `/${encodeURIComponent(environmentId)}/${encodeURIComponent(target)}`;
-+      void navigate({ href: `${path}?embed` });
++      void resolveThread(target).then((resolved) => {
++        const path = `/${encodeURIComponent(environmentId)}/${encodeURIComponent(resolved)}`;
++        if (window.location.pathname !== path) void navigate({ href: `${path}?embed` });
++      });
 +    };
 +    if (pendingOpen !== null) {
 +      const target = pendingOpen;

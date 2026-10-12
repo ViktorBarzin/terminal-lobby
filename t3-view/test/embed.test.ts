@@ -15,6 +15,9 @@ import {
   parseLobbyMessage,
   readyMessage,
   routeFrameKey,
+  threadFromLookup,
+  threadLookupPath,
+  withPlanModeDefault,
 } from "@t3tools/web/src/embed.logic.ts";
 
 const T3 = { hostname: "t3view.viktorbarzin.me" };
@@ -261,5 +264,37 @@ describe("parseLobbyMessage", () => {
     ["null", null],
   ])("drops %s", (_name, data) => {
     expect(parseLobbyMessage(data)).toBeNull();
+  });
+});
+
+describe("withPlanModeDefault", () => {
+  it("turns plan mode on in the client's settings when the person never chose", () => {
+    expect(JSON.parse(withPlanModeDefault(null) ?? "")).toEqual({ planModeEnabled: true });
+    expect(JSON.parse(withPlanModeDefault('{"sendShortcut":"enter"}') ?? "")).toEqual({
+      sendShortcut: "enter",
+      planModeEnabled: true,
+    });
+  });
+
+  it("leaves a choice the person made, and settings it cannot read", () => {
+    expect(withPlanModeDefault('{"planModeEnabled":false}')).toBeNull();
+    expect(withPlanModeDefault('{"planModeEnabled":true}')).toBeNull();
+    expect(withPlanModeDefault("not json")).toBeNull();
+    expect(withPlanModeDefault("[1]")).toBeNull();
+  });
+});
+
+describe("thread lookup", () => {
+  it("asks the sidecar for the thread a lobby key names", () => {
+    expect(threadLookupPath("bw8k5gt9v314")).toBe("/.well-known/t3/thread/bw8k5gt9v314");
+    expect(threadLookupPath("a/b c")).toBe("/.well-known/t3/thread/a%2Fb%20c");
+  });
+
+  it("reads the thread id from the answer, and nothing from anything else", () => {
+    expect(threadFromLookup({ threadId: "5992c13c" })).toBe("5992c13c");
+    expect(threadFromLookup({ threadId: "" })).toBeNull();
+    expect(threadFromLookup({ threadId: 7 })).toBeNull();
+    expect(threadFromLookup(null)).toBeNull();
+    expect(threadFromLookup("5992c13c")).toBeNull();
   });
 });
