@@ -2419,18 +2419,29 @@ const DIALOG_KIND_PERMISSION = "permission";
  * the prompt (1 prompt in 6 on 2026-09-27). That record was written before the
  * prompt was drawn, so it says nothing about whether it was answered. An event
  * with no time on it is taken to be after.
+ *
+ * A prompt the mod holds names its call (toolId), and the mod clears the
+ * reading when the prompt settles. Such a reading lets go only on that call's
+ * result: a workflow's other agents keep writing while one waits, and on
+ * 2026-10-12 their first row took the card down for good.
  */
 export function permissionFromPane(events: Event[]): PermissionReading | null {
   let latest = "";
   let id = 0;
   let readAt = 0;
+  let held = "";
   for (const e of events) {
     if (e.kind === "meta") {
       if (e.meta === "asking") {
         latest = e.body ?? "";
         id = e.id;
         readAt = e.at ?? 0;
+        held = heldToolId(latest);
       }
+      continue;
+    }
+    if (held) {
+      if (e.kind === "tool_result" && e.toolId === held) latest = "";
       continue;
     }
     if (e.at !== undefined && e.at <= readAt) continue;
@@ -2463,6 +2474,13 @@ export function permissionFromPane(events: Event[]): PermissionReading | null {
     prompt: typeof raw.prompt === "string" ? raw.prompt : "",
     options,
   };
+}
+
+/** The call a mod-held permission reading names, or "" for a pane reading. */
+function heldToolId(body: string): string {
+  if (!body) return "";
+  const raw = parseJSON(body) as { kind?: unknown; toolId?: unknown } | null;
+  return raw?.kind === DIALOG_KIND_PERMISSION && typeof raw.toolId === "string" ? raw.toolId : "";
 }
 
 /** A tool permission prompt as the pane shows it (see permissionFromPane). */

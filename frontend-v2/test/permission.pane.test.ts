@@ -56,6 +56,49 @@ describe("permissionFromPane", () => {
     expect(p?.options[2]?.label).toBe("No");
   });
 
+  // A prompt the mod holds names its call. A workflow's agents run side by
+  // side, so another agent's rows keep arriving while one waits; on
+  // 2026-10-12 the first of them cleared the card and it never came back, and
+  // the prompt was answerable only in the terminal. Only the call's own
+  // result, or the mod clearing the reading, lets it go.
+  it("keeps a held call's prompt while other agents write", () => {
+    const held = JSON.stringify({ ...JSON.parse(reading), toolId: "b1" });
+    const others: Event[] = [
+      ev({ kind: "text", body: "checking", sidechain: true, agentId: "a2", at: 3000 }),
+      ev({
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "b2",
+        sidechain: true,
+        agentId: "a2",
+        at: 3100,
+      }),
+      ev({
+        kind: "tool_result",
+        toolId: "b2",
+        body: "ok",
+        sidechain: true,
+        agentId: "a2",
+        at: 3200,
+      }),
+    ];
+    const at = (e: Event, t: number): Event => ({ ...e, at: t });
+    expect(permissionFromPane([...call(), at(asking(held), 2500), ...others])?.title).toBe(
+      "Bash command",
+    );
+    expect(
+      permissionFromPane([
+        ...call(),
+        at(asking(held), 2500),
+        ...others,
+        ev({ kind: "tool_result", toolId: "b1", body: "", at: 4000 }),
+      ]),
+    ).toBeNull();
+    expect(
+      permissionFromPane([...call(), at(asking(held), 2500), ...others, asking("")]),
+    ).toBeNull();
+  });
+
   it("lets go when the prompt goes, or anything happens after it", () => {
     expect(permissionFromPane([...call(), asking(reading), asking("")])).toBeNull();
     expect(

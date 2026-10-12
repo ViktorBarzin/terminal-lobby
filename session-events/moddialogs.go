@@ -74,9 +74,8 @@ type heldCall struct {
 // Dialog's own fields stay where the Text view's cards read them.
 type askingBody struct {
 	sessionio.Dialog
-	ToolID string          `json:"toolId,omitempty"`
-	Tool   string          `json:"tool,omitempty"`
-	Input  json.RawMessage `json:"input,omitempty"`
+	Tool  string          `json:"tool,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 // showDialogs puts the open dialogs on the wire in the shapes the Text view's
@@ -110,7 +109,9 @@ func (c *modConn) showDialogs(fs *sessionio.FileSource) {
 	switch {
 	case asking == nil:
 	case asking.kind == "plan":
-		body, _ := json.Marshal(askingBody{Dialog: c.planCard(asking), ToolID: asking.toolID, Tool: "ExitPlanMode"})
+		card := c.planCard(asking)
+		card.ToolID = asking.toolID
+		body, _ := json.Marshal(askingBody{Dialog: card, Tool: "ExitPlanMode"})
 		reading = string(body)
 		c.watchPlan(asking)
 	default:
@@ -119,8 +120,9 @@ func (c *modConn) showDialogs(fs *sessionio.FileSource) {
 				Kind: sessionio.DialogKindPermission, Title: asking.title,
 				Detail: asking.detail, Prompt: "Do you want to proceed?",
 				Options: []sessionio.PlanOption{{Number: 1, Label: "Yes"}, {Number: 2, Label: "No"}},
+				ToolID:  asking.toolID,
 			},
-			ToolID: asking.toolID, Tool: asking.tool, Input: validJSON(asking.input),
+			Tool: asking.tool, Input: validJSON(asking.input),
 		})
 		reading = string(body)
 	}
