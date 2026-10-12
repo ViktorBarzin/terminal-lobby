@@ -9,6 +9,7 @@ import {
   embedFlag,
   embedHost,
   type FrameChord,
+  findRouteSession,
   isTextEntry,
   type KeyLike,
   keyMessage,
@@ -383,5 +384,57 @@ describe("draftModesToClear", () => {
       interactionMode: false,
       runtimeMode: false,
     });
+  });
+});
+
+describe("findRouteSession", () => {
+  // T3 moves to a new thread's route as the first prompt is sent, before the
+  // sidecar has claimed its session (measured 2026-10-12: about 4 s warm, up
+  // to 25 s cold). Reporting "no session" then sends the frame back to the
+  // old session, so the lookup is asked again until the session shows.
+  const session = { key: "abc", name: "placement-test" };
+  const noWait = async () => {};
+
+  it("asks again until the new thread's session exists", async () => {
+    const answers = [null, null, session];
+    let asked = 0;
+    const found = await findRouteSession(
+      async () => answers[asked++] ?? null,
+      noWait,
+      () => true,
+      [10, 10, 10, 10],
+    );
+    expect(found).toEqual({ settled: true, session });
+    expect(asked).toBe(3);
+  });
+
+  it("gives up with no session once the waits run out", async () => {
+    let asked = 0;
+    const found = await findRouteSession(
+      async () => {
+        asked++;
+        return null;
+      },
+      noWait,
+      () => true,
+      [10, 10],
+    );
+    expect(found).toEqual({ settled: true, session: null });
+    expect(asked).toBe(3);
+  });
+
+  it("stops when a later route change overtook it", async () => {
+    let asked = 0;
+    const found = await findRouteSession(
+      async () => {
+        asked++;
+        return null;
+      },
+      noWait,
+      () => asked < 2,
+      [10, 10, 10],
+    );
+    expect(found).toEqual({ settled: false, session: null });
+    expect(asked).toBe(2);
   });
 });

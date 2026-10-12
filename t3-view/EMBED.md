@@ -99,8 +99,12 @@ Posted with `window.parent.postMessage(message, parentOrigin)`, never with `"*"`
   `{ "key": "...", "name": "..." }` for one of the user's own sessions (`key`
   is the lobby's key for it: its birth name, else its name now) and 404 for
   someone else's thread or an unknown one; `session` carries that answer or
-  `null`. A report the next route change overtook is not sent. The frame
-  does not report the route `tl-ready` already named.
+  `null`. A 404 is asked again for about 45 seconds before `null` is sent
+  (`findRouteSession`): a new thread's route shows as its first prompt goes,
+  before the sidecar has claimed its session, and reporting `null` then made
+  the lobby send the frame back to the old session. A report the next route
+  change overtook is not sent. The frame does not report the route
+  `tl-ready` already named.
 - The lobby accepts a message only when `event.origin` is the T3 origin it
   framed and `event.source` is that frame's window. Any other shape or type is
   dropped. A key is replayed as a keydown and nothing more, so no message can
