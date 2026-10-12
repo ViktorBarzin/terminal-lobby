@@ -30,10 +30,10 @@ index 00d5c05..5e9f71e 100644
        </SidebarProvider>
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..3e91ac5
+index 0000000..633000b
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,265 @@
 +// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
 +// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
 +
@@ -62,9 +62,16 @@ index 0000000..3e91ac5
 +  | { readonly type: "tl-bindings"; readonly v: 1; readonly chords: readonly FrameChord[] }
 +  | { readonly type: "tl-open"; readonly v: 1; readonly threadId: string };
 +
++/** The lobby session a thread is, as the lobby keys it (the sidecar's answer). */
++export interface RouteSession {
++  readonly key: string;
++  readonly name: string;
++}
++
 +export type FrameMessage =
 +  | { type: "tl-ready"; v: 1; environmentId: string; threadId: string | null }
-+  | ({ type: "tl-key"; v: 1 } & KeyLike);
++  | ({ type: "tl-key"; v: 1 } & KeyLike)
++  | { type: "tl-route"; v: 1; threadId: string | null; session: RouteSession | null };
 +
 +const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 +
@@ -184,6 +191,11 @@ index 0000000..3e91ac5
 +  return { type: "tl-ready", v: 1, environmentId, threadId };
 +}
 +
++/** The frame moved on its own: the thread it is on now, and which lobby session that is. */
++export function routeMessage(threadId: string | null, session: RouteSession | null): FrameMessage {
++  return { type: "tl-route", v: 1, threadId, session };
++}
++
 +const isRecord = (v: unknown): v is Record<string, unknown> =>
 +  typeof v === "object" && v !== null && !Array.isArray(v);
 +
@@ -275,12 +287,24 @@ index 0000000..3e91ac5
 +  const threadId: unknown = (body as { threadId?: unknown }).threadId;
 +  return typeof threadId === "string" && threadId !== "" ? threadId : null;
 +}
++
++/** Where the sidecar answers which lobby session a thread is (404 for none of the user's). */
++export function sessionLookupPath(threadId: string): string {
++  return `/.well-known/t3/session/${encodeURIComponent(threadId)}`;
++}
++
++export function sessionFromLookup(body: unknown): RouteSession | null {
++  if (typeof body !== "object" || body === null) return null;
++  const { key, name } = body as { key?: unknown; name?: unknown };
++  const ok = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= 256;
++  return ok(key) && ok(name) ? { key, name } : null;
++}
 diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
 new file mode 100644
-index 0000000..b83d330
+index 0000000..c17ee0d
 --- /dev/null
 +++ b/apps/web/src/embed.tsx
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,190 @@
 +// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed,
 +// the lobby draws the chrome: index.css hides T3's header and panels under
 +// html[data-t3-embed], AppSidebarLayout drops the sidebar, and chords the
@@ -298,11 +322,15 @@ index 0000000..b83d330
 +  parseLobbyMessage,
 +  readyMessage,
 +  routeFrameKey,
++  routeMessage,
++  sessionFromLookup,
++  sessionLookupPath,
 +  threadFromLookup,
 +  threadLookupPath,
 +  withPlanModeDefault,
 +  type FrameChord,
 +  type FrameMessage,
++  type RouteSession,
 +} from "./embed.logic";
 +import { usePrimaryEnvironmentId } from "./state/environments";
 +import { resolveThreadRouteRef } from "./threadRoutes";
@@ -343,6 +371,10 @@ index 0000000..b83d330
 +let readySent = false;
 +let pendingOpen: string | null = null;
 +let openThread: ((threadId: string) => void) | null = null;
++// The route last told to the lobby (tl-ready's or a tl-route's), and a count
++// that drops a lookup the next route change overtook.
++let reportedThread: string | null | undefined;
++let routeAsk = 0;
 +
 +function post(message: FrameMessage) {
 +  if (host !== null) window.parent.postMessage(message, host);
@@ -355,6 +387,16 @@ index 0000000..b83d330
 +}
 +
 +// The lobby's thread key, as the sidecar names that thread.
++// Which of the user's lobby sessions a thread is; null for none.
++async function lookupSession(threadId: string): Promise<RouteSession | null> {
++  try {
++    const response = await fetch(sessionLookupPath(threadId), { credentials: "same-origin" });
++    return response.ok ? sessionFromLookup(await response.json()) : null;
++  } catch {
++    return null;
++  }
++}
++
 +async function resolveThread(key: string): Promise<string> {
 +  try {
 +    const response = await fetch(threadLookupPath(key), { credentials: "same-origin" });
@@ -412,7 +454,23 @@ index 0000000..b83d330
 +  useEffect(() => {
 +    if (environmentId === null || readySent) return;
 +    readySent = true;
++    reportedThread = threadId;
 +    post(readyMessage(environmentId, threadId));
++  }, [environmentId, threadId]);
++
++  // T3's own navigation (its palette, New thread) moved the frame: tell the
++  // lobby, whose header and chords follow the session it framed.
++  useEffect(() => {
++    if (!readySent || threadId === reportedThread) return;
++    reportedThread = threadId;
++    const ask = ++routeAsk;
++    if (threadId === null) {
++      post(routeMessage(null, null));
++      return;
++    }
++    void lookupSession(threadId).then((session) => {
++      if (ask === routeAsk) post(routeMessage(threadId, session));
++    });
 +  }, [environmentId, threadId]);
 +
 +  useEffect(() => {

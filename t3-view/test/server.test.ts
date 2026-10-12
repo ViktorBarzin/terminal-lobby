@@ -163,6 +163,15 @@ describe("HTTP routes for an admin", () => {
     expect((await get(`/.well-known/t3/thread/${SESSION_NAME}`)).status).toBe(401);
   });
 
+  it("names the lobby key and session for one of the user's threads, for the frame's route reports", async () => {
+    const found = await get(`/.well-known/t3/session/${BORN_AS}`, ADMIN);
+    expect(found.status).toBe(200);
+    expect(found.headers.get("cache-control")).toBe("no-store");
+    expect(await found.json()).toEqual({ key: BORN_AS, name: SESSION_NAME });
+    expect((await get("/.well-known/t3/session/nope", ADMIN)).status).toBe(404);
+    expect((await get(`/.well-known/t3/session/${BORN_AS}`)).status).toBe(401);
+  });
+
   it("redirects a thread route framed by another key of the same session to its thread id", async () => {
     const env = environmentIdFor("test");
     const moved = await fetch(`${base}/${env}/${SESSION_NAME}?embed`, {

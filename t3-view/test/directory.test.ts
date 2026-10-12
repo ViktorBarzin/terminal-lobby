@@ -118,4 +118,28 @@ describe("SessionDirectory", () => {
       expect(d.resolve("theirs")).toBeUndefined();
     });
   });
+
+  describe("lobbyKey, from a thread id back to the key the lobby frames it by", () => {
+    it("names a session T3 created by its birth name, and its name now", () => {
+      const d = new SessionDirectory("wizard", {
+        alias: (minted) => (minted === "bw8k5gt9v314" ? "5992c13c-t3-draft" : undefined),
+      });
+      d.update([claude("say-hi", { id: "$9", bornAs: "bw8k5gt9v314" })], layout);
+      expect(d.lobbyKey("5992c13c-t3-draft")).toEqual({ key: "bw8k5gt9v314", name: "say-hi" });
+    });
+
+    it("names a hand-named session by its name now, as the lobby keys it", () => {
+      const d = new SessionDirectory("wizard");
+      d.update([claude("notes", { id: "$3" })], layout);
+      d.update([claude("notes-renamed", { id: "$3" })], layout);
+      expect(d.lobbyKey("notes")).toEqual({ key: "notes-renamed", name: "notes-renamed" });
+    });
+
+    it("names nothing for someone else's thread or an unknown one", () => {
+      const d = new SessionDirectory("wizard");
+      d.update([claude("theirs", { owner: "emo", access: "ro", bornAs: "k9x" })], layout);
+      expect(d.lobbyKey("emo~k9x")).toBeUndefined();
+      expect(d.lobbyKey("nope")).toBeUndefined();
+    });
+  });
 });

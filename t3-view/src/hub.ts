@@ -176,6 +176,13 @@ export class UserHub {
     return this.directory.resolve(key);
   }
 
+  /** The lobby key and session name for one of the user's threads (directory.ts lobbyKey). */
+  async lobbyKey(threadId: string): Promise<{ key: string; name: string } | undefined> {
+    await this.refresh();
+    if (this.directory.lobbyKey(threadId) === undefined) await this.refresh(true);
+    return this.directory.lobbyKey(threadId);
+  }
+
   /** The live thread for an entry the directory lists, created on first use. */
   async thread(threadId: string, relay: RelayCredentials): Promise<LiveThread | undefined> {
     this.use(relay);

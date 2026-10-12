@@ -12,6 +12,7 @@
  * Routes:
  *   GET  /.well-known/t3/environment   environment descriptor (protocol 2)
  *   GET  /.well-known/t3/thread/:key   the thread id for a key the lobby frames a session by
+ *   GET  /.well-known/t3/session/:threadId   the other way: the lobby key and session name
  *   GET  /api/auth/session             authenticated, chat scopes only
  *   GET  /api/orchestration/shell      shell snapshot; needs the protocol header
  *   GET  /api/orchestration/threads/:id/bounded   a thread's snapshot (the whole window for now)
@@ -224,6 +225,28 @@ export function routes(deps: SidecarDeps) {
               ? HttpServerResponse.text("not found", { status: 404 })
               : HttpServerResponse.jsonUnsafe(
                   { threadId: entry.threadId },
+                  { headers: { "cache-control": "no-store" } },
+                );
+          });
+        }),
+      ),
+    ),
+    HttpRouter.add(
+      "GET",
+      "/.well-known/t3/session/:threadId",
+      guarded(gate, (identity) =>
+        Effect.gen(function* () {
+          const { threadId } = yield* HttpRouter.params;
+          if (threadId === undefined) return HttpServerResponse.text("not found", { status: 404 });
+          return yield* Effect.promise(async () => {
+            const found = await deps.hub
+              .user(identity)
+              .lobbyKey(threadId)
+              .catch(() => undefined);
+            return found === undefined
+              ? HttpServerResponse.text("not found", { status: 404 })
+              : HttpServerResponse.jsonUnsafe(
+                  { key: found.key, name: found.name },
                   { headers: { "cache-control": "no-store" } },
                 );
           });

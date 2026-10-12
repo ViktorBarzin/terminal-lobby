@@ -8,8 +8,10 @@ only through `postMessage`. This page is the contract between the lobby's side
 and the embed patch (`patches/`), so the patch can be written against it
 without reading the lobby's code.
 
-Version 1. Every message carries `v: 1`, and each side ignores a message with
-any other version.
+Version 1, second revision. Every message carries `v: 1`, and each side
+ignores a message with any other version. The second revision adds `tl-route`
+(frame to lobby). A lobby without it drops the message as an unknown type, so
+it is additive and the version stays 1.
 
 ## The frame's URL
 
@@ -38,7 +40,9 @@ The lobby loads one of two URLs:
 The lobby keeps at most one T3 frame per tab. Switching to another session
 unmounts the frame and mounts a new one for that session, so in practice the
 URL names the thread the frame should show for its whole life. `tl-open` below
-covers the first-load case and a later thread change.
+covers the first-load case and a later thread change. When T3's own
+navigation moves the frame to another thread, `tl-route` tells the lobby,
+which either follows to that session or sends the frame back.
 
 ## The parent's origin
 
@@ -77,6 +81,7 @@ Posted with `window.parent.postMessage(message, parentOrigin)`, never with `"*"`
 |---|---|---|
 | `tl-ready` | Once, as soon as the frame knows its environment id | `{ type: "tl-ready", v: 1, environmentId: string, threadId: string \| null }` |
 | `tl-key` | A chord from the latest `tl-bindings` was pressed in the frame | `{ type: "tl-key", v: 1, key, code, ctrlKey, metaKey, shiftKey, altKey, repeat }` |
+| `tl-route` | After `tl-ready`, whenever the frame's thread route changes | `{ type: "tl-route", v: 1, threadId: string \| null, session: { key: string, name: string } \| null }` |
 
 - `environmentId` in `tl-ready` is the sidecar's descriptor's. The simplest
   way for the patch to get it is its own same-origin
@@ -86,10 +91,27 @@ Posted with `window.parent.postMessage(message, parentOrigin)`, never with `"*"`
   any other route.
 - `tl-key` copies the `KeyboardEvent` fields of the same names. `key` and
   `code` are at most 32 characters; the lobby drops longer ones.
+- `tl-route` reports a route change the frame made on its own: T3's command
+  palette, New thread, or the frame following a `tl-open`. `threadId` is the
+  thread route's id, or `null` on a route that is no thread (a new thread's
+  draft, the index). Before posting, the frame asks the sidecar, same-origin,
+  `GET /.well-known/t3/session/{threadId}`, which answers
+  `{ "key": "...", "name": "..." }` for one of the user's own sessions (`key`
+  is the lobby's key for it: its birth name, else its name now) and 404 for
+  someone else's thread or an unknown one; `session` carries that answer or
+  `null`. A report the next route change overtook is not sent. The frame
+  does not report the route `tl-ready` already named.
 - The lobby accepts a message only when `event.origin` is the T3 origin it
   framed and `event.source` is that frame's window. Any other shape or type is
   dropped. A key is replayed as a keydown and nothing more, so no message can
   name a lobby command directly.
+- On `tl-route` the lobby does nothing when `threadId` is `null` or `session`
+  names the session it framed. When `session` names another of the caller's
+  own sessions in the lobby's list, the lobby selects that session and opens
+  it in the T3 view, which mounts a new frame for it. Otherwise (no session,
+  someone else's, or one the lobby's list does not have) it posts `tl-open`
+  with its own thread, so the frame goes back to the session the lobby's
+  header, keepalive and chords belong to.
 
 ### Lobby to frame
 
@@ -101,7 +123,7 @@ from the section above.
 | `type` | When | Body |
 |---|---|---|
 | `tl-bindings` | After every `tl-ready`, and whenever the lobby's bindings change (Settings, an override saved in another tab) | `{ type: "tl-bindings", v: 1, chords: FrameChord[] }` |
-| `tl-open` | After `tl-ready` when the frame is not on the session's thread, and whenever the thread changes | `{ type: "tl-open", v: 1, threadId: string }` |
+| `tl-open` | After `tl-ready` when the frame is not on the session's thread, whenever the thread changes, and in answer to a `tl-route` the lobby does not follow | `{ type: "tl-open", v: 1, threadId: string }` |
 
 `tl-open` asks the frame to route to `/{environmentId}/{threadId}` with its own
 environment id, through the client's router so the client does not reload. A
@@ -201,6 +223,13 @@ sequenceDiagram
   opt frame not on the session's thread
     L->>F: tl-open {threadId}
   end
+  Note over F: T3's palette opens another thread
+  F->>L: tl-route {threadId, session}
+  alt session is another of the caller's own
+    Note over L: selects it, in the T3 view
+  else no such session
+    L->>F: tl-open {own threadId}
+  end
   Note over F: Alt+1 pressed in T3's composer
   F->>L: tl-key {key "1", code "Digit1", altKey true}
   Note over L: replayed as a keydown on the iframe;<br/>the lobby jumps to session 1
@@ -221,5 +250,8 @@ the session's menu.
   emulator settles it.
 - Focus handover: when the person picks a session that is already showing in
   T3, the lobby does not yet move keyboard focus into the frame.
+- Following a `tl-route` mounts a new frame for the other session, which
+  loads the T3 client again. Moving the one frame between sessions would
+  avoid the reload; it is not part of this revision.
 - Theme: the frame follows its own theme setting. Passing the lobby's light or
   dark choice is not part of version 1.

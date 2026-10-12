@@ -109,6 +109,18 @@ export class SessionDirectory {
     return undefined;
   }
 
+  /**
+   * The other way from `resolve`: the key the lobby frames the user's own
+   * thread by (frontend-v2 keyOf: bornAs, else the name now) and the
+   * session's name now. Undefined for someone else's thread, which the lobby's
+   * T3 view does not serve, and for an id no session answers to.
+   */
+  lobbyKey(threadId: string): { readonly key: string; readonly name: string } | undefined {
+    const entry = this.#entries.get(threadId as ThreadId);
+    if (entry === undefined || entry.owner !== undefined) return undefined;
+    return { key: entry.session.bornAs ?? entry.name, name: entry.name };
+  }
+
   project(id: string): DirectoryProject | undefined {
     return this.#projects.find((p) => p.id === id);
   }

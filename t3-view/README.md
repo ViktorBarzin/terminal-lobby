@@ -150,6 +150,7 @@ Caches of lobby data are keyed by OS user first (`src/hub.ts` keeps one
 |---|---|
 | `GET /.well-known/t3/environment` | Descriptor, `orchestrationProtocolVersion: 2`, a host-derived stable `environmentId` |
 | `GET /.well-known/t3/thread/:key` | The user's thread id for the key the lobby frames a session by; 404 when none |
+| `GET /.well-known/t3/session/:threadId` | The other way: `{ key, name }`, the lobby key and the session's name now, for one of the user's own threads; 404 for someone else's or an unknown one. The embed patch's `tl-route` reports use it |
 | `GET /api/auth/session` | `authenticated: true`; permissions `orchestration:read`, `orchestration:operate`, `filesystem:read` |
 | `GET /api/orchestration/shell` | Shell snapshot; 400 without `x-t3-orchestration-protocol: 2` |
 | `GET /api/orchestration/threads/:id/bounded` | The thread's projection; the window is the whole projection for now (`hasMoreHistory: false`); 404 for a thread the lobby does not list |

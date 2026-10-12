@@ -15,6 +15,9 @@ import {
   parseLobbyMessage,
   readyMessage,
   routeFrameKey,
+  routeMessage,
+  sessionFromLookup,
+  sessionLookupPath,
   threadFromLookup,
   threadLookupPath,
   withPlanModeDefault,
@@ -312,5 +315,39 @@ describe("thread lookup", () => {
     expect(threadFromLookup({ threadId: 7 })).toBeNull();
     expect(threadFromLookup(null)).toBeNull();
     expect(threadFromLookup("5992c13c")).toBeNull();
+  });
+});
+
+describe("route reports", () => {
+  it("asks the sidecar which lobby session a thread is", () => {
+    expect(sessionLookupPath("5992c13c")).toBe("/.well-known/t3/session/5992c13c");
+    expect(sessionLookupPath("emo~k9x")).toBe("/.well-known/t3/session/emo~k9x");
+    expect(sessionLookupPath("a/b")).toBe("/.well-known/t3/session/a%2Fb");
+  });
+
+  it("reads the key and name from the answer, and nothing from anything else", () => {
+    expect(sessionFromLookup({ key: "bw8k5gt9v314", name: "say-hi" })).toEqual({
+      key: "bw8k5gt9v314",
+      name: "say-hi",
+    });
+    expect(sessionFromLookup({ key: "", name: "say-hi" })).toBeNull();
+    expect(sessionFromLookup({ key: "k", name: 3 })).toBeNull();
+    expect(sessionFromLookup({ key: "k".repeat(300), name: "n" })).toBeNull();
+    expect(sessionFromLookup(null)).toBeNull();
+  });
+
+  it("tl-route names the thread and the session the sidecar matched, or none", () => {
+    expect(routeMessage("5992c13c", { key: "bw8k5gt9v314", name: "say-hi" })).toEqual({
+      type: "tl-route",
+      v: 1,
+      threadId: "5992c13c",
+      session: { key: "bw8k5gt9v314", name: "say-hi" },
+    });
+    expect(routeMessage(null, null)).toEqual({
+      type: "tl-route",
+      v: 1,
+      threadId: null,
+      session: null,
+    });
   });
 });
