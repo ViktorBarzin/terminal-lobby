@@ -209,7 +209,10 @@ flowchart LR
   directory maps the id to the session's current name before every call.
 - Grouping follows the lobby's sidebar: layout projects, a session's own
   `project`, Ungrouped, one System project for harness and Caller sessions,
-  one project per owner for shared sessions. Claude sessions only.
+  one project per owner for shared sessions. Claude sessions only. T3 merges
+  projects that share a workspace root, so a project after the first in a
+  folder gets that folder written with a leading `/.` per clash
+  (`/./home/wizard`); Ungrouped keeps the plain path.
 - `LiveThread` (`src/threads/live.ts`) keeps one upstream stream per (OS user,
   session), resumes it with `lastEventId` and `epoch`, follows renames through
   the directory on a 404, and rebuilds the model (clients get one snapshot)
@@ -268,9 +271,6 @@ longer shows.
 
 - History paging and images (second cut): the bounded snapshot carries the
   whole window the lobby's reverse open delivered (about 100 KB of events).
-- T3 treats projects with the same workspace root as one in places (Ungrouped
-  and System both root at the home directory, and a new thread in System was
-  titled "What should we build in Ungrouped?").
 - Sessions on a model the composer does not list (for example
   `claude-haiku-5-5` from a pre-warm alias) show the composer's default model;
   a send then leaves the session's model alone.

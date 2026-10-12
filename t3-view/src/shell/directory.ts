@@ -213,7 +213,7 @@ export class SessionDirectory {
       if (!seenTmuxIds.has(id)) this.#keyByTmuxId.delete(id);
     }
     this.#entries = entries;
-    this.#projects = projects;
+    this.#projects = withDistinctRoots(projects);
   }
 
   #keyOf(s: LobbySession): string {
@@ -226,6 +226,46 @@ export class SessionDirectory {
     this.#keyByTmuxId.set(s.id, s.name);
     return s.name;
   }
+}
+
+/** A path as T3 compares project roots (shared/path.ts): trimmed, no trailing separator. */
+function comparableRoot(path: string): string {
+  const trimmed = path.trim();
+  const bare = trimmed.replace(/\/+$/, "");
+  return bare === "" && trimmed !== "" ? "/" : bare;
+}
+
+/**
+ * T3 treats projects with the same workspace root as one project
+ * (client-runtime projectGrouping.ts buildProjectGroups dedupes by
+ * environment and root), so its new-thread palette would offer only one of
+ * the projects that share a folder: Ungrouped, System and every layout
+ * project with no folder of its own all start in the home directory. Each
+ * project after the first in a folder gets the same folder written with a
+ * leading `/.` per clash (`/./home/wizard`), which names the same directory
+ * and keeps its last segment. Ungrouped claims its folder first, so it keeps
+ * the plain path. T3 compares roots as strings and the sidecar starts
+ * sessions in `dir`, so nothing else reads the difference; the panels that
+ * would use the root as a working directory are stubbed.
+ */
+function withDistinctRoots(projects: ReadonlyArray<DirectoryProject>): DirectoryProject[] {
+  const taken = new Set<string>();
+  const roots = new Map<ProjectId, string>();
+  const claimOrder = [
+    ...projects.filter((p) => p.id === UNGROUPED_PROJECT),
+    ...projects.filter((p) => p.id !== UNGROUPED_PROJECT),
+  ];
+  for (const p of claimOrder) {
+    let root = p.workspaceRoot;
+    let key = comparableRoot(root);
+    for (let k = 1; taken.has(key); k++) {
+      root = `${"/.".repeat(k)}${key}`;
+      key = comparableRoot(root);
+    }
+    taken.add(key);
+    roots.set(p.id, root);
+  }
+  return projects.map((p) => ({ ...p, workspaceRoot: roots.get(p.id) ?? p.workspaceRoot }));
 }
 
 export function projectShells(

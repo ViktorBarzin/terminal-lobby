@@ -1,7 +1,15 @@
+import { resolve } from "node:path";
+
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { describe, expect, it } from "vitest";
 
 import type { LobbyLayout, LobbySession } from "../src/lobby/api.ts";
-import { SessionDirectory, SYSTEM_PROJECT, UNGROUPED_PROJECT } from "../src/shell/directory.ts";
+import {
+  projectShells,
+  SessionDirectory,
+  SYSTEM_PROJECT,
+  UNGROUPED_PROJECT,
+} from "../src/shell/directory.ts";
 
 const claude = (name: string, extra: Partial<LobbySession> = {}): LobbySession => ({
   name,
@@ -45,7 +53,7 @@ describe("SessionDirectory", () => {
       "qa-probe": SYSTEM_PROJECT,
       "agent-made": SYSTEM_PROJECT,
     });
-    expect(d.projects.map((p) => [p.id, p.title, p.workspaceRoot])).toEqual([
+    expect(d.projects.map((p) => [p.id, p.title, p.dir])).toEqual([
       ["project:lobby", "lobby", "/home/wizard/code/lobby"],
       ["project:empty", "empty", "/home/wizard"],
       [UNGROUPED_PROJECT, "Ungrouped", "/home/wizard"],
@@ -140,6 +148,50 @@ describe("SessionDirectory", () => {
       d.update([claude("theirs", { owner: "emo", access: "ro", bornAs: "k9x" })], layout);
       expect(d.lobbyKey("emo~k9x")).toBeUndefined();
       expect(d.lobbyKey("nope")).toBeUndefined();
+    });
+  });
+
+  describe("workspace roots", () => {
+    // The live layout's shape on 2026-10-12: two projects with no folder, and
+    // one folder written with a trailing slash.
+    const live: LobbyLayout = {
+      projects: [
+        { name: "tripit", sessions: [], dir: "/home/wizard/code/tripit" },
+        { name: "t3-code", sessions: [], dir: "/home/wizard/code/terminal-lobby/" },
+        { name: "Muse-ai", sessions: [] },
+        { name: "health", sessions: [] },
+        { name: "code", sessions: [], dir: "/home/wizard/code" },
+        { name: "lobby-again", sessions: [], dir: "/home/wizard/code/terminal-lobby" },
+      ],
+      ungrouped: [],
+    };
+    const directory = () => {
+      const d = new SessionDirectory("wizard");
+      d.update([claude("qa-probe", { origin: "test" })], live);
+      return d;
+    };
+
+    it("gives every project a root T3 keeps apart, so each can take a new thread", () => {
+      // client-runtime's buildProjectGroups merges projects whose roots match
+      // under this comparison (derivePhysicalProjectKey). Its module graph
+      // does not typecheck without the DOM, so the test uses the comparison.
+      const shells = projectShells(directory().projects, "2026-10-12T00:00:00.000Z");
+      const keys = new Set(shells.map((p) => normalizeProjectPathForComparison(p.workspaceRoot)));
+      expect(shells).toHaveLength(8);
+      expect(keys.size).toBe(shells.length);
+    });
+
+    it("names the project's own folder with every root", () => {
+      for (const p of directory().projects) expect(resolve(p.workspaceRoot)).toBe(resolve(p.dir));
+    });
+
+    it("keeps the plain path for Ungrouped and the first project in a folder", () => {
+      const roots = Object.fromEntries(directory().projects.map((p) => [p.title, p.workspaceRoot]));
+      expect(roots.Ungrouped).toBe("/home/wizard");
+      expect(roots.tripit).toBe("/home/wizard/code/tripit");
+      expect(roots["t3-code"]).toBe("/home/wizard/code/terminal-lobby/");
+      expect(roots.code).toBe("/home/wizard/code");
+      expect(roots["Muse-ai"]).not.toBe("/home/wizard");
     });
   });
 });
