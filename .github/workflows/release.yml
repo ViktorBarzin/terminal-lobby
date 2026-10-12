@@ -17,6 +17,9 @@ on:
       - '**/*.md'
       - '.github/workflows/ttyd.yml'
       - '.github/workflows/viu.yml'
+      # t3-web.yml builds the T3 web client into the cache this workflow
+      # reads; editing that workflow alone changes nothing in the .deb.
+      - '.github/workflows/t3-web.yml'
       # The container image is built by container.yml out of its own inputs,
       # and packaging/build-deb.sh reads none of them. A push touching only
       # these was cutting a .deb version whose contents had not moved.
@@ -170,6 +173,51 @@ jobs:
           set -euo pipefail
           cd claude-mod
           npm test
+
+      # The T3 view (ADR-0044). Its sidecar compiles against T3's own
+      # contracts from the pinned checkout, so the tests and the bundle need
+      # that checkout installed, which build-web.sh does. The web client
+      # itself comes from t3-web.yml through the Actions cache, keyed by pin
+      # and patch digest; on a miss this step builds it, with a warning, and
+      # build-deb.sh below reuses whatever is in out/t3.
+      - name: t3 view, artefact key
+        id: t3
+        run: |
+          set -euo pipefail
+          echo "key=$(t3-view/scripts/build-web.sh --print-key)" >> "$GITHUB_OUTPUT"
+          echo "pin=$(sed -n 's/^commit=//p' t3-view/T3_PIN)" >> "$GITHUB_OUTPUT"
+
+      - name: t3 view, restore the web build
+        id: t3web
+        uses: actions/cache/restore@v4
+        with:
+          path: out/t3/web
+          key: t3-web-${{ steps.t3.outputs.key }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: t3-pnpm-${{ steps.t3.outputs.pin }}
+
+      - name: test (t3 view)
+        env:
+          PNPM_STORE_DIR: ${{ runner.temp }}/pnpm-store
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          set -euo pipefail
+          # build-web.sh runs pnpm through corepack, which Node stopped
+          # bundling at 25; lts/* above moves on without asking.
+          command -v corepack >/dev/null || npm install -g corepack
+          if [ "${{ steps.t3web.outputs.cache-hit }}" = "true" ]; then
+            t3-view/scripts/build-web.sh --deps-only out/t3
+          else
+            echo "::warning::no t3-web artefact for ${{ steps.t3.outputs.key }}; building the T3 web client in the release"
+            t3-view/scripts/build-web.sh out/t3
+          fi
+          t3-view/scripts/link-t3.sh out/t3
+          cd t3-view
+          npm test
+          npm run typecheck
 
       - name: test (python)
         run: |

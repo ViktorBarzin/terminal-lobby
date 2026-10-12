@@ -2,14 +2,19 @@
 # Bundles the sidecar into one ES module that system node (24) runs:
 #
 #   build-sidecar.sh <out-dir>     writes <out-dir>/tl-t3-view.mjs
+#   build-sidecar.sh -o <file>     writes <file> (packaging/build-deb.sh)
 #
 # Needs node_modules from link-t3.sh, so T3's contracts and its effect build
 # are what gets bundled.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${1:?usage: build-sidecar.sh <out-dir>}"
-mkdir -p "$out"
+if [[ "${1:-}" == "-o" ]]; then
+	outfile="${2:?usage: build-sidecar.sh -o <file>}"
+else
+	outfile="${1:?usage: build-sidecar.sh <out-dir> | -o <file>}/tl-t3-view.mjs"
+fi
+mkdir -p "$(dirname "$outfile")"
 
 # ws (under @effect/platform-node) requires two optional native helpers inside
 # a try/catch; left external they fail to load and ws uses its JS fallback.
@@ -24,5 +29,5 @@ node "$here/node_modules/esbuild/bin/esbuild" "$here/src/main.ts" \
 	--external:utf-8-validate \
 	--banner:js='import { createRequire as __tlCreateRequire } from "node:module"; const require = __tlCreateRequire(import.meta.url);' \
 	--log-level=warning \
-	--outfile="$out/tl-t3-view.mjs"
-echo "build-sidecar: $out/tl-t3-view.mjs"
+	--outfile="$outfile"
+echo "build-sidecar: $outfile"

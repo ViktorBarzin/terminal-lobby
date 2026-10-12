@@ -121,6 +121,28 @@ check "the per-browser memory cap ships" \
 check "the browser's runtime is recommended" \
   "$(dpkg-deb -f "$DEB" Recommends | grep -c 'nodejs' || true)" 1
 
+# The T3 view (ADR-0044). The unit runs node on the bundle, and the bundle
+# serves the web client from the directory beside it; either missing leaves a
+# view that answers nothing or answers 404.
+check "the T3 view's sidecar bundle ships" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-t3-view/tl-t3-view\.mjs$' || true)" 1
+check "the T3 view's unit ships" \
+  "$(printf '%s' "$contents" | grep -c '^-.*etc/systemd/system/tl-t3-view\.service$' || true)" 1
+check "the T3 web client ships its page" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-t3-view/web/index\.html$' || true)" 1
+check "the T3 web client says which pin and patch built it" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-t3-view/web/BUILD_KEY$' || true)" 1
+t3assets="$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-t3-view/web/assets/.*\.js$' || true)"
+if [ "$t3assets" -ge 1 ]; then printf '  ok   the T3 web client ships its chunks (%s file(s))\n' "$t3assets"
+else printf '  FAIL no T3 web chunks in the payload\n'; fail=1; fi
+# The embed patch is what hides T3's own chrome and forwards the lobby's keys;
+# an unpatched client renders a second sidebar inside the lobby.
+t3x="$(mktemp -d)"
+dpkg-deb -x "$DEB" "$t3x"
+check "the T3 web client carries the embed patch" \
+  "$(grep -lq 'tl-bindings' "$t3x"/usr/lib/terminal-lobby/tl-t3-view/web/assets/*.js 2>/dev/null && echo yes || echo no)" yes
+rm -rf "$t3x"
+
 check "the package's own tooling ships" \
   "$(printf '%s' "$contents" | grep -c 'usr/lib/terminal-lobby/tl-apply' || true)" 1
 

@@ -66,6 +66,41 @@ assert d["initialize"]["serverInfo"], "no serverInfo"
 assert any(t["name"] == "browser_close" for t in d["tools"]["tools"]), "no browser_close tool"
 ' || { echo "build: the staged browser host does not describe itself" >&2; exit 1; }
 
+# --- the T3 view (ADR-0044) -------------------------------------------------
+# T3 Code's web client at the pin in t3-view/T3_PIN with the embed patch, and
+# the sidecar bundled against the same pinned checkout. The web build is slow
+# and moves only with the pin or the patch, so t3-web.yml builds it once per
+# artefact key and release.yml restores it into $T3_WORK/web before this runs.
+# A web/ whose BUILD_KEY matches is reused and only the dependencies are
+# installed for the sidecar; anything else builds the web here too.
+#
+# $T3_WORK sits outside $BUILD, which this script wipes at the start.
+echo "==> staging the T3 view"
+T3_WORK="${TL_T3_WORK:-$ROOT/out/t3}"
+T3_KEY="$(t3-view/scripts/build-web.sh --print-key)"
+if [ -f "$T3_WORK/web/BUILD_KEY" ] && [ "$(cat "$T3_WORK/web/BUILD_KEY")" = "$T3_KEY" ]; then
+  echo "    reusing the T3 web build $T3_KEY"
+  t3-view/scripts/build-web.sh --deps-only "$T3_WORK"
+else
+  t3-view/scripts/build-web.sh "$T3_WORK"
+fi
+t3-view/scripts/link-t3.sh "$T3_WORK"
+t3-view/scripts/build-sidecar.sh -o "$STAGE/bin/tl-t3-view.mjs"
+cp -a "$T3_WORK/web" "$STAGE/tl-t3-view-web"
+
+# The bundle has to parse under the node that runs it, and the web build has
+# to be the one this checkout's pin and patch name, with the patch in it.
+node --check "$STAGE/bin/tl-t3-view.mjs" \
+  || { echo "build: the T3 view's sidecar bundle does not parse" >&2; exit 1; }
+[ "$(cat "$STAGE/tl-t3-view-web/BUILD_KEY")" = "$T3_KEY" ] \
+  || { echo "build: the staged T3 web build is not $T3_KEY" >&2; exit 1; }
+[ -f "$STAGE/tl-t3-view-web/index.html" ] \
+  || { echo "build: the staged T3 web build has no index.html" >&2; exit 1; }
+if ls t3-view/patches/*.patch >/dev/null 2>&1; then
+  grep -lq 'tl-bindings' "$STAGE"/tl-t3-view-web/assets/*.js \
+    || { echo "build: the staged T3 web build does not carry the embed patch" >&2; exit 1; }
+fi
+
 # --- the lobby's Claude mod (ADR-0036) --------------------------------------
 # Staged as a directory marketplace: the manifest under .claude-plugin/ and the
 # plugin itself under plugins/terminal-lobby/. Only what Claude loads goes in:

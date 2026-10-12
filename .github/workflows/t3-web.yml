@@ -1,0 +1,107 @@
+# Build T3 Code's web client for the T3 view (ADR-0044) as its own artefact.
+#
+# It takes minutes and moves only when the pin or the embed patch does, so
+# the lobby's release should not rebuild it on every commit: the ttyd.yml
+# reasoning. This runs only when its own inputs change and leaves the build in
+# the Actions cache under t3-web-<key>, where release.yml restores it. The key
+# is the pinned commit plus a digest of every patch (build-web.sh --print-key),
+# so a new pin or an edited patch is a new artefact and nothing else is.
+#
+# The cache is a store, not a backup: release.yml builds the web itself when
+# the key is missing (evicted, or this run has not finished), so the release
+# never depends on this run's timing, only gets faster for it.
+name: t3-web
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 't3-view/T3_PIN'
+      - 't3-view/patches/**'
+      - 't3-view/scripts/build-web.sh'
+      - '.github/workflows/t3-web.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t3-web
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 24, not lts/*: corepack, which build-web.sh runs pnpm through, leaves
+      # Node from 25 on, and the box runs 24.
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+
+      - name: artefact key
+        id: key
+        run: |
+          set -euo pipefail
+          key="$(t3-view/scripts/build-web.sh --print-key)"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "pin=$(sed -n 's/^commit=//p' t3-view/T3_PIN)" >> "$GITHUB_OUTPUT"
+          echo "artefact key: $key"
+
+      - name: already built?
+        id: have
+        uses: actions/cache/restore@v4
+        with:
+          path: out/t3/web
+          key: t3-web-${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      # The pnpm store, by pin: an edited patch reinstalls nothing new.
+      - if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: t3-pnpm-${{ steps.key.outputs.pin }}
+
+      # The checkout at the pin has ~28k files, apps/mobile and .repos among
+      # them; build-web.sh installs only the web client's closure, skips every
+      # install script (electron's binary download included) and runs vp
+      # directly rather than `pnpm run build`.
+      - name: build
+        if: steps.have.outputs.cache-hit != 'true'
+        env:
+          PNPM_STORE_DIR: ${{ runner.temp }}/pnpm-store
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: t3-view/scripts/build-web.sh out/t3
+
+      - name: check the build
+        if: steps.have.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          web=out/t3/web
+          test -f "$web/index.html"
+          test "$(cat "$web/BUILD_KEY")" = "${{ steps.key.outputs.key }}"
+          # The embed patch is what hides T3's chrome inside the lobby. A
+          # patch that applied and then got tree-shaken would build clean.
+          if ls t3-view/patches/*.patch >/dev/null 2>&1; then
+            grep -lq 'tl-bindings' "$web"/assets/*.js
+          fi
+          du -sh "$web"
+
+      - name: store
+        if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/t3/web
+          key: t3-web-${{ steps.key.outputs.key }}
+
+      # A copy a person can download and look at. The cache above is what the
+      # release reads.
+      - name: attach
+        if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3-web-${{ steps.key.outputs.key }}
+          path: out/t3/web
+          retention-days: 30

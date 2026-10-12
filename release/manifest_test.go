@@ -394,10 +394,12 @@ func TestAgentAPIsChecksCannotDowngradeTheBox(t *testing.T) {
 	}
 }
 
-// The other side of the same rule. Advisory is for the one service no person's
-// session depends on; a release that broke the terminal, the session list or
+// The other side of the same rule. Advisory is for the services no person's
+// session depends on (agent-api, and the admin-only T3 view beside the
+// default Text view); a release that broke the terminal, the session list or
 // the file browser must still revert, so nothing else may quietly acquire it.
 func TestEveryServiceAPersonUsesKeepsAGatingCheck(t *testing.T) {
+	advisoryOnly := map[string]bool{"agent-api": true, "tl-t3-view": true}
 	gating := map[string]bool{}
 	for _, c := range Package.Checks {
 		if !c.Advisory {
@@ -405,7 +407,7 @@ func TestEveryServiceAPersonUsesKeepsAGatingCheck(t *testing.T) {
 		}
 	}
 	for _, u := range Package.Units {
-		if u.Template || strings.HasSuffix(u.Name, ".timer") || u.Name == "agent-api" {
+		if u.Template || strings.HasSuffix(u.Name, ".timer") || advisoryOnly[u.Name] {
 			continue
 		}
 		if !gating[u.Name] {
