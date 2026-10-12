@@ -88,6 +88,7 @@ function setup(
   const handle: ThreadHandle = { entry, live };
   const { api, calls } = options.api ?? fakeApi();
   const aliases: Array<[string, string]> = [];
+  let draftLooks = 0;
   const project: DirectoryProject = {
     id: ProjectId.make("project:lobby"),
     title: "lobby",
@@ -99,8 +100,12 @@ function setup(
     api,
     pending,
     now: () => 1_791_794_200_000,
-    thread: async (_identity, id) =>
-      id === entry.threadId || id === "t3-draft" ? handle : undefined,
+    thread: async (_identity, id) => {
+      // The draft's session is listed only on the second look, as tmux-api's
+      // session cache makes a fresh claim wait.
+      if (id === "t3-draft") return ++draftLooks >= 2 ? handle : undefined;
+      return id === entry.threadId ? handle : undefined;
+    },
     project: async (_identity, id) => (id === project.id ? project : undefined),
     alias: (_identity, minted, threadId) => aliases.push([minted, threadId]),
     sleep: async () => {},
@@ -360,6 +365,21 @@ describe("queue, stop, mode and model", () => {
       ["cancelQueued", "later please"],
       ["prompt", { text: "later, edited", wait: true }],
     ]);
+    // The lobby takes the old text off and queues the new: the same run stays
+    // queued under the new text, as T3's edit expects.
+    live.model.onFrame({
+      event: "message",
+      data: '{"id":902,"kind":"meta","session":"s","meta":"unqueued","body":"later please"}',
+    });
+    live.model.onFrame({
+      event: "message",
+      data: '{"id":903,"kind":"meta","session":"s","meta":"queued","body":"later, edited"}',
+    });
+    expect(live.model.mapper.queuedRuns.map((q) => [q.run.id, q.run.status, q.text])).toEqual([
+      [runId, "queued", "later, edited"],
+    ]);
+    const message = live.projection.messages.find((m) => m.id === queued?.run.userMessageId);
+    expect(message?.text).toBe("later, edited");
   });
 
   it("stops the turn and shows the request", async () => {

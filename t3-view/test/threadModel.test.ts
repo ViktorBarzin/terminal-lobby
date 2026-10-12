@@ -229,6 +229,25 @@ describe("a session followed across reconnects", () => {
   });
 });
 
+describe("a reply stored after its turn ended", () => {
+  it("joins the turn it belongs to instead of opening a run of its own", () => {
+    // A launched session: the mod's turn_end (id 9) landed before Claude's
+    // stored reply (id 10), and the next prompt (id 12) is a run of its own.
+    const { model } = makeModel();
+    feed(model, fixture("06-reply-after-turn-end.sse"));
+    expect(model.projection.runs.map((r) => [r.ordinal, r.status])).toEqual([
+      [1, "completed"],
+      [2, "completed"],
+    ]);
+    expect(model.mapper.activeRun).toBeUndefined();
+    const first = model.projection.runs[0];
+    expect(
+      model.projection.turnItems.filter((i) => i.runId === first?.id).map((i) => i.type),
+    ).toEqual(["user_message", "assistant_message"]);
+    assertSemanticProjectionIntegrity(model.projection);
+  });
+});
+
 describe("stops and wakes", () => {
   const event = (o: Record<string, unknown>) => ({
     event: "message",
@@ -301,12 +320,15 @@ describe("rebuilds and replays", () => {
     expect(sequences.at(-1)).toBe(model.snapshotSequence);
   });
 
-  it("shows a session with no stream as one notice, once", () => {
+  it("shows a session whose Claude exited as one notice, once, and a starting one as none", () => {
     const { model } = makeModel();
     model.onFrame({ event: "starting", data: '{"waitS":30}' });
-    model.onFrame({ event: "starting", data: '{"waitS":30}' });
+    model.onFrame({ event: "nomod", data: '{"claude":"exited"}' });
+    model.onFrame({ event: "nomod", data: '{"claude":"exited"}' });
     feed(model, fixture("01-open-first-turn.sse"));
     const notices = ofType(model.projection.turnItems, "system_notice");
-    expect(notices.map((n) => n.message)).toEqual(["Claude is starting in this session."]);
+    expect(notices.map((n) => n.message)).toEqual([
+      "This session's Claude is not running. Open it in the lobby to start it again.",
+    ]);
   });
 });

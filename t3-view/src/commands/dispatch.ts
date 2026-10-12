@@ -163,13 +163,21 @@ export class Commands {
       }
       case "queued-run.edit": {
         refuseIfReadOnly();
-        const queued = live.model.mapper.queuedRuns.find((q) => q.run.id === command.runId);
-        if (queued === undefined) throw new CommandFailure("That message is no longer queued.");
-        const reply = await call(() =>
-          this.#d.api.cancelQueued(relay, where.session, where.owner, queued.text),
-        );
-        if (!reply.restored) throw new CommandFailure("That message already reached Claude.");
-        await this.#send(handle, relay, queued.run.userMessageId, command.text, { wait: true });
+        const mapper = live.model.mapper;
+        const queued = mapper.queuedRuns.find((q) => q.run.id === command.runId);
+        if (queued === undefined || !mapper.expectEdit(command.runId, command.text)) {
+          throw new CommandFailure("That message is no longer queued.");
+        }
+        try {
+          const reply = await call(() =>
+            this.#d.api.cancelQueued(relay, where.session, where.owner, queued.text),
+          );
+          if (!reply.restored) throw new CommandFailure("That message already reached Claude.");
+          await this.#send(handle, relay, queued.run.userMessageId, command.text, { wait: true });
+        } catch (error) {
+          mapper.editFailed(command.runId);
+          throw error;
+        }
         return;
       }
       case "queued-message.promote-to-steer": {
@@ -432,9 +440,16 @@ export class Commands {
       throw new CommandFailure(lobbyReason(error));
     }
     this.#d.alias(identity, name, threadId);
-    const handle = await this.#d.thread(identity, threadId);
-    if (handle === undefined)
+    // tmux-api serves /sessions from a cache of a few seconds, so the claimed
+    // session can take that long to be listed.
+    let handle: ThreadHandle | undefined;
+    for (let attempt = 0; attempt < 20 && handle === undefined; attempt++) {
+      if (attempt > 0) await sleep(750);
+      handle = await this.#d.thread(identity, threadId);
+    }
+    if (handle === undefined) {
       throw new CommandFailure("The new session did not appear in the lobby.");
+    }
     const wantMode = lobbyModeForInteraction(input.interactionMode, input.runtimeMode);
     const message = input.initialMessage;
     if (message !== undefined && message.text.trim() !== "") {

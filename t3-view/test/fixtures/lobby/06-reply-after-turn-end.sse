@@ -1,0 +1,51 @@
+event: state
+data: {"at":14,"mode":"bypassPermissions","model":{"model":"claude-haiku-4-5-20251001"},"queue":[],"prompts":["Reply with the single word hello.","Make a two-step plan to create the empty file /tmp/t3view-plan-probe, then present it with ExitPlanMode. Keep it very short."]}
+
+event: agents
+data: {"at":1791796585590,"agents":[],"workflows":[]}
+
+event: back
+data: {"id":14,"kind":"turn_end","session":"single-word-hello-request","turnId":"t2","at":1791796540733,"usage":{"input_tokens":10,"output_tokens":336,"cache_read_input_tokens":38238,"cache_creation_input_tokens":97,"model":"claude-haiku-4-5-20251001"}}
+
+event: back
+data: {"id":13,"kind":"text","session":"single-word-hello-request","turnId":"t2","body":"**Plan: Create /tmp/t3view-plan-probe**\n\n1. Write an empty file to `/tmp/t3view-plan-probe` using the Write tool.\n2. Verify file creation by reading it back.\n\nReady to execute.","at":1791796540606}
+
+event: back
+data: {"id":12,"kind":"user","session":"single-word-hello-request","turnId":"t2","body":"Make a two-step plan to create the empty file /tmp/t3view-plan-probe, then present it with ExitPlanMode. Keep it very short.","at":1791796537281}
+
+event: back
+data: {"id":11,"kind":"meta","session":"single-word-hello-request","turnId":"t1","at":1791796529359,"meta":"model","model":{"model":"claude-haiku-4-5-20251001"}}
+
+event: back
+data: {"id":10,"kind":"text","session":"single-word-hello-request","turnId":"t1","body":"hello","at":1791796478357}
+
+event: back
+data: {"id":9,"kind":"turn_end","session":"single-word-hello-request","turnId":"t1","at":1791796478326,"usage":{"input_tokens":10,"cache_creation_input_tokens":38238,"cache_read_input_tokens":0,"output_tokens":50,"output_tokens_details":{"thinking_tokens":43},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":38238,"ephemeral_5m_input_tokens":0},"inference_geo":"not_available","iterations":[{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":38238,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":38238},"type":"message"}],"speed":"standard","fallback_credit":null}}
+
+event: back
+data: {"id":8,"kind":"meta","session":"single-word-hello-request","turnId":"t1","at":1791796478326,"meta":"model","model":{"model":"claude-haiku-4-5-20251001"}}
+
+event: back
+data: {"id":7,"kind":"meta","session":"single-word-hello-request","turnId":"t1","body":"bypassPermissions","meta":"permission-mode"}
+
+event: back
+data: {"id":6,"kind":"meta","session":"single-word-hello-request","turnId":"t1","body":"normal","meta":"mode"}
+
+event: back
+data: {"id":5,"kind":"user","session":"single-word-hello-request","turnId":"t1","body":"Reply with the single word hello.","at":1791796470559}
+
+event: back
+data: {"id":4,"kind":"meta","session":"single-word-hello-request","at":1791796470514,"meta":"dequeued"}
+
+event: back
+data: {"id":3,"kind":"meta","session":"single-word-hello-request","body":"Reply with the single word hello.","at":1791796470484,"meta":"queued"}
+
+event: back
+data: {"id":2,"kind":"meta","session":"single-word-hello-request","body":"bypassPermissions","meta":"permission-mode"}
+
+event: back
+data: {"id":1,"kind":"meta","session":"single-word-hello-request","body":"normal","meta":"mode"}
+
+event: ready
+data: {"cursor":0,"head":14,"epoch":"93c968bc6b935e5c"}
+

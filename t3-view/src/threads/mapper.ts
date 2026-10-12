@@ -79,7 +79,11 @@ export interface MapperOptions {
 interface RunRecord {
   run: OrchestrationV2Run;
   /** The prompt as the queue named it, for matching its `user` event. */
-  readonly text: string;
+  text: string;
+  /** The lobby turn ids this run's events carried (a steer starts a new one). */
+  readonly turnIds: Set<string>;
+  /** A T3 edit is replacing this queued prompt's text with this one. */
+  editTo: string | undefined;
   readonly messageId: MessageId;
   /** Items handed out so far; an item's ordinal is run.ordinal * 1e6 + n. */
   items: number;
@@ -294,6 +298,25 @@ export class ThreadMapper {
     });
   }
 
+  /**
+   * A T3 edit of a queued prompt is about to take its old text off the queue
+   * and queue the new one: the run stays, under the new text, so the browser's
+   * queued row is edited rather than replaced. False when the run is not
+   * queued.
+   */
+  expectEdit(runId: RunId, text: string): boolean {
+    const rec = this.#queue.find((r) => r.run.id === runId);
+    if (rec === undefined) return false;
+    rec.editTo = text;
+    return true;
+  }
+
+  /** The edit did not go through: the old text stays queued. */
+  editFailed(runId: RunId): void {
+    const rec = this.#queue.find((r) => r.run.id === runId);
+    if (rec !== undefined) rec.editTo = undefined;
+  }
+
   /** The lobby refused the Stop: the run carries on, and its end is not an interrupt. */
   interruptRefused(): void {
     if (this.#open !== undefined) this.#open.stopRequested = false;
@@ -341,6 +364,11 @@ export class ThreadMapper {
     // A subagent's work stays in its own transcript (the agent panel is not
     // part of the first cut); its tool calls never touch the main thread.
     if (e.sidechain === true || e.agentId !== undefined) return;
+    this.#dispatch(e);
+    if (e.turnId !== undefined && e.kind !== "turn_end") this.#open?.turnIds.add(e.turnId);
+  }
+
+  #dispatch(e: LobbyEvent): void {
     switch (e.kind) {
       case "user":
         return this.#user(e);
@@ -441,6 +469,8 @@ export class ThreadMapper {
       hasOutput: false,
       interrupted: false,
       stopRequested: false,
+      editTo: undefined,
+      turnIds: new Set(),
       queuedBehind: this.#open !== undefined,
     };
     this.#runs.set(id, rec);
@@ -448,6 +478,15 @@ export class ThreadMapper {
   }
 
   #enqueue(text: string): void {
+    // The new text of a queued prompt T3 is editing: the same run, retexted.
+    const edited = this.#queue.find((r) => r.editTo !== undefined && samePrompt(r.editTo, text));
+    if (edited !== undefined) {
+      edited.editTo = undefined;
+      edited.text = text;
+      this.#o.messages.take(text);
+      this.#message(edited, edited.messageId, "user", text, null);
+      return;
+    }
     const messageId =
       this.#o.messages.take(text) ??
       Ids.syntheticMessageId(this.#o.threadId, this.#epoch, ++this.#synthetic);
@@ -478,6 +517,8 @@ export class ThreadMapper {
   #unqueue(text: string): void {
     const i = this.#queue.findIndex((r) => samePrompt(r.text, text));
     if (i === -1) return;
+    // Taken off to be replaced by its edit (queued-run.edit): it stays.
+    if (this.#queue[i]?.editTo !== undefined) return;
     const [rec] = this.#queue.splice(i, 1);
     if (rec === undefined) return;
     this.#cancelQueued(rec);
@@ -531,9 +572,16 @@ export class ThreadMapper {
     return rec;
   }
 
-  /** The open run, opening one for content that arrives with none (a wake, a mid-turn window). */
-  #ensureOpen(): RunRecord {
+  /**
+   * The open run, opening one for content that arrives with none (a wake, a
+   * mid-turn window). A row of a turn that has already ended goes to that
+   * turn's run instead: the mod's turn_end can land before Claude's stored
+   * reply (measured 2026-10-12: turn_end id 9, its text id 10).
+   */
+  #ensureOpen(e?: LobbyEvent): RunRecord {
     if (this.#open !== undefined) return this.#open;
+    const last = this.#last;
+    if (e?.turnId !== undefined && last !== undefined && last.turnIds.has(e.turnId)) return last;
     const rec = this.#start(undefined);
     this.#message(rec, rec.messageId, "user", "", null);
     if (this.#wakeSummary !== undefined) {
@@ -679,7 +727,7 @@ export class ThreadMapper {
   // ---- replies and tools --------------------------------------------------
 
   #reply(e: LobbyEvent): void {
-    const rec = this.#ensureOpen();
+    const rec = this.#ensureOpen(e);
     const stream = e.kind === "thinking" ? "thinking" : "text";
     rec.hasOutput = true;
     // The stored block supersedes the oldest block streamed for it, and
@@ -722,7 +770,7 @@ export class ThreadMapper {
     if (body === "") return;
     const stream = e.stream === "thinking" ? "thinking" : e.stream === "text" ? "text" : undefined;
     if (stream === undefined) return;
-    const rec = this.#ensureOpen();
+    const rec = this.#ensureOpen(e);
     rec.hasOutput = true;
     const block = e.block ?? 0;
     let slot = this.#streams.find(
@@ -772,7 +820,7 @@ export class ThreadMapper {
   }
 
   #toolUse(e: LobbyEvent): void {
-    const rec = this.#ensureOpen();
+    const rec = this.#ensureOpen(e);
     rec.hasOutput = true;
     const tool = e.tool ?? "";
     const toolId = e.toolId ?? `event-${e.id}`;

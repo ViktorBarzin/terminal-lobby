@@ -78,12 +78,11 @@ export function emptyProjection(thread: OrchestrationV2AppThread): Orchestration
   };
 }
 
-const NO_STREAM_TEXT = {
-  starting: "Claude is starting in this session.",
+const NO_STREAM_TEXT: Record<"exited" | "restart-when-idle", string> = {
   exited: "This session's Claude is not running. Open it in the lobby to start it again.",
   "restart-when-idle":
     "This session's Claude started before the lobby could stream it. It restarts onto the lobby's stream once it is idle.",
-} as const;
+};
 
 export class ThreadModel {
   readonly mapper: ThreadMapper;
@@ -177,7 +176,11 @@ export class ThreadModel {
       case "nomod":
       case "starting": {
         const why = parseNoStream(frame.event, frame.data);
-        if (why === undefined || this.#noticed.has(why.kind)) return NO_EVENTS;
+        // A Claude still starting is a moment, not something to keep a row
+        // for: its stream follows within seconds.
+        if (why === undefined || why.kind === "starting" || this.#noticed.has(why.kind)) {
+          return NO_EVENTS;
+        }
         this.#noticed.add(why.kind);
         return this.#events(this.mapper.noStream(NO_STREAM_TEXT[why.kind]));
       }
