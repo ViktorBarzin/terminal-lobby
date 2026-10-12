@@ -298,6 +298,94 @@ describe("a streamed reply whose turn_end lands before its stored text", () => {
   });
 });
 
+describe("a turn that thinks before each step", () => {
+  const event = (o: Record<string, unknown>) => ({
+    event: "message",
+    data: JSON.stringify({ session: "s", ...o }),
+  });
+  const delta = (stream: string, block: number, body: string) =>
+    event({ id: 0, kind: "delta", turnId: "t2", stream, block, body });
+
+  it("draws each step's thinking as its own row, in order around the tool rows", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    model.onFrame(event({ id: 50, kind: "user", turnId: "t2", body: "check twice" }));
+    // Step 1: block 0 thinks, block 1 answers, block 2 calls a tool. The
+    // mod's step index never reaches the sidecar, so step 2 reuses block 0.
+    model.onFrame(delta("thinking", 0, "first thought"));
+    model.onFrame(delta("text", 1, "Checking."));
+    model.onFrame(event({ id: 51, kind: "text", turnId: "t2", body: "Checking." }));
+    model.onFrame(
+      event({
+        id: 52,
+        kind: "tool_use",
+        turnId: "t2",
+        tool: "Bash",
+        toolId: "toolu_a",
+        body: '{"command":"echo a"}',
+      }),
+    );
+    const runItems = () => {
+      const run = model.projection.runs.at(-1);
+      return model.projection.turnItems.filter((i) => i.runId === run?.id);
+    };
+    const [firstThought] = ofType(runItems(), "reasoning");
+    expect(firstThought).toMatchObject({ text: "first thought", streaming: false });
+    model.onFrame(
+      event({ id: 53, kind: "tool_result", turnId: "t2", toolId: "toolu_a", body: "a" }),
+    );
+    model.onFrame(delta("thinking", 0, "second thought"));
+    model.onFrame(delta("text", 1, "Done."));
+    model.onFrame(event({ id: 54, kind: "text", turnId: "t2", body: "Done." }));
+    model.onFrame(event({ id: 55, kind: "turn_end", turnId: "t2" }));
+    const items = runItems();
+    expect(items.map((i) => i.type)).toEqual([
+      "user_message",
+      "reasoning",
+      "assistant_message",
+      "command_execution",
+      "reasoning",
+      "assistant_message",
+    ]);
+    expect(ofType(items, "reasoning").map((i) => i.text)).toEqual([
+      "first thought",
+      "second thought",
+    ]);
+    expect(ofType(items, "assistant_message").map((i) => i.text)).toEqual(["Checking.", "Done."]);
+    assertSemanticProjectionIntegrity(model.projection);
+  });
+
+  it("starts a fresh text row for a later step whose stored text has not landed", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    model.onFrame(event({ id: 50, kind: "user", turnId: "t2", body: "check" }));
+    model.onFrame(delta("text", 0, "Checking."));
+    model.onFrame(
+      event({
+        id: 51,
+        kind: "tool_use",
+        turnId: "t2",
+        tool: "Bash",
+        toolId: "toolu_b",
+        body: '{"command":"echo b"}',
+      }),
+    );
+    model.onFrame(
+      event({ id: 52, kind: "tool_result", turnId: "t2", toolId: "toolu_b", body: "b" }),
+    );
+    model.onFrame(delta("text", 0, "Done."));
+    const run = model.projection.runs.at(-1);
+    const items = model.projection.turnItems.filter((i) => i.runId === run?.id);
+    expect(items.map((i) => i.type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "command_execution",
+      "assistant_message",
+    ]);
+    expect(ofType(items, "assistant_message").map((i) => i.text)).toEqual(["Checking.", "Done."]);
+  });
+});
+
 describe("stops and wakes", () => {
   const event = (o: Record<string, unknown>) => ({
     event: "message",

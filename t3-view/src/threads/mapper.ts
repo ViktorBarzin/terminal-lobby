@@ -985,9 +985,10 @@ export class ThreadMapper {
   }
 
   /**
-   * Draws the turn's open streams as completed. The slots stay until the
-   * stored block for each arrives (#reply), so that block keeps the streamed
-   * row's id and place instead of drawing the reply a second time.
+   * Draws the run's open streams as completed, at its end or at the end of a
+   * step. The slots stay until the stored block for each arrives (#reply), so
+   * that block keeps the streamed row's id and place instead of drawing the
+   * reply a second time.
    */
   #closeStreams(rec: RunRecord): void {
     for (const slot of this.#streams) {
@@ -1000,6 +1001,12 @@ export class ThreadMapper {
   #toolUse(e: LobbyEvent): void {
     const rec = this.#ensureOpen(e);
     rec.hasOutput = true;
+    // A tool call ends its step. The mod's step index does not reach the
+    // sidecar, and the next step numbers its blocks from 0 again, so its
+    // deltas would otherwise land in this step's rows. Thinking is never
+    // stored (normalize.go drops empty thinking blocks), so nothing else
+    // would ever close it before turn_end.
+    this.#closeStreams(rec);
     const tool = e.tool ?? "";
     const toolId = e.toolId ?? `event-${e.id}`;
     const input = parseToolInput(e.body);
