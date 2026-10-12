@@ -1,7 +1,9 @@
+import { MessageId, RunId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { LobbyApi } from "../src/lobby/api.ts";
 import { SequenceClock } from "../src/sequence.ts";
+import { HeldPrompts } from "../src/threads/held.ts";
 import { LiveThread } from "../src/threads/live.ts";
 import { modeFromPane } from "../src/threads/modes.ts";
 import { PendingDispatches } from "../src/threads/pending.ts";
@@ -20,7 +22,7 @@ afterEach(async () => {
   lobby = undefined;
 });
 
-async function open(pane: string | undefined): Promise<LiveThread> {
+async function open(pane: string | undefined, held?: HeldPrompts): Promise<LiveThread> {
   lobby = await startFakeLobby({
     identity: relay.identity,
     secret: relay.secret,
@@ -36,6 +38,7 @@ async function open(pane: string | undefined): Promise<LiveThread> {
     clock: new SequenceClock(1_791_794_000_000),
     pending: new PendingDispatches({ now: () => 1_791_794_200_000 }),
     locate: async () => ({ name: SESSION_NAME }),
+    ...(held === undefined ? {} : { held }),
   });
   live.attach(relay);
   await live.ready(5_000);
@@ -62,6 +65,34 @@ describe("LiveThread mode at ready", () => {
     live?.dispose();
     await lobby?.close();
     expect((await open("> \n")).projection.thread.runtimeMode).toBe("full-access");
+  });
+});
+
+describe("LiveThread held prompts", () => {
+  const heldRuns = (thread: LiveThread) =>
+    thread.projection.runs
+      .filter((r) => r.status === "queued")
+      .map((r) => [r.queueHeld, r.userMessageId]);
+
+  it("brings back prompts a Stop held before the sidecar restarted", async () => {
+    const held = new HeldPrompts();
+    held.set("wizard", testThread().id, [
+      { messageId: MessageId.make("client-m7"), text: "later please" },
+    ]);
+    const thread = await open(undefined, held);
+    expect(heldRuns(thread)).toEqual([[true, "client-m7"]]);
+    expect(thread.model.mapper.heldRuns.map((r) => r.text)).toEqual(["later please"]);
+  });
+
+  it("writes the held set back as it changes", async () => {
+    const held = new HeldPrompts();
+    held.set("wizard", testThread().id, [
+      { messageId: MessageId.make("client-m7"), text: "later please" },
+    ]);
+    const thread = await open(undefined, held);
+    const [run] = thread.model.mapper.heldRuns;
+    thread.commit(thread.model.mapper.cancelHeld(run?.runId ?? RunId.make("none")));
+    expect(held.get("wizard", testThread().id)).toEqual([]);
   });
 });
 

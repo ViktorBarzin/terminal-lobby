@@ -20,6 +20,7 @@ import { LOBBY_CLAUDE_MODELS } from "./models.ts";
 import { SequenceClock } from "./sequence.ts";
 import { sidecarLayer } from "./server.ts";
 import { ThreadAliases } from "./shell/aliases.ts";
+import { HeldPrompts } from "./threads/held.ts";
 import { PendingDispatches } from "./threads/pending.ts";
 import { tmuxApiWhoami } from "./whoami.ts";
 
@@ -57,7 +58,8 @@ function start(): void {
   const pendingFile = state("pending.json");
   const pending = new PendingDispatches(pendingFile === undefined ? {} : { file: pendingFile });
   const aliases = new ThreadAliases(state("aliases.json"));
-  const hub = new Hub({ api, clock, pending, aliases, startedAt, log });
+  const held = new HeldPrompts(state("held.json"));
+  const hub = new Hub({ api, clock, pending, aliases, held, startedAt, log });
   const commands = new Commands({
     api,
     pending,

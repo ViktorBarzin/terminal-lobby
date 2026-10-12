@@ -64,7 +64,7 @@ Environment variables only:
 | `TL_T3_VIEW_SESSION_EVENTS` | `http://127.0.0.1:7685` | session-events (used from stage 3) |
 | `TL_T3_VIEW_WEB_DIR` | `/usr/lib/terminal-lobby/tl-t3-view/web` | The built web client |
 | `TL_T3_VIEW_LABEL` | host name | The environment's name in T3 |
-| `TL_T3_VIEW_STATE_DIR` | `$STATE_DIRECTORY` (systemd), else none | Where prompts awaiting their row (`pending.json`) and the thread ids of sessions T3 created (`aliases.json`) outlive a restart; without it they are kept in memory |
+| `TL_T3_VIEW_STATE_DIR` | `$STATE_DIRECTORY` (systemd), else none | Where prompts awaiting their row (`pending.json`), the thread ids of sessions T3 created (`aliases.json`) and the prompts a T3 Stop held (`held.json`) outlive a restart; without it they are kept in memory |
 
 The sidecar refuses to start when `TL_PROXY_SECRET` is set (see the next
 section). The systemd unit can read both lobby config files, so it gets the
@@ -256,7 +256,13 @@ prompts back instead of sending them at the turn's end, and keeps them as
 queued runs with `queueHeld: true`, as T3's own server does. `queue.resume`
 sends them again with `wait`, oldest first, under their own runs and message
 ids. While a run is held only the sidecar has its text, so cancelling or
-editing it changes it there without a lobby call.
+editing it changes it there without a lobby call. The held set of each
+thread is written to `held.json` (`src/threads/held.ts`, keyed by OS user and
+thread id) whenever it changes. A model built again from the log (a sidecar
+restart, a stream rebuild, a thread reopened after it went idle) reads the
+hand-back as each prompt leaving the queue, so at its first `ready` it holds
+those runs again, and makes a held run for a prompt the bounded log no
+longer shows.
 
 ## Open questions
 
@@ -265,9 +271,6 @@ editing it changes it there without a lobby call.
 - T3 treats projects with the same workspace root as one in places (Ungrouped
   and System both root at the home directory, and a new thread in System was
   titled "What should we build in Ungrouped?").
-- A held queue lives in the sidecar's memory. A sidecar restart or a stream
-  rebuild while prompts are held shows them cancelled (the log records the
-  hand-back as `unqueued`), and the text is gone from the queue.
 - Sessions on a model the composer does not list (for example
   `claude-haiku-5-5` from a pre-warm alias) show the composer's default model;
   a send then leaves the session's model alone.

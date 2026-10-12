@@ -395,6 +395,56 @@ export class ThreadMapper {
     });
   }
 
+  /**
+   * Held prompts kept outside this model (held.ts), taken back after the
+   * opening of a model built again from the log. In the log a Stop's
+   * hand-back reads as the prompt leaving the queue, so a cancelled queued
+   * run with the same text is held again; a prompt with no such run becomes
+   * a held run of its own under its message id. A prompt the queue already
+   * has, held or still queued in the lobby, is left as it is.
+   */
+  restoreHeld(
+    prompts: ReadonlyArray<{ readonly messageId: MessageId; readonly text: string }>,
+  ): DomainEvent[] {
+    return this.#batch(this.#o.now(), () => {
+      const queued = [...this.#queue];
+      const revived = new Set<RunRecord>();
+      for (const { messageId, text } of prompts) {
+        const q = queued.findIndex((r) => samePrompt(r.text, text));
+        if (q >= 0) {
+          queued.splice(q, 1);
+          continue;
+        }
+        const cancelled = [...this.#runs.values()]
+          .filter(
+            (r) =>
+              r.run.status === "cancelled" &&
+              r.run.startedAt === null &&
+              !revived.has(r) &&
+              samePrompt(r.text, text),
+          )
+          .at(-1);
+        if (cancelled !== undefined) {
+          revived.add(cancelled);
+          cancelled.hold = "held";
+          this.#takeUnqueued(text);
+          this.#setRun(cancelled, { status: "queued", completedAt: null, queueHeld: true });
+          this.#emit("node.updated", this.#rootNode(cancelled, "pending"), cancelled.run.id);
+          this.#queue.push(cancelled);
+          continue;
+        }
+        const rec = this.#newRecord(text, messageId, "queued");
+        rec.hold = "held";
+        rec.run = { ...rec.run, queueHeld: true };
+        this.#queue.push(rec);
+        this.#emit("run.created", rec.run, rec.run.id);
+        this.#emit("node.updated", this.#rootNode(rec, "pending"), rec.run.id);
+        this.#message(rec, messageId, "user", text, null);
+      }
+      this.#renumberQueue();
+    });
+  }
+
   /** The lobby refused the Stop: its queue still holds the prompts, so nothing waits here. */
   releaseHold(): DomainEvent[] {
     return this.#batch(this.#o.now(), () => {

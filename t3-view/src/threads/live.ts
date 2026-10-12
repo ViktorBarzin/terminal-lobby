@@ -22,6 +22,7 @@ import type { RelayCredentials } from "../auth.ts";
 import type { LobbyApi } from "../lobby/api.ts";
 import { SseParser } from "../lobby/wire.ts";
 import type { SequenceClock } from "../sequence.ts";
+import type { HeldPrompts } from "./held.ts";
 import type { DomainEvent } from "./mapper.ts";
 import { ThreadModel } from "./model.ts";
 import { modeFromPane } from "./modes.ts";
@@ -39,6 +40,8 @@ export interface LiveThreadOptions {
   readonly api: LobbyApi;
   readonly clock: SequenceClock;
   readonly pending: PendingDispatches;
+  /** Where the prompts a T3 Stop held are kept beyond this model (held.ts). */
+  readonly held?: HeldPrompts;
   /** The session's current name, after refreshing the directory when `stale`. */
   readonly locate: (stale: boolean) => Promise<ThreadLocation | undefined>;
   readonly onChange?: () => void;
@@ -76,6 +79,9 @@ export class LiveThread {
   #idleTimer: ReturnType<typeof setTimeout> | undefined;
   #readyWaiters: Array<() => void> = [];
   #rebuilds = 0;
+  /** The model that has taken back the held prompts; the held set is saved only from it. */
+  #restored: ThreadModel | undefined;
+  #savedHeld = "[]";
 
   constructor(options: LiveThreadOptions) {
     this.#o = options;
@@ -215,6 +221,7 @@ export class LiveThread {
     events: ReadonlyArray<{ readonly sequence: number; readonly event: DomainEvent }>,
   ): void {
     if (events.length === 0) return;
+    this.#saveHeld();
     this.#o.onChange?.();
     if (this.#needsSnapshot) return;
     for (const { sequence, event } of events) {
@@ -281,6 +288,32 @@ export class LiveThread {
     this.#broadcast(model.commit(model.mapper.confirmMode(mode)));
   }
 
+  /**
+   * At the first `ready` of each model: the prompts a Stop held, which the
+   * log alone shows as gone from the queue. Until then the model's held set
+   * is not saved, so an opening cannot wipe what an earlier one held.
+   */
+  #restoreHeld(model: ThreadModel): void {
+    const store = this.#o.held;
+    if (store === undefined || this.#restored === model) return;
+    this.#restored = model;
+    const prompts = store.get(this.#o.osUser, this.#o.threadId);
+    this.#savedHeld = JSON.stringify(prompts);
+    if (prompts.length > 0) this.#broadcast(model.commit(model.mapper.restoreHeld(prompts)));
+    this.#saveHeld();
+  }
+
+  #saveHeld(): void {
+    const store = this.#o.held;
+    const model = this.#model;
+    if (store === undefined || this.#restored !== model) return;
+    const prompts = model.mapper.heldRuns.map((r) => ({ messageId: r.messageId, text: r.text }));
+    const json = JSON.stringify(prompts);
+    if (json === this.#savedHeld) return;
+    this.#savedHeld = json;
+    store.set(this.#o.osUser, this.#o.threadId, prompts);
+  }
+
   /** One upstream connection, until it ends. */
   async #readOnce(
     relay: RelayCredentials,
@@ -325,6 +358,7 @@ export class LiveThread {
           this.#broadcast(outcome.events);
           if (frame.event === "ready" && this.#model.synced) {
             await this.#readPaneMode(relay, where, this.#model);
+            this.#restoreHeld(this.#model);
             synced = true;
             this.#synced();
           }

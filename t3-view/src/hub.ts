@@ -29,6 +29,7 @@ import type { ThreadAliases } from "./shell/aliases.ts";
 import { type DirectoryEntry, projectShells, SessionDirectory } from "./shell/directory.ts";
 import { appThreadOf, threadShellOf, titleOf } from "./shell/threadShell.ts";
 import { SHELL_SCHEMA_VERSION } from "./shell.ts";
+import type { HeldPrompts } from "./threads/held.ts";
 import { LiveThread } from "./threads/live.ts";
 import type { PendingDispatches } from "./threads/pending.ts";
 
@@ -37,6 +38,7 @@ export interface HubOptions {
   readonly clock: SequenceClock;
   readonly pending: PendingDispatches;
   readonly aliases?: ThreadAliases;
+  readonly held?: HeldPrompts;
   readonly startedAt: string;
   readonly pollMs?: number;
   readonly threadIdleMs?: number;
@@ -199,6 +201,7 @@ export class UserHub {
         api: this.#o.api,
         clock: this.#o.clock,
         pending: this.#o.pending,
+        ...(this.#o.held === undefined ? {} : { held: this.#o.held }),
         locate: async (stale) => {
           if (stale) await this.refresh(true);
           const now = this.directory.byId(id);

@@ -495,6 +495,46 @@ describe("queue, stop, mode and model", () => {
       expect(live.projection.runs.find((r) => r.id === second)?.status).toBe("cancelled");
     });
 
+    it("restores held prompts into a model rebuilt from the same log", async () => {
+      const { live, queuedId } = await stopHolding(["later please", "and this"]);
+      const kept = live.model.mapper.heldRuns;
+      // A rebuild (or a restart) replays the log, where the hand-back reads as
+      // the prompt leaving the queue.
+      const rebuilt = setup().live;
+      runningFrames(rebuilt);
+      rebuilt.model.onFrame(meta(901, "queued", "later please"));
+      rebuilt.model.onFrame(meta(902, "unqueued", "later please"));
+      rebuilt.model.onFrame(lobbyEvent({ id: 903, kind: "turn_end", turnId: "t-stop" }));
+      expect(rebuilt.projection.runs.find((r) => r.id === queuedId)?.status).toBe("cancelled");
+
+      rebuilt.commit(rebuilt.model.mapper.restoreHeld(kept));
+      const runs = held(rebuilt);
+      expect(runs[0]).toEqual([queuedId, "queued", true, "later please"]);
+      expect(runs.slice(1).map((r) => r.slice(1))).toEqual([["queued", true, "and this"]]);
+      expect(rebuilt.model.mapper.heldRuns.map((r) => r.text)).toEqual([
+        "later please",
+        "and this",
+      ]);
+      const second = rebuilt.projection.runs.find((r) => r.id === runs[1]?.[0]);
+      expect(second?.userMessageId).toBe(kept[1]?.messageId);
+    });
+
+    it("restores nothing the lobby still queues or the model already holds", async () => {
+      const { live } = await stopHolding();
+      const before = held(live);
+      live.commit(live.model.mapper.restoreHeld(live.model.mapper.heldRuns));
+      expect(held(live)).toEqual(before);
+      const t = setup();
+      runningFrames(t.live);
+      t.live.model.onFrame(meta(901, "queued", "later please"));
+      t.live.commit(
+        t.live.model.mapper.restoreHeld([
+          { messageId: MessageId.make("m-x"), text: "later please" },
+        ]),
+      );
+      expect(held(t.live).map((r) => r.slice(1))).toEqual([["queued", undefined, "later please"]]);
+    });
+
     it("lets the queue go again when the lobby refuses the Stop", async () => {
       const api = fakeApi({
         cancel: () => {
