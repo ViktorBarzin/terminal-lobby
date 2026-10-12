@@ -68,6 +68,37 @@ describe("LiveThread mode at ready", () => {
   });
 });
 
+describe("LiveThread mode at a turn's start and end", () => {
+  // A mode chosen on the pane (a plan-exit menu, a Shift+Tab in the Terminal)
+  // reaches no transcript event, so the pane is read again as a turn starts
+  // and ends, as the Solid view does.
+  const frame = (body: Record<string, unknown>) =>
+    `event: message\ndata: ${JSON.stringify({ session: SESSION_NAME, at: 1_791_794_300_000, ...body })}\n\n`;
+  const settle = async (thread: LiveThread, mode: string) => {
+    for (let i = 0; i < 50 && thread.projection.thread.runtimeMode !== mode; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+
+  it("reads the pane again when a turn ends", async () => {
+    const thread = await open("> \n  ⏸ plan mode on (shift+tab to cycle)\n");
+    expect(thread.projection.thread.interactionMode).toBe("plan");
+    lobby?.setPane("> \n  ⏸ manual mode on (shift+tab to cycle)\n");
+    lobby?.push(frame({ id: 30, kind: "turn_end", turnId: "t1" }));
+    await settle(thread, "approval-required");
+    expect(thread.projection.thread.interactionMode).toBe("default");
+    expect(thread.projection.thread.runtimeMode).toBe("approval-required");
+  });
+
+  it("reads the pane again when a turn starts", async () => {
+    const thread = await open("> \n  ⏸ manual mode on (shift+tab to cycle)\n");
+    lobby?.setPane("> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n");
+    lobby?.push(frame({ id: 30, kind: "user", turnId: "t2", body: "next" }));
+    await settle(thread, "full-access");
+    expect(thread.projection.thread.runtimeMode).toBe("full-access");
+  });
+});
+
 describe("LiveThread held prompts", () => {
   const heldRuns = (thread: LiveThread) =>
     thread.projection.runs

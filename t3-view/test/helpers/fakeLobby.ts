@@ -13,6 +13,8 @@ export interface FakeLobby {
   readonly posts: Array<{ readonly path: string; readonly body: unknown }>;
   /** Extra frames to write to every open event stream. */
   readonly push: (raw: string) => void;
+  /** What GET /pane answers from now on. */
+  readonly setPane: (pane: string) => void;
   close(): Promise<void>;
 }
 
@@ -27,6 +29,7 @@ export async function startFakeLobby(options: {
   readonly pane?: string;
 }): Promise<FakeLobby> {
   const posts: Array<{ path: string; body: unknown }> = [];
+  let pane = options.pane;
   const streams = new Set<ServerResponse>();
   const opening = readFileSync(
     new URL(`../fixtures/lobby/${options.fixture}`, import.meta.url),
@@ -73,12 +76,8 @@ export async function startFakeLobby(options: {
       req.on("close", () => streams.delete(res));
       return;
     }
-    if (
-      req.method === "GET" &&
-      url.pathname === `/pane/${SESSION_NAME}` &&
-      options.pane !== undefined
-    ) {
-      return json({ pane: options.pane, state: "done" });
+    if (req.method === "GET" && url.pathname === `/pane/${SESSION_NAME}` && pane !== undefined) {
+      return json({ pane, state: "done" });
     }
     if (req.method === "POST") {
       let raw = "";
@@ -106,6 +105,9 @@ export async function startFakeLobby(options: {
     posts,
     push: (raw) => {
       for (const s of streams) s.write(raw);
+    },
+    setPane: (next) => {
+      pane = next;
     },
     close: () =>
       new Promise<void>((resolve) => {

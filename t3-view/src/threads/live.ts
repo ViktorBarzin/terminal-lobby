@@ -20,7 +20,7 @@ import type {
 
 import type { RelayCredentials } from "../auth.ts";
 import type { LobbyApi } from "../lobby/api.ts";
-import { SseParser } from "../lobby/wire.ts";
+import { parseLobbyEvent, SseParser } from "../lobby/wire.ts";
 import type { SequenceClock } from "../sequence.ts";
 import type { HeldPrompts } from "./held.ts";
 import type { DomainEvent } from "./mapper.ts";
@@ -289,6 +289,22 @@ export class LiveThread {
   }
 
   /**
+   * The pane again as a turn starts or ends, the moments the Solid view reads
+   * it too: a mode picked on the pane (the plan-exit menu, Shift+Tab in the
+   * Terminal) reaches no transcript event, so without this T3 keeps the old
+   * mode until the next resync. Measured 2026-10-12 on 0.125.0: a plan exit
+   * left T3 on Full access while the pane said manual. The status line
+   * repaints a moment after the keystroke, hence the short wait.
+   */
+  #rereadPaneMode(relay: RelayCredentials, where: ThreadLocation, model: ThreadModel): void {
+    void sleep(PANE_REPAINT_MS)
+      .then(() => this.#readPaneMode(relay, where, model))
+      .catch((error: unknown) => {
+        this.#o.log?.(`thread ${this.#o.threadId}: pane read: ${String(error)}`);
+      });
+  }
+
+  /**
    * At the first `ready` of each model: the prompts a Stop held, which the
    * log alone shows as gone from the queue. Until then the model's held set
    * is not saved, so an opening cannot wipe what an earlier one held.
@@ -356,6 +372,9 @@ export class LiveThread {
             return "rebuild";
           }
           this.#broadcast(outcome.events);
+          if (frame.event === "message" && this.#model.synced && turnEdge(frame.data)) {
+            this.#rereadPaneMode(relay, where, this.#model);
+          }
           if (frame.event === "ready" && this.#model.synced) {
             await this.#readPaneMode(relay, where, this.#model);
             this.#restoreHeld(this.#model);
@@ -372,6 +391,15 @@ export class LiveThread {
     }
     return synced ? "synced" : "ended";
   }
+}
+
+/** How long the status line takes to repaint after a mode change, with margin (measured ~40 ms). */
+const PANE_REPAINT_MS = 150;
+
+/** A `message` frame that starts a turn (a user prompt) or ends one. */
+function turnEdge(data: string): boolean {
+  const kind = parseLobbyEvent(data)?.kind;
+  return kind === "user" || kind === "turn_end";
 }
 
 function sleep(ms: number): Promise<void> {
