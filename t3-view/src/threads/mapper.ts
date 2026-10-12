@@ -142,6 +142,15 @@ const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 const trimmed = (s: string): string => s.trim();
 
+/**
+ * The keystrokes the lobby types for a model or effort change (as the Solid
+ * view's isPickerCommand). Claude Code records each as a turn of its own,
+ * whose receipt row says what changed.
+ */
+function isPickerCommand(text: string): boolean {
+  return /^\/(model|effort)$/.test(text.trim());
+}
+
 function samePrompt(a: string, b: string): boolean {
   const x = trimmed(a);
   const y = trimmed(b);
@@ -180,6 +189,8 @@ export class ThreadMapper {
   readonly #dialogs = new Map<string, OpenDialog>();
   #wakeSummary: string | undefined;
   #pendingNotice: string | undefined;
+  /** Turns that are a picker command's: their receipt is a notice, not a run. */
+  readonly #pickerTurns = new Set<string>();
 
   constructor(options: MapperOptions, thread: OrchestrationV2AppThread) {
     this.#o = options;
@@ -600,6 +611,10 @@ export class ThreadMapper {
 
   #user(e: LobbyEvent): void {
     const text = e.body ?? "";
+    if (e.turnId !== undefined && isPickerCommand(text)) {
+      this.#pickerTurns.add(e.turnId);
+      return;
+    }
     const open = this.#open;
     if (open !== undefined) {
       // A prompt delivered into the running turn. A queued run it matches was
@@ -682,6 +697,10 @@ export class ThreadMapper {
 
   #stateRow(e: LobbyEvent): void {
     const body = e.body ?? "";
+    if (e.turnId !== undefined && this.#pickerTurns.has(e.turnId)) {
+      this.#notice(body);
+      return;
+    }
     if (body.startsWith("[Request interrupted by user")) {
       const rec = this.#open;
       if (rec === undefined) return;

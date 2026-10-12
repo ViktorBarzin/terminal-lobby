@@ -1,0 +1,90 @@
+id: 1
+data: {"id":1,"kind":"meta","session":"run-echo-hi-from-text-command","body":"normal","meta":"mode"}
+
+id: 2
+data: {"id":2,"kind":"meta","session":"run-echo-hi-from-text-command","body":"bypassPermissions","meta":"permission-mode"}
+
+id: 3
+data: {"id":3,"kind":"meta","session":"run-echo-hi-from-text-command","body":"Think briefly, then run `echo hi-from-text` with the Bash tool and reply with one word: done","at":1791827689072,"meta":"queued"}
+
+id: 4
+data: {"id":4,"kind":"meta","session":"run-echo-hi-from-text-command","at":1791827689098,"meta":"dequeued"}
+
+id: 5
+data: {"id":5,"kind":"user","session":"run-echo-hi-from-text-command","turnId":"t1","body":"Think briefly, then run `echo hi-from-text` with the Bash tool and reply with one word: done","at":1791827689133}
+
+id: 6
+data: {"id":6,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","body":"normal","meta":"mode"}
+
+id: 7
+data: {"id":7,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","body":"bypassPermissions","meta":"permission-mode"}
+
+id: 8
+data: {"id":8,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","at":1791827691667,"meta":"model","model":{"model":"claude-haiku-4-5-20251001"}}
+
+id: 9
+data: {"id":9,"kind":"tool_use","session":"run-echo-hi-from-text-command","turnId":"t1","body":"{\"command\":\"echo hi-from-text\",\"description\":\"Echo test message\"}","tool":"Bash","toolId":"toolu_01T1tcnGWG4bp5XVZJBtQfjR","at":1791827692085}
+
+id: 10
+data: {"id":10,"kind":"tool_result","session":"run-echo-hi-from-text-command","turnId":"t1","body":"hi-from-text","toolId":"toolu_01T1tcnGWG4bp5XVZJBtQfjR","at":1791827692782,"result":{"stdout":"hi-from-text","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+
+id: 11
+data: {"id":11,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","body":"normal","meta":"mode"}
+
+id: 12
+data: {"id":12,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","body":"bypassPermissions","meta":"permission-mode"}
+
+id: 13
+data: {"id":13,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","body":"normal","meta":"mode"}
+
+id: 14
+data: {"id":14,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","body":"bypassPermissions","meta":"permission-mode"}
+
+id: 15
+data: {"id":15,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t1","at":1791827693155,"meta":"model","model":{"model":"claude-haiku-4-5-20251001"}}
+
+id: 16
+data: {"id":16,"kind":"text","session":"run-echo-hi-from-text-command","turnId":"t1","body":"Done","at":1791827694262}
+
+id: 17
+data: {"id":17,"kind":"turn_end","session":"run-echo-hi-from-text-command","turnId":"t1","at":1791827694366,"usage":{"input_tokens":18,"output_tokens":179,"cache_read_input_tokens":40254,"cache_creation_input_tokens":45705,"model":"claude-haiku-4-5-20251001"}}
+
+id: 18
+data: {"id":18,"kind":"user","session":"run-echo-hi-from-text-command","turnId":"t2","body":"/model","at":1791827943344}
+
+id: 19
+data: {"id":19,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t2","at":1791827943372,"meta":"model","model":{"model":"claude-sonnet-5"}}
+
+id: 20
+data: {"id":20,"kind":"state","session":"run-echo-hi-from-text-command","turnId":"t2","body":"Set model to `claude-sonnet-5` for this session only","at":1791827943372}
+
+id: 21
+data: {"id":21,"kind":"turn_end","session":"run-echo-hi-from-text-command","turnId":"t2","at":1791827943372}
+
+id: 22
+data: {"id":22,"kind":"user","session":"run-echo-hi-from-text-command","turnId":"t3","body":"/effort","at":1791827943910}
+
+id: 23
+data: {"id":23,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t3","at":1791827943925,"meta":"model","model":{"model":"claude-sonnet-5","effort":"high"}}
+
+id: 24
+data: {"id":24,"kind":"state","session":"run-echo-hi-from-text-command","turnId":"t3","body":"Set effort level to high (this session only): Comprehensive implementation with extensive testing and documentation","at":1791827943925}
+
+id: 25
+data: {"id":25,"kind":"turn_end","session":"run-echo-hi-from-text-command","turnId":"t3","at":1791827943925}
+
+id: 26
+data: {"id":26,"kind":"user","session":"run-echo-hi-from-text-command","turnId":"t4","body":"Think it through step by step, then answer with just the number: 17*23","at":1791827946236}
+
+id: 27
+data: {"id":27,"kind":"meta","session":"run-echo-hi-from-text-command","turnId":"t4","at":1791827946326,"meta":"model","model":{"model":"claude-sonnet-5","effort":"high"}}
+
+id: 28
+data: {"id":28,"kind":"text","session":"run-echo-hi-from-text-command","turnId":"t4","body":"391","at":1791827947841}
+
+id: 29
+data: {"id":29,"kind":"turn_end","session":"run-echo-hi-from-text-command","turnId":"t4","at":1791827947987,"usage":{"input_tokens":2,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":64633,"model":"claude-sonnet-5"}}
+
+event: ready
+data: 29
+

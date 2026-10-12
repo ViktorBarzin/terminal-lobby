@@ -337,3 +337,24 @@ describe("rebuilds and replays", () => {
     ]);
   });
 });
+
+describe("the model and effort pickers", () => {
+  it("draws /model and /effort as notices on the run before, not as prompts or runs", () => {
+    const { model } = makeModel();
+    for (const frame of fixture("07-model-and-effort-pickers.sse")) model.onFrame(frame);
+    const p = model.projection;
+    expect(p.runs.map((r) => [r.ordinal, r.status])).toEqual([
+      [1, "completed"],
+      [2, "completed"],
+    ]);
+    const users = ofType(p.turnItems, "user_message").map((u) => u.text);
+    expect(users).not.toContain("/model");
+    expect(users).not.toContain("/effort");
+    expect(ofType(itemsOf(model, 1), "system_notice").map((n) => n.message)).toEqual([
+      "Set model to `claude-sonnet-5` for this session only",
+      "Set effort level to high (this session only): Comprehensive implementation with extensive testing and documentation",
+    ]);
+    expect(p.thread.modelSelection.model).toBe("claude-sonnet-5");
+    assertSemanticProjectionIntegrity(p);
+  });
+});
