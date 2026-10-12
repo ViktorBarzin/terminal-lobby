@@ -54,11 +54,13 @@ export function defaultT3Origin(lobbyHostname: string): string | null {
  *
  * This decides which page the lobby frames AND whose key messages it replays
  * as lobby commands, so a link carrying `?t3view=` must not be able to point
- * it anywhere: https on the lobby's own domain, or http on loopback for a
- * local sidecar. Anything with a path, a query or credentials is refused
- * rather than trimmed, because it was not written as an origin.
+ * it at a page someone else controls: http on loopback, for a local sidecar,
+ * and nothing else. Other pages on the lobby's own site are refused too,
+ * since anyone with a space on pages.viktorbarzin.me could publish one.
+ * Anything with a path, a query or credentials is refused rather than
+ * trimmed, because it was not written as an origin.
  */
-export function allowedT3Origin(candidate: string, lobbyHostname: string): string | null {
+export function allowedT3Origin(candidate: string): string | null {
   let u: URL;
   try {
     u = new URL(candidate);
@@ -67,12 +69,7 @@ export function allowedT3Origin(candidate: string, lobbyHostname: string): strin
   }
   if (u.username || u.password || u.search || u.hash) return null;
   if (u.pathname !== "/" && u.pathname !== "") return null;
-  const host = u.hostname.toLowerCase();
-  if (u.protocol === "http:") return isLoopback(host) ? u.origin : null;
-  if (u.protocol !== "https:") return null;
-  const d = sharedDomain(lobbyHostname);
-  if (!d) return null;
-  return host === d || host.endsWith(`.${d}`) ? u.origin : null;
+  return u.protocol === "http:" && isLoopback(u.hostname.toLowerCase()) ? u.origin : null;
 }
 
 /**
@@ -86,8 +83,17 @@ export function t3ViewOrigin(loc: { hostname: string; search: string }): string 
   } catch {
     override = "";
   }
-  const allowed = override ? allowedT3Origin(override, loc.hostname) : null;
+  const allowed = override ? allowedT3Origin(override) : null;
   return allowed ?? defaultT3Origin(loc.hostname);
+}
+
+/**
+ * The frame's `allow` attribute: clipboard access for the production T3 view
+ * beside the lobby, and nothing for a dev override. A permission the person
+ * granted the lobby carries into a frame it delegates to.
+ */
+export function t3FrameAllow(origin: string, lobbyHostname: string): string | undefined {
+  return origin === defaultT3Origin(lobbyHostname) ? "clipboard-read; clipboard-write" : undefined;
 }
 
 // ---- which thread it shows ------------------------------------------------
@@ -225,6 +231,26 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
     return { type: "tl-key", v: 1, key, code, ctrlKey, metaKey, shiftKey, altKey, repeat };
   }
   return null;
+}
+
+/**
+ * Whether a forwarded key is one of the chords the lobby sent the frame, by
+ * the same rule the frame matches with (EMBED.md "Forwarding keys"): all four
+ * modifiers equal, and the key (with "esc" read as "escape") or the code
+ * matches. A key the lobby never asked for is dropped, so a frame cannot
+ * replay an arbitrary lobby command.
+ */
+export function keyInChords(m: TlKeyMessage, chords: readonly FrameChord[]): boolean {
+  const lower = m.key.toLowerCase();
+  const key = lower === "esc" ? "escape" : lower;
+  return chords.some(
+    (c) =>
+      c.ctrl === m.ctrlKey &&
+      c.shift === m.shiftKey &&
+      c.alt === m.altKey &&
+      c.meta === m.metaKey &&
+      (c.key === key || (c.code !== undefined && c.code === m.code)),
+  );
 }
 
 /** The keydown a forwarded key becomes in the lobby's document. */

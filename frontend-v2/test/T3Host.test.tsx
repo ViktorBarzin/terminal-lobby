@@ -209,6 +209,20 @@ describe("<T3Host> — the message contract", () => {
     m.done();
   });
 
+  it("drops a key that matches no chord the lobby sent the frame", () => {
+    const m = mount();
+    fromFrame(m.frame, { ...altOne, key: "W", code: "KeyW", shiftKey: true });
+    fromFrame(m.frame, { ...altOne, key: "Backspace", code: "Backspace", shiftKey: true });
+    expect(m.keys).toHaveLength(0);
+    m.done();
+  });
+
+  it("delegates no clipboard access to a frame on a dev origin", () => {
+    const m = mount();
+    expect(m.frame.hasAttribute("allow")).toBe(false);
+    m.done();
+  });
+
   it("ignores a key from any other origin", () => {
     const m = mount();
     fromFrame(m.frame, altOne, "https://evil.example");

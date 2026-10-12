@@ -3,10 +3,12 @@ import {
   allowedT3Origin,
   defaultT3Origin,
   frameChords,
+  keyInChords,
   loadEnvironmentId,
   parseFrameMessage,
   replayInit,
   saveEnvironmentId,
+  t3FrameAllow,
   t3FrameUrl,
   t3Offered,
   t3ThreadId,
@@ -28,24 +30,22 @@ describe("where the T3 view is served", () => {
     }
   });
 
-  it("accepts an override on the lobby's own domain, or on loopback", () => {
-    const lobby = "terminal.viktorbarzin.me";
-    expect(allowedT3Origin("https://t3view-dev.viktorbarzin.me", lobby)).toBe(
-      "https://t3view-dev.viktorbarzin.me",
-    );
-    expect(allowedT3Origin("https://t3view.viktorbarzin.me/", lobby)).toBe(
-      "https://t3view.viktorbarzin.me",
-    );
-    expect(allowedT3Origin("http://127.0.0.1:17691", lobby)).toBe("http://127.0.0.1:17691");
-    expect(allowedT3Origin("http://localhost:5173", "127.0.0.1")).toBe("http://localhost:5173");
+  it("accepts an override on loopback only, the local check against a dev sidecar", () => {
+    expect(allowedT3Origin("http://127.0.0.1:17691")).toBe("http://127.0.0.1:17691");
+    expect(allowedT3Origin("http://127.0.0.1:17691/")).toBe("http://127.0.0.1:17691");
+    expect(allowedT3Origin("http://localhost:5173")).toBe("http://localhost:5173");
   });
 
   // The override decides which page the lobby frames AND which page's key
   // messages it replays as lobby commands. A crafted link carrying
   // ?t3view=https://evil.example would otherwise hand that page Alt+Shift+W.
   it("refuses an override anywhere else", () => {
-    const lobby = "terminal.viktorbarzin.me";
     for (const o of [
+      "https://pages.viktorbarzin.me",
+      "https://t3view-dev.viktorbarzin.me",
+      "https://t3view.viktorbarzin.me",
+      "https://viktorbarzin.me",
+      "https://localhost:17691",
       "https://evil.example",
       "https://viktorbarzin.me.evil.example",
       "https://evilviktorbarzin.me",
@@ -56,7 +56,7 @@ describe("where the T3 view is served", () => {
       "not a url",
       "",
     ]) {
-      expect(allowedT3Origin(o, lobby), o).toBeNull();
+      expect(allowedT3Origin(o), o).toBeNull();
     }
   });
 
@@ -73,7 +73,60 @@ describe("where the T3 view is served", () => {
         search: "?t3view=https://evil.example",
       }),
     ).toBe("https://t3view.viktorbarzin.me");
+    expect(
+      t3ViewOrigin({
+        hostname: "terminal.viktorbarzin.me",
+        search: "?t3view=https://pages.viktorbarzin.me",
+      }),
+    ).toBe("https://t3view.viktorbarzin.me");
     expect(t3ViewOrigin({ hostname: "127.0.0.1", search: "" })).toBeNull();
+  });
+
+  it("delegates the clipboard only to the T3 view beside the lobby", () => {
+    const lobby = "terminal.viktorbarzin.me";
+    expect(t3FrameAllow("https://t3view.viktorbarzin.me", lobby)).toBe(
+      "clipboard-read; clipboard-write",
+    );
+    expect(t3FrameAllow("http://127.0.0.1:17691", lobby)).toBeUndefined();
+    expect(t3FrameAllow("http://127.0.0.1:17691", "127.0.0.1")).toBeUndefined();
+  });
+});
+
+describe("which forwarded keys the lobby replays", () => {
+  const sent = [
+    { ctrl: false, shift: false, alt: true, meta: false, key: "1", code: "Digit1" },
+    { ctrl: true, shift: false, alt: false, meta: false, key: "j" },
+    { ctrl: false, shift: false, alt: false, meta: false, key: "escape", passive: true as const },
+  ];
+  const msg = (o: Partial<Parameters<typeof keyInChords>[0]>) => ({
+    type: "tl-key" as const,
+    v: 1 as const,
+    key: "",
+    code: "",
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    repeat: false,
+    ...o,
+  });
+
+  it("replays a key that matches a chord it sent, by key or by code", () => {
+    expect(keyInChords(msg({ key: "1", code: "Digit1", altKey: true }), sent)).toBe(true);
+    expect(keyInChords(msg({ key: "¡", code: "Digit1", altKey: true }), sent)).toBe(true);
+    expect(keyInChords(msg({ key: "J", code: "KeyX", ctrlKey: true }), sent)).toBe(true);
+    expect(keyInChords(msg({ key: "Esc", code: "Escape" }), sent)).toBe(true);
+  });
+
+  it("drops a key it never asked for, whatever the frame says", () => {
+    expect(keyInChords(msg({ key: "W", code: "KeyW", altKey: true, shiftKey: true }), sent)).toBe(
+      false,
+    );
+    expect(keyInChords(msg({ key: "1", code: "Digit1", altKey: true, shiftKey: true }), sent)).toBe(
+      false,
+    );
+    expect(keyInChords(msg({ key: "a", code: "KeyA" }), sent)).toBe(false);
+    expect(keyInChords(msg({ key: "1", code: "Digit1", altKey: true }), [])).toBe(false);
   });
 });
 

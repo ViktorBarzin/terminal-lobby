@@ -1,9 +1,11 @@
 import { createEffect, createSignal, on, onCleanup, Show, untrack, type Component } from "solid-js";
 import {
+  keyInChords,
   loadEnvironmentId,
   parseFrameMessage,
   replayInit,
   saveEnvironmentId,
+  t3FrameAllow,
   t3FrameUrl,
   type FrameChord,
   type HostMessage,
@@ -135,6 +137,8 @@ const T3Frame: Component<{
     const m = parseFrameMessage(e.data);
     if (!m) return;
     if (m.type === "tl-key") {
+      // Only a chord the lobby asked for: the frame is another origin's page.
+      if (!keyInChords(m, props.chords())) return;
       // Dispatched on the frame element, so the lobby's window and document
       // listeners (the keybinding engine, the dock's Ctrl/Cmd+J, the help
       // overlay's Escape) see it as a key pressed on this pane.
@@ -178,7 +182,7 @@ const T3Frame: Component<{
       class="tl-t3-frame"
       src={src}
       title="T3 view"
-      allow="clipboard-read; clipboard-write"
+      allow={t3FrameAllow(props.origin, window.location.hostname)}
     />
   );
 };
