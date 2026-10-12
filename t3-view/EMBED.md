@@ -97,6 +97,24 @@ environment id, through the client's router so the client does not reload. A
 full navigation (`location.replace` with `?embed`) also works, at the cost of a
 reload.
 
+The lobby's `threadId` is the session's key, and the sidecar's thread id can
+differ from it: a session made from inside T3 keeps the id T3 minted, and a
+hand-named session renamed while the sidecar ran keeps its first name. So the
+frame first asks the sidecar, same-origin, `GET /.well-known/t3/thread/{key}`
+(`{ "threadId": "..." }`, 404 when no session of the user's answers to the
+key), routes to that id, and stays put when it is already there. A first load
+of `/{environmentId}/{key}` is redirected by the sidecar to the thread's id in
+the same way.
+
+Details of the patch's side:
+
+- `tl-ready` is sent once per page load.
+- A `tl-open` that arrives before the router is ready is kept and applied once
+  it is.
+- In embed mode the patch turns T3's `planModeEnabled` client setting on when
+  the person has not chosen, since T3 hides its plan toggle otherwise and the
+  embed has no Settings page.
+
 A `FrameChord` is:
 
 ```ts
