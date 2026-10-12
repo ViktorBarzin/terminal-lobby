@@ -1,0 +1,91 @@
+{
+ "schemaVersion": 2,
+ "snapshotSequence": 398,
+ "threads": [
+  {
+   "createdBy": "user",
+   "creationSource": "web",
+   "id": "5992c13c-0070-40e3-a1c6-f0b3d35fe296",
+   "projectId": "0211c7d3-8686-4565-a19c-b7fcf5c9775d",
+   "title": "Run the shell command `ls -a` here and reply with ...",
+   "providerInstanceId": "claudeAgent",
+   "modelSelection": {
+    "instanceId": "claudeAgent",
+    "model": "claude-haiku-5-5",
+    "options": [
+     {
+      "id": "effort",
+      "value": "low"
+     }
+    ]
+   },
+   "runtimeMode": "full-access",
+   "interactionMode": "default",
+   "branch": "master",
+   "worktreePath": null,
+   "pullRequests": [],
+   "lineage": {
+    "parentThreadId": null,
+    "relationshipToParent": null,
+    "rootThreadId": "5992c13c-0070-40e3-a1c6-f0b3d35fe296"
+   },
+   "forkedFrom": null,
+   "activeProviderThreadId": "provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3A5992c13c-0070-40e3-a1c6-f0b3d35fe296%3Aordinal%3A1",
+   "latestRunId": "run:thread:5992c13c-0070-40e3-a1c6-f0b3d35fe296:ordinal:10",
+   "latestRunRequestedAt": "2026-10-12T07:58:46.210Z",
+   "latestRunStartedAt": "2026-10-12T07:58:53.845Z",
+   "latestRunCompletedAt": "2026-10-12T07:58:59.544Z",
+   "activeRunId": null,
+   "activityRunStartedAt": null,
+   "activityRunStatus": null,
+   "status": "completed",
+   "lastError": null,
+   "lastErrorClass": null,
+   "usageLimitResetAt": null,
+   "pendingRuntimeRequest": null,
+   "latestVisibleMessage": null,
+   "latestUserMessageAt": "2026-10-12T07:58:48.522Z",
+   "latestUserAuthoredMessageAt": "2026-10-12T07:58:48.522Z",
+   "hasActionableProposedPlan": false,
+   "pendingBackgroundTasks": [],
+   "providerInstanceHistory": [
+    "claudeAgent"
+   ],
+   "goal": null,
+   "itemCount": 53,
+   "visibleItemCount": 53,
+   "createdAt": "2026-10-12T07:52:27.134Z",
+   "updatedAt": "2026-10-12T07:58:59.544Z",
+   "archivedAt": null,
+   "settledOverride": null,
+   "settledAt": null,
+   "unsettledAt": null,
+   "snoozedUntil": null,
+   "snoozedAt": null,
+   "limitRecovery": null,
+   "pinnedAt": null,
+   "autoSettleDisabledAt": null,
+   "pinOrderKey": null,
+   "lastVisitedAt": "2026-10-12T07:58:59.544Z",
+   "titleRegeneration": null,
+   "deletedAt": null
+  }
+ ],
+ "archivedThreads": [],
+ "projects": [
+  {
+   "id": "0211c7d3-8686-4565-a19c-b7fcf5c9775d",
+   "title": "proj-a",
+   "workspaceRoot": "$SCRATCH/proj-a",
+   "repositoryIdentity": null,
+   "defaultModelSelection": null,
+   "defaultThreadEnvMode": null,
+   "autoPull": false,
+   "faviconPath": null,
+   "projectIcon": null,
+   "scripts": [],
+   "createdAt": "2026-10-12T07:51:54.643Z",
+   "updatedAt": "2026-10-12T07:51:54.643Z"
+  }
+ ]
+}
