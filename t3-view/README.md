@@ -7,7 +7,7 @@ client treats it as a T3 server. Design: [ADR-0044](../docs/adr/0044-t3-code-ren
 and [the T3 view design](../docs/plans/2026-10-12-t3-view-design.md). What the
 real client asks of its server was measured in [TRACE.md](TRACE.md).
 
-Status: stages 3 and 4 (read path and commands). The shell lists the user's
+Status: built on branch, first cut, not released. The shell lists the user's
 Claude sessions grouped as the lobby groups them, a thread renders from the
 session's lobby stream, and sends, steers, queued messages, Stop, dialog
 answers, mode, model and new threads go back to the lobby. History paging and
@@ -18,7 +18,7 @@ images are the second cut.
 | Path | What it is |
 |---|---|
 | `T3_PIN` | The T3 tag, its commit, and the repo to fetch it from |
-| `patches/*.patch` | Applied to the pinned checkout in name order (none yet; the embed patch lands in stage 5) |
+| `patches/*.patch` | Applied to the pinned checkout in name order (one today, `embed.patch`; its contract is [EMBED.md](EMBED.md)) |
 | `scripts/build-web.sh` | Extracts the pin, applies patches, installs T3's web closure from T3's lockfile, builds `apps/web`. CI runs the same script |
 | `scripts/link-t3.sh` | Points `node_modules/` at that checkout. Generated, gitignored |
 | `scripts/build-sidecar.sh` | Bundles `src/main.ts` with esbuild into one `tl-t3-view.mjs` for system node |
