@@ -270,3 +270,83 @@ describe("<T3Host> — the message contract", () => {
     m.done();
   });
 });
+
+describe("<T3Host> — a frame in a tile that is not focused", () => {
+  beforeEach(() => localStorage.clear());
+
+  /** Tile A holds the frame while tile B is the focused one. */
+  function mountUnfocused() {
+    const [focusedA, setFocusedA] = createSignal(false);
+    const onFocus = vi.fn(() => setFocusedA(true));
+    render(() => (
+      <T3Host
+        claimKey="a"
+        want={() => true}
+        prefer={focusedA}
+        onFocus={onFocus}
+        threadId={() => "a"}
+        origin={ORIGIN}
+        chords={() => CHORDS}
+        claims={createFrameClaims()}
+      />
+    ));
+    const frame = frames()[0]!;
+    const keys: { key: string; focusedA: boolean }[] = [];
+    const onKey = (e: KeyboardEvent): void => void keys.push({ key: e.key, focusedA: focusedA() });
+    window.addEventListener("keydown", onKey, true);
+    return {
+      frame,
+      onFocus,
+      keys,
+      focusedA,
+      done: () => window.removeEventListener("keydown", onKey, true),
+    };
+  }
+
+  it("focuses its own tile before replaying a chord, so the chord acts on this session", () => {
+    const m = mountUnfocused();
+    fromFrame(m.frame, altOne);
+    expect(m.onFocus).toHaveBeenCalledTimes(1);
+    expect(m.keys).toEqual([{ key: "1", focusedA: true }]);
+    m.done();
+  });
+
+  it("drops the chord when its tile could not take focus", () => {
+    const onFocus = vi.fn();
+    render(() => (
+      <T3Host
+        claimKey="a"
+        want={() => true}
+        prefer={() => false}
+        onFocus={onFocus}
+        threadId={() => "a"}
+        origin={ORIGIN}
+        chords={() => CHORDS}
+        claims={createFrameClaims()}
+      />
+    ));
+    const keys: KeyboardEvent[] = [];
+    const onKey = (e: KeyboardEvent): void => void keys.push(e);
+    window.addEventListener("keydown", onKey, true);
+    fromFrame(frames()[0]!, altOne);
+    expect(onFocus).toHaveBeenCalledTimes(1);
+    expect(keys).toHaveLength(0);
+    window.removeEventListener("keydown", onKey, true);
+  });
+
+  it("focuses its tile when a click moves keyboard focus into the frame", () => {
+    const m = mountUnfocused();
+    m.frame.focus();
+    window.dispatchEvent(new Event("blur"));
+    expect(m.onFocus).toHaveBeenCalledTimes(1);
+    expect(m.focusedA()).toBe(true);
+    m.done();
+  });
+
+  it("does not take focus when the window loses it to something other than the frame", () => {
+    const m = mountUnfocused();
+    window.dispatchEvent(new Event("blur"));
+    expect(m.onFocus).not.toHaveBeenCalled();
+    m.done();
+  });
+});

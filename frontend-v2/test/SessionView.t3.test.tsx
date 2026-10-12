@@ -14,6 +14,7 @@ vi.mock("../src/components/TerminalNative", () => ({
 import { SessionView } from "../src/components/SessionView";
 import type { T3Wiring } from "../src/components/T3Host";
 import type { SessionTool } from "../src/types/lobby";
+import { TileFocusContext } from "../src/lib/ownwhile";
 
 const ORIGIN = "http://127.0.0.1:17691";
 
@@ -131,5 +132,28 @@ describe("<SessionView> — the T3 option", () => {
     expect(window.__tlDoPaste?.()).toBe(true);
     expect(sent).not.toHaveBeenCalled();
     delete window.__tlPasteToTerminal;
+  });
+});
+
+describe("<SessionView> — the T3 view in a tile that is not focused", () => {
+  it("selects its session when a click moves keyboard focus into the frame", () => {
+    localStorage.setItem("tl:viewmode:v1:qa-t3", "t3");
+    const onSwitchSession = vi.fn();
+    const { container } = render(() => (
+      <TileFocusContext.Provider value={() => false}>
+        <SessionView
+          session="qa-t3"
+          me={() => "wizard"}
+          tool={() => "claude"}
+          t3={wiring()}
+          onSwitchSession={onSwitchSession}
+        />
+      </TileFocusContext.Provider>
+    ));
+    const frame = container.querySelector<HTMLIFrameElement>(".tl-t3-view iframe");
+    expect(frame).toBeTruthy();
+    frame!.focus();
+    window.dispatchEvent(new Event("blur"));
+    expect(onSwitchSession).toHaveBeenCalledWith("qa-t3", undefined);
   });
 });

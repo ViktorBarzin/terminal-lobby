@@ -41,6 +41,9 @@ export const T3Host: Component<{
   want: () => boolean;
   /** this is the focused tile: it takes the frame when this turns true. */
   prefer: () => boolean;
+  /** focus this session's tile (select the session). A press inside the
+   *  frame never reaches the lobby's own pointerdown, so the frame asks. */
+  onFocus?: () => void;
   /** the T3 thread id (t3ThreadId), null for a session T3 does not serve. */
   threadId: () => string | null;
   origin: string;
@@ -95,7 +98,13 @@ export const T3Host: Component<{
               </Show>
             }
           >
-            <T3Frame origin={props.origin} threadId={thread} chords={props.chords} />
+            <T3Frame
+              origin={props.origin}
+              threadId={thread}
+              chords={props.chords}
+              prefer={props.prefer}
+              onFocus={props.onFocus}
+            />
           </Show>
         )}
       </Show>
@@ -113,6 +122,8 @@ const T3Frame: Component<{
   origin: string;
   threadId: () => string;
   chords: () => readonly FrameChord[];
+  prefer: () => boolean;
+  onFocus: (() => void) | undefined;
 }> = (props) => {
   let frame: HTMLIFrameElement | undefined;
   const [ready, setReady] = createSignal(false);
@@ -130,6 +141,26 @@ const T3Frame: Component<{
   };
   const sendChords = (): void => post({ type: "tl-bindings", v: 1, chords: [...props.chords()] });
 
+  /**
+   * Make this session's tile the focused one, and say whether it now is.
+   *
+   * In a workspace the lobby moves tile focus on a capture pointerdown in its
+   * own document, and a press inside a cross-origin frame never reaches it.
+   * The keybinding engine acts on the selected session, so without this a
+   * chord typed in the frame of tile A ran against tile B.
+   */
+  const takeFocus = (): boolean => {
+    if (!props.prefer()) props.onFocus?.();
+    return props.prefer();
+  };
+  // Keyboard focus moving into the frame blurs the lobby's window, with the
+  // frame as the document's active element.
+  const onBlur = (): void => {
+    if (frame && document.activeElement === frame) takeFocus();
+  };
+  window.addEventListener("blur", onBlur);
+  onCleanup(() => window.removeEventListener("blur", onBlur));
+
   const onMessage = (e: MessageEvent): void => {
     // Both: the origin says whose page it is, the source says it is OUR
     // frame rather than another window of the same origin.
@@ -139,6 +170,9 @@ const T3Frame: Component<{
     if (m.type === "tl-key") {
       // Only a chord the lobby asked for: the frame is another origin's page.
       if (!keyInChords(m, props.chords())) return;
+      // A chord acts on the selected session: drop it rather than run it
+      // against another tile's session.
+      if (!takeFocus()) return;
       // Dispatched on the frame element, so the lobby's window and document
       // listeners (the keybinding engine, the dock's Ctrl/Cmd+J, the help
       // overlay's Escape) see it as a key pressed on this pane.

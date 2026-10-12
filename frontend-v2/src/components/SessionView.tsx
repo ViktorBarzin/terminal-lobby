@@ -2271,6 +2271,8 @@ export const SessionView: Component<{
                 claimKey={untrack(() => keyOf({ name: session(), owner: props.owner }))}
                 want={() => onScreen() && !preloading()}
                 prefer={focused}
+                // Selecting the session IS focusing its tile (focusTile above).
+                onFocus={() => props.onSwitchSession?.(session(), props.owner)}
                 threadId={() => t3ThreadId(keyOf({ name: session() }))}
                 origin={origin()}
                 chords={() => props.t3?.chords() ?? []}
