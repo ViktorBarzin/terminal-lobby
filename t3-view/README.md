@@ -233,6 +233,12 @@ rule (`src/commands/policy.ts`). Two lobby additions back this:
 - tmux-api `POST /sessions/claim {project}` places a new session in a layout
   project under the layout lock (`launchThread`).
 
+A thread launched from T3 is put in the mode the person chose before its
+first prompt is sent. A pre-warm slot starts in `bypassPermissions`, so the
+sidecar asks `POST /model {mode}` until the walk applies (a pane still starting
+answers `unreadable` for a few seconds), and fails the launch without sending
+the prompt when it does not.
+
 T3's Stop sends `run.interrupt` with `holdQueue`. The sidecar then stops the
 turn with `POST /cancel {restoreQueue}`, so session-events hands its held
 prompts back instead of sending them at the turn's end, and keeps them as

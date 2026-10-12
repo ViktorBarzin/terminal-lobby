@@ -76,6 +76,14 @@ export interface CommandDeps {
 type Dispatch = Extract<OrchestrationV2Command, { type: "message.dispatch" }>;
 
 const READ_ONLY = "This session is shared with you to watch, not to drive.";
+
+/**
+ * Why a mode walk did not apply that can change on its own: a pane the walk
+ * cannot read yet (a session still starting), a press it could not confirm,
+ * or a dialog that closes. Anything else (a mode the session does not offer)
+ * stays the same however often it is asked.
+ */
+const TRANSIENT_MODE_REASONS = new Set(["unreadable", "unverified", "dialog-open"]);
 const MINT_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
 function mintSessionName(): string {
@@ -388,6 +396,40 @@ export class Commands {
     }
   }
 
+  /**
+   * Walks a new session into `mode`, asking again while the walk cannot read
+   * a pane that is still starting (about 30 seconds, as the claim waits), and
+   * fails the launch when it does not take.
+   */
+  async #modeBeforeFirstPrompt(
+    handle: ThreadHandle,
+    relay: RelayCredentials,
+    mode: string,
+    sleep: (ms: number) => Promise<void>,
+  ): Promise<void> {
+    let reason = "no answer";
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (attempt > 0) await sleep(750);
+      let reply: Awaited<ReturnType<LobbyCalls["mode"]>>;
+      try {
+        reply = await this.#d.api.mode(relay, handle.entry.name, handle.entry.owner, mode);
+      } catch (error) {
+        reason = lobbyReason(error);
+        continue;
+      }
+      if (reply.applied === true) {
+        handle.live.commit(handle.live.model.mapper.confirmMode(reply.mode ?? mode));
+        return;
+      }
+      reason = reply.reason ?? "not applied";
+      if (!TRANSIENT_MODE_REASONS.has(reason)) break;
+    }
+    this.#d.log?.(`launch ${handle.entry.name}: mode ${mode}: ${reason}`);
+    throw new CommandFailure(
+      `The new session could not be put in ${mode} mode (${reason}), so the first message was not sent.`,
+    );
+  }
+
   async #setMode(handle: ThreadHandle, relay: RelayCredentials, mode: string): Promise<void> {
     let reply: Awaited<ReturnType<LobbyCalls["mode"]>>;
     try {
@@ -444,9 +486,14 @@ export class Commands {
 
   /**
    * A new thread is a new lobby session in that project: a pre-warm slot
-   * claimed under a minted name and placed by tmux-api (claim.go), then the
-   * first prompt, sent with awaitReady so session-events holds it until the
-   * session's Claude has said hello.
+   * claimed under a minted name and placed by tmux-api (claim.go), put in the
+   * mode the person chose, then the first prompt, sent with awaitReady so
+   * session-events holds it until the session's Claude has said hello.
+   *
+   * The mode goes first. A slot starts in bypassPermissions, and a walk sent
+   * after the prompt would run while Claude already acts on it, so a thread
+   * started in Plan or Supervised would begin its first turn with no plan
+   * and no approvals. When the mode does not take, the prompt is not sent.
    */
   async launch(
     identity: Identity,
@@ -500,6 +547,7 @@ export class Commands {
     const wantMode = lobbyModeForInteraction(input.interactionMode, input.runtimeMode);
     const message = input.initialMessage;
     if (message !== undefined && message.text.trim() !== "") {
+      await this.#modeBeforeFirstPrompt(handle, relay, wantMode, sleep);
       const messageId = message.messageId;
       await this.#send(handle, relay, messageId, message.text, {
         awaitReady: true,
@@ -507,17 +555,18 @@ export class Commands {
           ? {}
           : { id: promptIdOf(input.commandId) as string }),
       });
+    } else {
+      // No prompt rides on it, so a mode that did not take is a notice; the
+      // composer shows the mode the session reports.
+      await this.#setMode(handle, relay, wantMode).catch((error: unknown) => {
+        this.#d.log?.(`launch ${name}: mode ${wantMode}: ${String(error)}`);
+        handle.live.commit(
+          handle.live.model.mapper.notice(
+            `Mode not set: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      });
     }
-    // After the first prompt: the mode walk needs the session's Claude up,
-    // and the prompt's awaitReady is what waits for it.
-    await this.#setMode(handle, relay, wantMode).catch((error: unknown) => {
-      this.#d.log?.(`launch ${name}: mode ${wantMode}: ${String(error)}`);
-      handle.live.commit(
-        handle.live.model.mapper.notice(
-          `Mode not set: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      );
-    });
     await handle.live.ready(5_000);
     return { threadId: handle.entry.threadId, projection: handle.live.projection };
   }

@@ -594,11 +594,53 @@ describe("launchThread", () => {
           project: "lobby",
         },
       ],
-      ["prompt", { text: "say hi", awaitReady: true, id: "c-launch" }],
+      // The mode is in place before the first prompt reaches Claude.
       ["mode", "bypassPermissions"],
+      ["prompt", { text: "say hi", awaitReady: true, id: "c-launch" }],
     ]);
     expect(pending.list(live.pendingKey).map((p) => p.messageId)).toEqual(["first-m"]);
     expect(result.threadId).toBe("scratch");
+  });
+
+  const launchInput = (interactionMode: "default" | "plan", runtimeMode = "full-access") => ({
+    commandId: CommandId.make("c-launch"),
+    threadId: ThreadId.make("t3-draft"),
+    projectId: ProjectId.make("project:lobby"),
+    title: "New thread",
+    modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: "claude-haiku-4-5-20251001" },
+    runtimeMode: runtimeMode as "full-access" | "approval-required",
+    interactionMode,
+    workspaceStrategy: { type: "root" as const },
+    initialMessage: { messageId: MessageId.make("first-m"), text: "plan it", attachments: [] },
+  });
+
+  it("waits for the new session to take the chosen mode before sending the first prompt", async () => {
+    const replies = [
+      { applied: false, reason: "unreadable" },
+      { applied: false, reason: "unverified" },
+      { applied: true, mode: "plan" },
+    ];
+    const api = fakeApi({ mode: () => replies.shift() });
+    const { commands, calls, live } = setup({ api });
+    await commands.launch(identity, launchInput("plan"));
+    expect(calls.filter((c) => c.op === "mode" || c.op === "prompt").map((c) => c.op)).toEqual([
+      "mode",
+      "mode",
+      "mode",
+      "prompt",
+    ]);
+    expect(live.projection.thread.interactionMode).toBe("plan");
+  });
+
+  it("does not send the first prompt when the session cannot take the chosen mode", async () => {
+    const api = fakeApi({ mode: () => ({ applied: false, reason: "unavailable" }) });
+    const { commands, calls, pending, live } = setup({ api });
+    await expect(
+      commands.launch(identity, launchInput("default", "approval-required")),
+    ).rejects.toThrow("first message was not sent");
+    expect(calls.filter((c) => c.op === "mode")).toHaveLength(1);
+    expect(calls.some((c) => c.op === "prompt")).toBe(false);
+    expect(pending.list(live.pendingKey)).toEqual([]);
   });
 
   it("refuses a project that is not the user's own", async () => {
