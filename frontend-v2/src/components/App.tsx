@@ -134,7 +134,8 @@ import {
   NEW_SESSION_COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
-import { frameChords, t3ViewOrigin } from "../t3/embed.logic";
+import { requestMode } from "../store/viewmode";
+import { followTarget, frameChords, t3ViewOrigin } from "../t3/embed.logic";
 import type { T3Wiring } from "./T3Host";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
@@ -2147,6 +2148,15 @@ export const App: Component = () => {
     },
     origin: t3ViewOrigin(window.location),
     chords: t3Chords,
+    // T3's own navigation (its palette, New thread) moved the frame to
+    // another of the caller's sessions: the lobby goes there too, in T3.
+    follow: (target) => {
+      const name = followTarget(store.sessions, store.me(), target);
+      if (name === null) return false;
+      requestMode(name, "t3");
+      store.select(name);
+      return true;
+    },
   };
   // Both overlays render OVER the terminal and take focus off it, so dismissing
   // one leaves focus on <body> and the pty deaf. refocusTerminal calls the

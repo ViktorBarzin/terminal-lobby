@@ -9,6 +9,7 @@ import {
   t3FrameUrl,
   type FrameChord,
   type HostMessage,
+  type RouteSession,
 } from "../t3/embed.logic";
 import { t3FrameClaims, type FrameClaims } from "../t3/frame-claim";
 
@@ -22,6 +23,9 @@ export interface T3Wiring {
   admin: () => boolean;
   origin: string | null;
   chords: () => readonly FrameChord[];
+  /** Move the lobby to the caller's own session the frame went to, in the T3
+   *  view; false when the lobby has no such session to move to. */
+  follow?: (target: RouteSession) => boolean;
 }
 
 /**
@@ -44,6 +48,9 @@ export const T3Host: Component<{
   /** focus this session's tile (select the session). A press inside the
    *  frame never reaches the lobby's own pointerdown, so the frame asks. */
   onFocus?: () => void;
+  /** the frame went to another session's thread (T3's palette, a new
+   *  thread): move the lobby there, or say false to send the frame back. */
+  onFollow?: (target: RouteSession) => boolean;
   /** the T3 thread id (t3ThreadId), null for a session T3 does not serve. */
   threadId: () => string | null;
   origin: string;
@@ -104,6 +111,7 @@ export const T3Host: Component<{
               chords={props.chords}
               prefer={props.prefer}
               onFocus={props.onFocus}
+              onFollow={props.onFollow}
             />
           </Show>
         )}
@@ -124,6 +132,7 @@ const T3Frame: Component<{
   chords: () => readonly FrameChord[];
   prefer: () => boolean;
   onFocus: (() => void) | undefined;
+  onFollow: ((target: RouteSession) => boolean) | undefined;
 }> = (props) => {
   let frame: HTMLIFrameElement | undefined;
   const [ready, setReady] = createSignal(false);
@@ -177,6 +186,17 @@ const T3Frame: Component<{
       // listeners (the keybinding engine, the dock's Ctrl/Cmd+J, the help
       // overlay's Escape) see it as a key pressed on this pane.
       frame.dispatchEvent(new KeyboardEvent("keydown", replayInit(m)));
+      return;
+    }
+    if (m.type === "tl-route") {
+      // The lobby's header, keepalive and every forwarded chord follow this
+      // host's session, so the frame cannot be left showing another one.
+      // A route that is no thread (a new thread's draft) stays put.
+      if (m.threadId === null) return;
+      const own = props.threadId();
+      if (m.session?.key === own) return;
+      if (m.session && props.onFollow?.(m.session)) return;
+      post({ type: "tl-open", v: 1, threadId: own });
       return;
     }
     if (loadEnvironmentId(props.origin) !== m.environmentId) {

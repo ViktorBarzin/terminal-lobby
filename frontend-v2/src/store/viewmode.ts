@@ -1,4 +1,4 @@
-import { createEffect, createSignal, type Accessor } from "solid-js";
+import { createEffect, createSignal, on, untrack, type Accessor } from "solid-js";
 import { track } from "../telemetry/track";
 import { lsGet, lsSet } from "../lib/storage";
 
@@ -70,6 +70,21 @@ export function carryViewMode(from: string, to: string): void {
 }
 
 /**
+ * A view asked for from outside the session's own switch: the T3 frame moving
+ * to another session (components/T3Host.tsx onFollow) opens that session in
+ * T3. A session's view reads storage once per name, and a kept session is
+ * already mounted, so the ask also travels as a signal every view watches.
+ */
+const [asked, setAsked] = createSignal<{ session: string; mode: ViewMode } | null>(null, {
+  equals: false,
+});
+
+export function requestMode(session: string, mode: ViewMode): void {
+  saveMode(session, mode);
+  setAsked({ session, mode });
+}
+
+/**
  * The view a session shows, and the two ways to change it.
  *
  * `t3Offered` says whether this session may show the T3 view right now. While
@@ -84,6 +99,17 @@ export function createViewMode(
   const [chosen, setChosen] = createSignal<ViewMode>(loadMode(session()));
   // Re-hydrate when the session changes (each session has its own last view).
   createEffect(() => setChosen(loadMode(session())));
+  // Deferred, so a view mounting later does not take up an old ask over what
+  // has been chosen since: storage already carries the ask to a new mount.
+  createEffect(
+    on(
+      asked,
+      (a) => {
+        if (a && a.session === untrack(session)) setChosen(a.mode);
+      },
+      { defer: true },
+    ),
+  );
   const mode = (): ViewMode => {
     const m = chosen();
     return m === "t3" && !t3Offered() ? defaultMode() : m;

@@ -191,7 +191,27 @@ export interface TlKeyMessage {
   repeat: boolean;
 }
 
-export type FrameMessage = TlReadyMessage | TlKeyMessage;
+/** The session the sidecar says a T3 thread is, as the lobby keys it. */
+export interface RouteSession {
+  /** the lobby key's name: the session's birth name, else its name now. */
+  key: string;
+  /** the session's tmux name now. */
+  name: string;
+}
+
+/**
+ * Frame -> lobby: the frame moved to another route on its own (T3's palette,
+ * New thread). `threadId` is null on a route that is no thread (a draft, the
+ * index); `session` is null when no session of the caller's is that thread.
+ */
+export interface TlRouteMessage {
+  type: "tl-route";
+  v: 1;
+  threadId: string | null;
+  session: RouteSession | null;
+}
+
+export type FrameMessage = TlReadyMessage | TlKeyMessage | TlRouteMessage;
 
 /** `key` and `code` are short names ("Backspace", "BracketLeft"); anything
  *  longer is not a key. */
@@ -203,10 +223,20 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const shortString = (v: unknown, max: number): v is string =>
   typeof v === "string" && v.length <= max;
 
+const parseRouteSession = (v: unknown): RouteSession | null | undefined => {
+  if (v === null) return null;
+  if (!isRecord(v)) return undefined;
+  const { key, name } = v;
+  if (!shortString(key, MAX_ID_LEN) || !key || !shortString(name, MAX_ID_LEN) || !name) {
+    return undefined;
+  }
+  return { key, name };
+};
+
 /**
- * A message from the frame, or null. Exactly the two shapes the contract has,
- * at version 1: a key is replayed as a keydown and nothing more, so no other
- * message can ask the lobby to do anything.
+ * A message from the frame, or null. Exactly the shapes the contract has, at
+ * version 1: a key is replayed as a keydown and nothing more, and a route
+ * report can at most move the lobby to one of the caller's own sessions.
  */
 export function parseFrameMessage(data: unknown): FrameMessage | null {
   if (!isRecord(data) || data.v !== 1) return null;
@@ -230,7 +260,30 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
     }
     return { type: "tl-key", v: 1, key, code, ctrlKey, metaKey, shiftKey, altKey, repeat };
   }
+  if (data.type === "tl-route") {
+    const { threadId } = data;
+    if (threadId !== null && (!shortString(threadId, MAX_ID_LEN) || !threadId)) return null;
+    const session = parseRouteSession(data.session);
+    if (session === undefined) return null;
+    return { type: "tl-route", v: 1, threadId, session };
+  }
   return null;
+}
+
+/**
+ * The name of the caller's own session a frame's route report names, or null.
+ * Matched by key first (the birth name, which a rename leaves alone), then by
+ * the name the sidecar saw. Someone else's session is never a match: the T3
+ * view serves only the caller's own.
+ */
+export function followTarget(
+  sessions: ReadonlyArray<{ name: string; bornAs?: string; owner?: string }>,
+  me: string,
+  target: RouteSession,
+): string | null {
+  const own = sessions.filter((s) => !s.owner || s.owner === me);
+  const byKey = own.find((s) => (s.bornAs ?? s.name) === target.key);
+  return (byKey ?? own.find((s) => s.name === target.name))?.name ?? null;
 }
 
 /**

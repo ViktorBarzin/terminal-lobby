@@ -2273,6 +2273,7 @@ export const SessionView: Component<{
                 prefer={focused}
                 // Selecting the session IS focusing its tile (focusTile above).
                 onFocus={() => props.onSwitchSession?.(session(), props.owner)}
+                onFollow={props.t3?.follow}
                 threadId={() => t3ThreadId(keyOf({ name: session() }))}
                 origin={origin()}
                 chords={() => props.t3?.chords() ?? []}

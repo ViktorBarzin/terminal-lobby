@@ -6,7 +6,13 @@ vi.mock("../src/telemetry/track", () => ({
   track: (name: string, attrs: unknown) => void tracked.events.push({ name, attrs }),
 }));
 
-import { carryViewMode, createViewMode, loadMode, saveMode } from "../src/store/viewmode";
+import {
+  carryViewMode,
+  createViewMode,
+  loadMode,
+  requestMode,
+  saveMode,
+} from "../src/store/viewmode";
 
 /**
  * The third view (docs/plans/2026-10-12-t3-view-design.md decision 11): T3
@@ -80,6 +86,52 @@ describe("view mode: the T3 view", () => {
       expect(mode()).toBe("text");
       toggle();
       expect(mode()).toBe("terminal");
+      dispose();
+    });
+  });
+
+  it("a view asked for from elsewhere reaches a session already mounted, and no other", () => {
+    const { mode, other, dispose } = createRoot((dispose) => ({
+      mode: createViewMode(
+        () => "auth",
+        () => true,
+      )[0],
+      other: createViewMode(
+        () => "notes",
+        () => true,
+      )[0],
+      dispose,
+    }));
+    expect(mode()).toBe("text");
+    requestMode("auth", "t3");
+    expect(mode()).toBe("t3");
+    expect(other()).toBe("text");
+    expect(localStorage.getItem("tl:viewmode:v1:auth")).toBe("t3");
+    dispose();
+  });
+
+  it("a view mounted after an ask, and switched since, keeps what was chosen", () => {
+    requestMode("auth", "t3");
+    saveMode("auth", "terminal");
+    const { mode, dispose } = createRoot((dispose) => ({
+      mode: createViewMode(
+        () => "auth",
+        () => true,
+      )[0],
+      dispose,
+    }));
+    expect(mode()).toBe("terminal");
+    dispose();
+  });
+
+  it("a view asked for before the session mounts is the one it opens in", () => {
+    requestMode("later", "t3");
+    createRoot((dispose) => {
+      const [mode] = createViewMode(
+        () => "later",
+        () => true,
+      );
+      expect(mode()).toBe("t3");
       dispose();
     });
   });

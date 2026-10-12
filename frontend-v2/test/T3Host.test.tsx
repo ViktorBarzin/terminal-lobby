@@ -350,3 +350,80 @@ describe("<T3Host> — a frame in a tile that is not focused", () => {
     m.done();
   });
 });
+
+describe("<T3Host> — the frame moving to another thread", () => {
+  beforeEach(() => localStorage.clear());
+
+  function mount(follow: (s: { key: string; name: string }) => boolean) {
+    const onFollow = vi.fn(follow);
+    render(() => (
+      <T3Host
+        claimKey="a"
+        want={() => true}
+        prefer={() => true}
+        onFollow={onFollow}
+        threadId={() => "auth"}
+        origin={ORIGIN}
+        chords={() => CHORDS}
+        claims={createFrameClaims()}
+      />
+    ));
+    const frame = frames()[0]!;
+    const post = vi.fn();
+    Object.defineProperty(frame.contentWindow!, "postMessage", { value: post, configurable: true });
+    fromFrame(frame, { type: "tl-ready", v: 1, environmentId: "env-9", threadId: "auth" });
+    post.mockClear();
+    return { frame, post, onFollow };
+  }
+
+  const route = (threadId: string | null, session: { key: string; name: string } | null) => ({
+    type: "tl-route",
+    v: 1,
+    threadId,
+    session,
+  });
+
+  it("moves the lobby to the session the frame went to", () => {
+    const m = mount(() => true);
+    fromFrame(m.frame, route("5992c13c", { key: "bw8k5gt9v314", name: "say-hi" }));
+    expect(m.onFollow).toHaveBeenCalledWith({ key: "bw8k5gt9v314", name: "say-hi" });
+    expect(m.post).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the frame is on this session's own thread", () => {
+    const m = mount(() => true);
+    fromFrame(m.frame, route("auth", { key: "auth", name: "auth" }));
+    expect(m.onFollow).not.toHaveBeenCalled();
+    expect(m.post).not.toHaveBeenCalled();
+  });
+
+  it("sends the frame back to this session's thread when the lobby cannot follow", () => {
+    const m = mount(() => false);
+    fromFrame(m.frame, route("5992c13c", { key: "bw8k5gt9v314", name: "say-hi" }));
+    expect(m.post).toHaveBeenCalledWith({ type: "tl-open", v: 1, threadId: "auth" }, ORIGIN);
+  });
+
+  it("sends the frame back from a thread that is no session of the caller's", () => {
+    const m = mount(() => true);
+    fromFrame(m.frame, route("emo~k9x", null));
+    expect(m.onFollow).not.toHaveBeenCalled();
+    expect(m.post).toHaveBeenCalledWith({ type: "tl-open", v: 1, threadId: "auth" }, ORIGIN);
+  });
+
+  it("leaves the frame on a route that is no thread, such as a new thread's draft", () => {
+    const m = mount(() => true);
+    fromFrame(m.frame, route(null, null));
+    expect(m.onFollow).not.toHaveBeenCalled();
+    expect(m.post).not.toHaveBeenCalled();
+  });
+
+  it("ignores a route report from any other origin", () => {
+    const m = mount(() => true);
+    fromFrame(
+      m.frame,
+      route("5992c13c", { key: "bw8k5gt9v314", name: "say-hi" }),
+      "https://evil.example",
+    );
+    expect(m.onFollow).not.toHaveBeenCalled();
+  });
+});

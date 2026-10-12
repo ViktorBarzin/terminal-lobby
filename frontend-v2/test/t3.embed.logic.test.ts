@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   allowedT3Origin,
   defaultT3Origin,
+  followTarget,
   frameChords,
   keyInChords,
   loadEnvironmentId,
@@ -264,6 +265,42 @@ describe("messages from the frame", () => {
     }
   });
 
+  it("parses tl-route, with the session the sidecar named or none", () => {
+    const route = {
+      type: "tl-route",
+      v: 1,
+      threadId: "5992c13c",
+      session: { key: "bw8k5gt9v314", name: "say-hi" },
+    };
+    expect(parseFrameMessage(route)).toEqual(route);
+    expect(parseFrameMessage({ type: "tl-route", v: 1, threadId: "x", session: null })).toEqual({
+      type: "tl-route",
+      v: 1,
+      threadId: "x",
+      session: null,
+    });
+    expect(parseFrameMessage({ type: "tl-route", v: 1, threadId: null, session: null })).toEqual({
+      type: "tl-route",
+      v: 1,
+      threadId: null,
+      session: null,
+    });
+  });
+
+  it("refuses a tl-route that is malformed or names more than a session", () => {
+    for (const bad of [
+      { type: "tl-route", v: 1, threadId: 3, session: null },
+      { type: "tl-route", v: 1, threadId: "x" },
+      { type: "tl-route", v: 1, threadId: "x", session: { key: "", name: "n" } },
+      { type: "tl-route", v: 1, threadId: "x", session: { key: "k", name: 4 } },
+      { type: "tl-route", v: 1, threadId: "x", session: { key: "k".repeat(300), name: "n" } },
+      { type: "tl-route", v: 1, threadId: "x", session: "say-hi" },
+      { type: "tl-route", v: 2, threadId: "x", session: null },
+    ]) {
+      expect(parseFrameMessage(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
   it("replays a key as a cancelable, bubbling keydown with the same identity", () => {
     expect(
       replayInit({
@@ -445,5 +482,26 @@ describe("who is offered the T3 view", () => {
     expect(t3Offered({ ...base, tool: "codex" })).toBe(false);
     expect(t3Offered({ ...base, tool: "shell" })).toBe(false);
     expect(t3Offered({ ...base, tool: undefined })).toBe(false);
+  });
+});
+
+describe("which lobby session a route in the frame names", () => {
+  const sessions = [
+    { name: "say-hi", bornAs: "bw8k5gt9v314", tool: "claude" as const, owner: "wizard" },
+    { name: "notes", tool: "claude" as const, owner: "wizard" },
+    { name: "theirs", bornAs: "k9x", tool: "claude" as const, owner: "emo" },
+  ];
+
+  it("finds one of the caller's own sessions by its key, the birth name", () => {
+    expect(followTarget(sessions, "wizard", { key: "bw8k5gt9v314", name: "stale" })).toBe("say-hi");
+  });
+
+  it("finds a hand-named session by its name", () => {
+    expect(followTarget(sessions, "wizard", { key: "notes", name: "notes" })).toBe("notes");
+  });
+
+  it("finds nothing for someone else's session or one the list does not have", () => {
+    expect(followTarget(sessions, "wizard", { key: "k9x", name: "theirs" })).toBeNull();
+    expect(followTarget(sessions, "wizard", { key: "nope", name: "nope" })).toBeNull();
   });
 });
