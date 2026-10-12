@@ -386,6 +386,64 @@ describe("a turn that thinks before each step", () => {
   });
 });
 
+describe("leaving plan mode", () => {
+  const event = (o: Record<string, unknown>) => ({
+    event: "message",
+    data: JSON.stringify({ session: "s", ...o }),
+  });
+  const planTurn = (model: ThreadModel) => {
+    model.onFrame(event({ id: 50, kind: "user", turnId: "t2", body: "plan it" }));
+    model.onFrame(
+      event({ id: 51, kind: "meta", meta: "permission-mode", turnId: "t2", body: "plan" }),
+    );
+    model.onFrame(
+      event({
+        id: 52,
+        kind: "tool_use",
+        turnId: "t2",
+        tool: "ExitPlanMode",
+        toolId: "toolu_plan",
+        body: '{"plan":"# Plan"}',
+      }),
+    );
+  };
+
+  it("leaves plan mode when the plan is approved, though no turn reports the new mode", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    planTurn(model);
+    expect(model.projection.thread.interactionMode).toBe("plan");
+    model.onFrame(
+      event({
+        id: 53,
+        kind: "tool_result",
+        turnId: "t2",
+        toolId: "toolu_plan",
+        body: "User has approved your plan. You can now start coding.",
+      }),
+    );
+    expect(model.projection.thread.interactionMode).toBe("default");
+    expect(model.projection.thread.runtimeMode).toBe("full-access");
+  });
+
+  it("stays in plan mode when the person sends the plan back", () => {
+    const { model } = makeModel();
+    feed(model, fixture("01-open-first-turn.sse"));
+    planTurn(model);
+    model.onFrame(
+      event({
+        id: 53,
+        kind: "tool_result",
+        turnId: "t2",
+        toolId: "toolu_plan",
+        isError: true,
+        body: "The user doesn't want to proceed with this tool use.",
+      }),
+    );
+    expect(model.projection.thread.interactionMode).toBe("plan");
+  });
+});
+
 describe("stops and wakes", () => {
   const event = (o: Record<string, unknown>) => ({
     event: "message",

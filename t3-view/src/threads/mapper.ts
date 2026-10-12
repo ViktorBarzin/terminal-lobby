@@ -60,7 +60,7 @@ import * as DateTime from "effect/DateTime";
 import type { LobbyEvent, ModelState, SessionState } from "../lobby/wire.ts";
 import { CLAUDE_INSTANCE_ID } from "../serverConfig.ts";
 import * as Ids from "./ids.ts";
-import { modesFromLobby, type T3Modes } from "./modes.ts";
+import { lobbyModeFor, modesFromLobby, type T3Modes } from "./modes.ts";
 import { classifyTool, type ItemBase, parseToolInput, toolItem } from "./tools.ts";
 
 export type DomainEvent = OrchestrationV2DomainEvent;
@@ -1029,6 +1029,18 @@ export class ThreadMapper {
         result: e.result,
       }),
     );
+    // An approved plan takes the session out of plan mode, and no transcript
+    // row says so until the next prompt: the CLI writes the mode only at a
+    // turn's start. Left alone, the composer keeps showing Plan. The runtime
+    // mode is the one the plan was entered from; the next turn's reading
+    // corrects it when the approval picked another (auto, say).
+    if (
+      record.tool === "ExitPlanMode" &&
+      e.isError !== true &&
+      this.#modes.interactionMode === "plan"
+    ) {
+      this.#setMode(lobbyModeFor(this.#modes.runtimeMode));
+    }
   }
 
   /** The newest running call of a tool, for a dialog that does not name its call. */
