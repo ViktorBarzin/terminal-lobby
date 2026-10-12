@@ -1,0 +1,33 @@
+event: state
+data: {"at":41,"mode":"bypassPermissions","model":{"model":"claude-haiku-5-5"},"queue":[],"prompts":["Run the shell command `echo hi` with the Bash tool, then reply with one short sentence.","Use the Bash tool to run `touch /tmp/t3view-probe-file`. Then reply done.","Use the AskUserQuestion tool to ask me one question: which colour do I prefer, with options Red and Blue. Then reply with my answer.","Run `sleep 6` with the Bash tool, then run `sleep 6` again as a separate Bash call, then reply finished.","Also mention the word banana in your reply."]}
+
+event: agents
+data: {"at":1791794368973,"agents":[],"workflows":[]}
+
+event: ready
+data: {"head":41,"epoch":"88a3b767c163e517"}
+
+id: 42
+data: {"id":42,"kind":"user","session":"running-echo-hi-with-bash-tool","turnId":"t6","body":"Run `sleep 30` with the Bash tool, then reply ok.","at":1791794373502}
+
+id: 43
+data: {"id":43,"kind":"meta","session":"running-echo-hi-with-bash-tool","turnId":"t6","body":"queued thing one","at":1791794375075,"meta":"queued"}
+
+id: 44
+data: {"id":44,"kind":"tool_use","session":"running-echo-hi-with-bash-tool","turnId":"t6","body":"{\"command\":\"sleep 30\",\"description\":\"Sleep for 30 seconds\"}","tool":"Bash","toolId":"toolu_013GWD4gvgECuQCS3Dzw17ui","at":1791794375206}
+
+id: 45
+data: {"id":45,"kind":"tool_result","session":"running-echo-hi-with-bash-tool","turnId":"t6","body":"\u003ctool_use_error\u003eBlocked: standalone sleep 30. To wait for a condition, use Monitor with an until-loop (e.g. `until \u003ccheck\u003e; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.\u003c/tool_use_error\u003e","toolId":"toolu_013GWD4gvgECuQCS3Dzw17ui","isError":true,"at":1791794375235,"result":"Error: Blocked: standalone sleep 30. To wait for a condition, use Monitor with an until-loop (e.g. `until \u003ccheck\u003e; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block."}
+
+id: 46
+data: {"id":46,"kind":"meta","session":"running-echo-hi-with-bash-tool","turnId":"t6","body":"queued thing one","at":1791794375309,"meta":"unqueued"}
+
+id: 47
+data: {"id":47,"kind":"user","session":"running-echo-hi-with-bash-tool","turnId":"t7","body":"queued thing one","at":1791794375255}
+
+id: 48
+data: {"id":48,"kind":"turn_end","session":"running-echo-hi-with-bash-tool","turnId":"t7","at":1791794376362,"usage":{"input_tokens":2,"output_tokens":193,"cache_read_input_tokens":59540,"cache_creation_input_tokens":2549,"model":"claude-haiku-5-5"}}
+
+event: head
+data: {"head":48}
+

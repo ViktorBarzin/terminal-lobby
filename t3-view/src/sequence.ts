@@ -48,7 +48,14 @@ export type Resume<E> =
   | { readonly kind: "snapshot" }
   | { readonly kind: "replay"; readonly events: ReadonlyArray<Sequenced<E>> };
 
-/** The recent events of one stream, kept so a reconnecting client can catch up. */
+/**
+ * The recent events of one stream, kept so a reconnecting client can catch up.
+ *
+ * A log that replaces an earlier one for the same stream (a thread rebuilt
+ * after its upstream log changed) starts at a `floor` taken from the clock, so
+ * a client holding a sequence from the earlier log is sent a snapshot rather
+ * than this log's events, which do not continue what it holds.
+ */
 export class EventLog<E> {
   readonly #clock: SequenceClock;
   readonly #capacity: number;
@@ -56,10 +63,14 @@ export class EventLog<E> {
   /** Every sequence at or below this one is no longer replayable. */
   #droppedThrough: number;
 
-  constructor(clock: SequenceClock, capacity: number) {
+  /** The sequence this log's own events start above. */
+  readonly floor: number;
+
+  constructor(clock: SequenceClock, capacity: number, floor: number = clock.base) {
     this.#clock = clock;
     this.#capacity = capacity;
-    this.#droppedThrough = clock.base;
+    this.floor = floor;
+    this.#droppedThrough = floor;
   }
 
   append(event: E): number {

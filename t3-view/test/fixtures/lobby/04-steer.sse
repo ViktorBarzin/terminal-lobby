@@ -1,0 +1,51 @@
+event: state
+data: {"at":31,"mode":"bypassPermissions","model":{"model":"claude-haiku-5-5"},"queue":[],"prompts":["Run the shell command `echo hi` with the Bash tool, then reply with one short sentence.","Use the Bash tool to run `touch /tmp/t3view-probe-file`. Then reply done.","Use the AskUserQuestion tool to ask me one question: which colour do I prefer, with options Red and Blue. Then reply with my answer."]}
+
+event: agents
+data: {"at":1791794326517,"agents":[],"workflows":[]}
+
+event: ready
+data: {"head":31,"epoch":"88a3b767c163e517"}
+
+id: 32
+data: {"id":32,"kind":"user","session":"running-echo-hi-with-bash-tool","turnId":"t4","body":"Run `sleep 6` with the Bash tool, then run `sleep 6` again as a separate Bash call, then reply finished.","at":1791794330045}
+
+id: 33
+data: {"id":33,"kind":"tool_use","session":"running-echo-hi-with-bash-tool","turnId":"t4","body":"{\"command\":\"sleep 6\",\"description\":\"Sleep for 6 seconds\"}","tool":"Bash","toolId":"toolu_01SHzgckLVLWg1ZtMBWjcC4C","at":1791794331926}
+
+id: 34
+data: {"id":34,"kind":"meta","session":"running-echo-hi-with-bash-tool","turnId":"t4","body":"Also mention the word banana in your reply.","at":1791794332624,"meta":"queued"}
+
+id: 35
+data: {"id":35,"kind":"tool_result","session":"running-echo-hi-with-bash-tool","turnId":"t4","body":"(Bash completed with no output)","toolId":"toolu_01SHzgckLVLWg1ZtMBWjcC4C","at":1791794338340,"result":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+
+id: 36
+data: {"id":36,"kind":"meta","session":"running-echo-hi-with-bash-tool","turnId":"t4","body":"Also mention the word banana in your reply.","at":1791794338409,"meta":"unqueued"}
+
+id: 37
+data: {"id":37,"kind":"user","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"Also mention the word banana in your reply.","at":1791794338379}
+
+id: 38
+data: {"id":38,"kind":"tool_use","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"{\"command\":\"sleep 6\",\"description\":\"Sleep for 6 seconds again\"}","tool":"Bash","toolId":"toolu_01TGKhPenJqZBJBPJjCCCTfa","at":1791794340178}
+
+event: head
+data: {"head":38}
+
+id: 39
+data: {"id":39,"kind":"tool_result","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"(Bash completed with no output)","toolId":"toolu_01TGKhPenJqZBJBPJjCCCTfa","at":1791794346595,"result":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"Fin","at":1791794347482,"stream":"text"}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"ished. Both `sleep 6","at":1791794347694,"stream":"text"}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"` calls ran as separate Bash calls with no output. The lobby note also asked me to mention banana, so: banana.","at":1791794347698,"stream":"text"}
+
+id: 40
+data: {"id":40,"kind":"text","session":"running-echo-hi-with-bash-tool","turnId":"t5","body":"Finished. Both `sleep 6` calls ran as separate Bash calls with no output. The lobby note also asked me to mention banana, so: banana.","at":1791794347732}
+
+id: 41
+data: {"id":41,"kind":"turn_end","session":"running-echo-hi-with-bash-tool","turnId":"t5","at":1791794347902,"usage":{"input_tokens":6,"output_tokens":461,"cache_read_input_tokens":174895,"cache_creation_input_tokens":2727,"model":"claude-haiku-5-5"}}
+
+event: head
+data: {"head":41}
+

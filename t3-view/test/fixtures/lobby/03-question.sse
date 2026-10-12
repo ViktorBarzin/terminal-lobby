@@ -1,0 +1,37 @@
+event: state
+data: {"at":24,"mode":"bypassPermissions","model":{"model":"claude-haiku-5-5"},"queue":[],"prompts":["Run the shell command `echo hi` with the Bash tool, then reply with one short sentence.","Use the Bash tool to run `touch /tmp/t3view-probe-file`. Then reply done."]}
+
+event: agents
+data: {"at":1791794295881,"agents":[],"workflows":[]}
+
+event: ready
+data: {"head":24,"epoch":"88a3b767c163e517"}
+
+id: 25
+data: {"id":25,"kind":"user","session":"running-echo-hi-with-bash-tool","turnId":"t3","body":"Use the AskUserQuestion tool to ask me one question: which colour do I prefer, with options Red and Blue. Then reply with my answer.","at":1791794301367}
+
+id: 26
+data: {"id":26,"kind":"tool_use","session":"running-echo-hi-with-bash-tool","turnId":"t3","body":"{\"questions\":[{\"question\":\"Which colour do you prefer?\",\"header\":\"Colour\",\"multiSelect\":false,\"options\":[{\"label\":\"Red\",\"description\":\"Red\"},{\"label\":\"Blue\",\"description\":\"Blue\"}]}]}","tool":"AskUserQuestion","toolId":"toolu_01VdjTrNDPQuz3TuCz7XUinB","at":1791794303368}
+
+id: 27
+data: {"id":27,"kind":"meta","session":"running-echo-hi-with-bash-tool","body":"{\"calls\":[{\"questions\":[{\"question\":\"Which colour do you prefer?\",\"header\":\"Colour\",\"multiSelect\":false,\"options\":[{\"label\":\"Red\",\"description\":\"Red\"},{\"label\":\"Blue\",\"description\":\"Blue\"}]}]}],\"questions\":[{\"question\":\"Which colour do you prefer?\",\"header\":\"Colour\",\"multiSelect\":false,\"options\":[{\"label\":\"Red\",\"description\":\"Red\"},{\"label\":\"Blue\",\"description\":\"Blue\"}]}]}","at":1791794303472,"meta":"held"}
+
+id: 28
+data: {"id":28,"kind":"meta","session":"running-echo-hi-with-bash-tool","at":1791794314113,"meta":"held"}
+
+id: 29
+data: {"id":29,"kind":"tool_result","session":"running-echo-hi-with-bash-tool","turnId":"t3","body":"Your questions have been answered: \"Which colour do you prefer?\"=\"Blue\". You can now continue with these answers in mind.","toolId":"toolu_01VdjTrNDPQuz3TuCz7XUinB","at":1791794314195,"result":{"questions":[{"question":"Which colour do you prefer?","header":"Colour","multiSelect":false,"options":[{"label":"Red","description":"Red"},{"label":"Blue","description":"Blue"}]}],"answers":{"Which colour do you prefer?":"Blue"},"annotations":{}}}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t3","body":"You answ","at":1791794315034,"stream":"text"}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t3","body":"ered **Blue**.","at":1791794315062,"stream":"text"}
+
+id: 30
+data: {"id":30,"kind":"text","session":"running-echo-hi-with-bash-tool","turnId":"t3","body":"You answered **Blue**.","at":1791794315074}
+
+id: 31
+data: {"id":31,"kind":"turn_end","session":"running-echo-hi-with-bash-tool","turnId":"t3","at":1791794315256,"usage":{"input_tokens":4,"output_tokens":236,"cache_read_input_tokens":110172,"cache_creation_input_tokens":3037,"model":"claude-haiku-5-5"}}
+
+event: head
+data: {"head":31}
+

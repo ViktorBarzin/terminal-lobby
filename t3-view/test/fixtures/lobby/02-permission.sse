@@ -1,0 +1,39 @@
+event: state
+data: {"at":17,"mode":"bypassPermissions","model":{"model":"claude-haiku-5-5"},"queue":[],"prompts":["Run the shell command `echo hi` with the Bash tool, then reply with one short sentence."]}
+
+event: ready
+data: {"head":17,"epoch":"88a3b767c163e517"}
+
+event: agents
+data: {"at":1791794267560,"agents":[],"workflows":[]}
+
+id: 18
+data: {"id":18,"kind":"user","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":"Use the Bash tool to run `touch /tmp/t3view-probe-file`. Then reply done.","at":1791794270710}
+
+id: 19
+data: {"id":19,"kind":"tool_use","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":"{\"command\":\"touch /tmp/t3view-probe-file \u0026\u0026 ls -l /tmp/t3view-probe-file\",\"description\":\"Create the probe file in /tmp and confirm it exists\"}","tool":"Bash","toolId":"toolu_01LNxqGL65zRa7tULyGynHs5","at":1791794273026}
+
+id: 20
+data: {"id":20,"kind":"meta","session":"running-echo-hi-with-bash-tool","body":"{\"kind\":\"permission\",\"options\":[{\"number\":1,\"label\":\"Yes\"},{\"number\":2,\"label\":\"No\"}],\"title\":\"Bash command\",\"detail\":[\"touch /tmp/t3view-probe-file \\u0026\\u0026 ls -l /tmp/t3view-probe-file\",\"Create the probe file in /tmp and confirm it exists\"],\"prompt\":\"Do you want to proceed?\"}","at":1791794273227,"meta":"asking"}
+
+id: 21
+data: {"id":21,"kind":"meta","session":"running-echo-hi-with-bash-tool","at":1791794284559,"meta":"asking"}
+
+id: 22
+data: {"id":22,"kind":"tool_result","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":"-rw-r--r-- 1 wizard wizard 0 Oct 12 08:38 /tmp/t3view-probe-file","toolId":"toolu_01LNxqGL65zRa7tULyGynHs5","at":1791794284889,"result":{"stdout":"-rw-r--r-- 1 wizard wizard 0 Oct 12 08:38 /tmp/t3view-probe-file","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":"Done.","at":1791794285750,"stream":"text"}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":" `/tmp/t3view","at":1791794285843,"stream":"text"}
+
+data: {"id":0,"kind":"delta","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":"-probe-file` now exists (0 bytes, owned by wizard).","at":1791794285847,"stream":"text"}
+
+id: 23
+data: {"id":23,"kind":"text","session":"running-echo-hi-with-bash-tool","turnId":"t2","body":"Done. `/tmp/t3view-probe-file` now exists (0 bytes, owned by wizard).","at":1791794285873}
+
+id: 24
+data: {"id":24,"kind":"turn_end","session":"running-echo-hi-with-bash-tool","turnId":"t2","at":1791794286051,"usage":{"input_tokens":4,"output_tokens":358,"cache_read_input_tokens":103655,"cache_creation_input_tokens":3101,"model":"claude-haiku-5-5"}}
+
+event: head
+data: {"head":24}
+

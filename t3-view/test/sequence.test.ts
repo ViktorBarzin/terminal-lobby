@@ -92,4 +92,17 @@ describe("EventLog.resume", () => {
       ],
     });
   });
+
+  it("sends a snapshot to a client holding a sequence from a log this one replaced", () => {
+    const clock = new SequenceClock(EPOCH_MS);
+    const before = new EventLog<string>(clock, 3);
+    const held = before.append("old");
+    const after = new EventLog<string>(clock, 3, clock.next());
+    after.append("new");
+    expect(after.resume(held)).toEqual({ kind: "snapshot" });
+    expect(after.resume(after.floor)).toEqual({
+      kind: "replay",
+      events: [{ sequence: after.floor + 1, event: "new" }],
+    });
+  });
 });
