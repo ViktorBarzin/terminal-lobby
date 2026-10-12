@@ -417,23 +417,6 @@ are Claude Agent SDK stream frames, not lobby events, and `plan_questions` and
 
 ## Open questions
 
-- After a plan is approved through T3's card, T3's composer keeps showing
-  Plan, because its Plan/Build and runtime-mode pickers are a per-thread draft
-  in `localStorage`, and the next send puts the session back in plan mode.
-  The server thread is correct since `f5db5b8f`. A fix is an embed-patch
-  change that clears the draft when the server thread leaves plan mode.
-- session-events' `state` frame can carry a stale mode (it reported
-  `bypassPermissions` while the pane said manual), and the sidecar folds it
-  at `ready`, so after a reconnect T3 can show Full access until the next
-  send. The Solid view reads `GET /pane` for this; the sidecar could too.
-- Prompts held after T3's Stop (`holdQueue`) live in the sidecar's memory. A
-  sidecar restart or a stream rebuild while they are held shows them
-  cancelled.
-- T3 dedupes projects that share a workspace root, so its palette offers 4 of
-  the lobby's projects; System, health and muse-ai cannot be picked for a
-  new thread.
-- Sessions on a model the composer does not list show the composer's default
-  model; a send then leaves the session's model alone.
 - Once, a message typed 6 s after a send stayed in T3's composer and was never
   dispatched; two retries did not reproduce it.
 - The lobby header's status lagged T3's run (idle while T3 showed Working).
