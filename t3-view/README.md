@@ -57,7 +57,7 @@ Environment variables only:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TL_T3_VIEW_BIND` | `127.0.0.1` | Listen address (production: `10.0.10.10`, for Traefik) |
+| `TL_T3_VIEW_BIND` | `127.0.0.1` | Listen address (production unit: `0.0.0.0`, so Traefik reaches 10.0.10.10 and the release probe reaches loopback) |
 | `TL_T3_VIEW_PORT` | `7690` | Listen port |
 | `TL_AUTH_HEADER` | `X-Authentik-Username` | Identity header name, shared with every lobby service |
 | `TL_T3_VIEW_TMUX_API` | `http://127.0.0.1:7684` | tmux-api |
@@ -136,13 +136,14 @@ Caches of lobby data are keyed by OS user first (`src/hub.ts` keeps one
 | Route | Answer |
 |---|---|
 | `GET /.well-known/t3/environment` | Descriptor, `orchestrationProtocolVersion: 2`, a host-derived stable `environmentId` |
+| `GET /.well-known/t3/thread/:key` | The user's thread id for the key the lobby frames a session by; 404 when none |
 | `GET /api/auth/session` | `authenticated: true`; permissions `orchestration:read`, `orchestration:operate`, `filesystem:read` |
 | `GET /api/orchestration/shell` | Shell snapshot; 400 without `x-t3-orchestration-protocol: 2` |
 | `GET /api/orchestration/threads/:id/bounded` | The thread's projection; the window is the whole projection for now (`hasMoreHistory: false`); 404 for a thread the lobby does not list |
 | `GET /api/orchestration/threads/:id/history` | An empty page: there is no older history to fetch until paging lands |
 | `POST /api/observability/v1/traces` | 204 (the client posts traces unconditionally) |
 | `GET /ws?orchestrationProtocol=2` | Effect RPC, `RpcSerialization.layerJson`; 426 on any other version |
-| `GET *` | The web build; `index.html` for app routes; other `/api/`, `/ws`, `/.well-known/` paths 404 |
+| `GET *` | The web build; `index.html` for app routes, and a 302 to the thread's id for `/{environmentId}/{key}` named by another key; other `/api/`, `/ws`, `/.well-known/` paths 404 |
 
 RPC (`src/rpc/`):
 
