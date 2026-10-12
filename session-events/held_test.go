@@ -375,3 +375,71 @@ func TestHeldFilesRoundTrip(t *testing.T) {
 		t.Fatalf("no directory loaded %q", got)
 	}
 }
+
+// A prompt sent with "wait" is a follow-up, not a steer: it stays held while
+// the turn calls tools, shows queued like any held prompt, and goes out as the
+// next turn once this one ends (the T3 view's queue_after_active).
+func TestAWaitingPromptIsNotTakenAsASteer(t *testing.T) {
+	rg, mux := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	sent := fakeMod(t, c)
+	postTurn(t, mux, "/prompt/demo", `{"text":"after the turn","wait":true}`)
+	postTurn(t, mux, "/prompt/demo", `{"text":"steer now"}`)
+	if q := queueOf(c); !slices.Equal(q, []string{"after the turn", "steer now"}) {
+		t.Fatalf("queue = %q", q)
+	}
+	if got := c.takeForSteer(); !slices.Equal(got, []string{"steer now"}) {
+		t.Fatalf("taken at the tool boundary: %q, want only the steer", got)
+	}
+	if got := c.takeForSteer(); len(got) != 0 {
+		t.Fatalf("taken again: %q", got)
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}})
+	if got := prompts(t, sent, 2); !slices.Equal(got, []string{"prompt steer now", "prompt after the turn"}) {
+		t.Fatalf("sent %q", got)
+	}
+}
+
+// Up and Stop hand back every held prompt, the waiting ones included, and
+// cancel-queued finds a waiting prompt by its text.
+func TestWaitingPromptsComeBackLikeAnyHeldPrompt(t *testing.T) {
+	rg, mux := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	postTurn(t, mux, "/prompt/demo", `{"text":"one","wait":true}`)
+	postTurn(t, mux, "/prompt/demo", `{"text":"two","wait":true}`)
+	rec := postTurn(t, mux, "/prompt/demo/cancel-queued", `{"text":"one"}`)
+	if r := decodeTake(t, rec.Body.String()); !r.Restored || !slices.Equal(r.Queue, []string{"one"}) {
+		t.Fatalf("cancel reply %+v", r)
+	}
+	rec = postTurn(t, mux, "/prompt/demo/unqueue", ``)
+	if r := decodeTake(t, rec.Body.String()); !r.Restored || !slices.Equal(r.Queue, []string{"two"}) {
+		t.Fatalf("unqueue reply %+v", r)
+	}
+	if q := queueOf(c); len(q) != 0 {
+		t.Fatalf("queue = %q", q)
+	}
+}
+
+// What waits for the turn's end still waits after a restart.
+func TestWaitingPromptsSurviveARestart(t *testing.T) {
+	dir := t.TempDir()
+	rg, mux := heldMux(t, dir)
+	running(t, rg, "sid1")
+	postTurn(t, mux, "/prompt/demo", `{"text":"later","wait":true}`)
+	postTurn(t, mux, "/prompt/demo", `{"text":"steer"}`)
+
+	rg2, _ := heldMux(t, dir)
+	rg2.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Instance: "i-sid1"})
+	c := rg2.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{
+		{Type: sessionio.ModHistoryEvent, Running: true, Messages: []sessionio.ModHistoryMessage{{Role: "user", Text: "work"}}},
+		{Type: sessionio.ModLevelEvent, Running: true},
+	})
+	// Shown in the order the turn's end will send them: steers first.
+	if q := queueOf(c); !slices.Equal(q, []string{"steer", "later"}) {
+		t.Fatalf("queue after the restart = %q", q)
+	}
+	if got := c.takeForSteer(); !slices.Equal(got, []string{"steer"}) {
+		t.Fatalf("taken after the restart: %q, want only the steer", got)
+	}
+}

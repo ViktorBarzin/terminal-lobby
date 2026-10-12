@@ -53,8 +53,28 @@ func (s heldFiles) path(user, sid string) string {
 	return filepath.Join(s.dir, user, sid+".json")
 }
 
-func (s heldFiles) load(user, sid string) []string {
+// waitPath names the file listing which of a conversation's held prompts
+// wait for the turn's end (modConn.waiting). A file of its own beside the
+// texts, so the texts file keeps the shape an older build reads: rolled back,
+// it holds every prompt again and only forgets which ones were to wait.
+func (s heldFiles) waitPath(user, sid string) string {
 	p := s.path(user, sid)
+	if p == "" {
+		return ""
+	}
+	return strings.TrimSuffix(p, ".json") + ".wait.json"
+}
+
+func (s heldFiles) load(user, sid string) []string {
+	return readTexts(s.path(user, sid))
+}
+
+// loadWaiting is which of the loaded texts wait for the turn's end.
+func (s heldFiles) loadWaiting(user, sid string) []string {
+	return readTexts(s.waitPath(user, sid))
+}
+
+func readTexts(p string) []string {
 	if p == "" {
 		return nil
 	}
@@ -70,10 +90,19 @@ func (s heldFiles) load(user, sid string) []string {
 	return texts
 }
 
+// saveWaiting writes which held prompts wait for the turn's end, or removes
+// the file when none do.
+func (s heldFiles) saveWaiting(user, sid string, texts []string) {
+	writeTexts(s.waitPath(user, sid), texts)
+}
+
 // save writes the conversation's held prompts, or removes the file when there
 // are none. A failure is logged: the prompts are still held in memory.
 func (s heldFiles) save(user, sid string, texts []string) {
-	p := s.path(user, sid)
+	writeTexts(s.path(user, sid), texts)
+}
+
+func writeTexts(p string, texts []string) {
 	if p == "" {
 		return
 	}
@@ -98,9 +127,18 @@ func (s heldFiles) save(user, sid string, texts []string) {
 	}
 }
 
-func (s heldFiles) move(user, from, to string, texts []string) {
+func (s heldFiles) move(user, from, to string, texts, waiting []string) {
 	s.save(user, from, nil)
+	s.saveWaiting(user, from, nil)
 	s.save(user, to, texts)
+	s.saveWaiting(user, to, waiting)
+}
+
+// keep writes everything a connection holds: every pending prompt, and which
+// of them wait for the turn's end.
+func (s heldFiles) keep(user, sid string, pending, waiting []string) {
+	s.save(user, sid, pending)
+	s.saveWaiting(user, sid, waiting)
 }
 
 // defaultHeldDir is where held prompts live unless -held-dir says otherwise:
@@ -117,8 +155,9 @@ func defaultHeldDir() string {
 // conversation in the same pane: a /clear ends one conversation and starts
 // another in the same Claude.
 type heldCarry struct {
-	sid   string
-	texts []string
+	sid     string
+	texts   []string
+	waiting []string // which of texts wait for the turn's end
 }
 
 // known reports whether the fold says what the session is doing: the snapshot
@@ -132,13 +171,15 @@ func (c *modConn) knownLocked() bool {
 // mod took and Claude has not stored, then those held. The file keeps this
 // set, so a restart holds again what nothing confirmed. Called with c.mu held.
 func (c *modConn) pendingLocked() []string {
-	return append(slices.Clone(c.steering), c.held...)
+	return append(append(slices.Clone(c.steering), c.held...), c.waiting...)
 }
 
 // hold keeps a prompt behind the running main turn and shows it queued. False
 // when no main turn is known to run, or for a slash command, which runs as one
 // and leaves no prompt row to take it off the queue: the caller sends it now.
-func (c *modConn) hold(text string) bool {
+// wait keeps it for the turn's end: the mod is not handed it at a tool
+// boundary to steer the turn (steermain.go).
+func (c *modConn) hold(text string, wait bool) bool {
 	if strings.HasPrefix(strings.TrimSpace(text), "/") {
 		return false
 	}
@@ -151,10 +192,14 @@ func (c *modConn) hold(text string) bool {
 		c.mu.Unlock()
 		return false
 	}
-	c.held = append(c.held, text)
-	pending, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
+	if wait {
+		c.waiting = append(c.waiting, text)
+	} else {
+		c.held = append(c.held, text)
+	}
+	pending, waiting, ls, user, sid := c.pendingLocked(), slices.Clone(c.waiting), c.ls, c.user, c.sid
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, pending)
+	c.hub.files.keep(user, sid, pending, waiting)
 	ls.fs.Queue(text, c.hub.now().UnixMilli())
 	return true
 }
@@ -167,18 +212,18 @@ func (c *modConn) takeHeld(withSteering bool) []string {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
-	out, ls, user, sid := c.held, c.ls, c.user, c.sid
+	out, ls, user, sid := append(slices.Clone(c.held), c.waiting...), c.ls, c.user, c.sid
 	if withSteering {
 		out = c.pendingLocked()
 		c.steering = nil
 	}
-	c.held = nil
+	c.held, c.waiting = nil, nil
 	pending := c.pendingLocked()
 	c.mu.Unlock()
 	if len(out) == 0 {
 		return []string{}
 	}
-	c.hub.files.save(user, sid, pending)
+	c.hub.files.keep(user, sid, pending, nil)
 	if ls != nil {
 		ls.fs.Unqueue(out, c.hub.now().UnixMilli())
 	}
@@ -193,16 +238,21 @@ func (c *modConn) cancelHeld(text string) (string, bool) {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
-	at := slices.IndexFunc(c.held, func(h string) bool { return strings.TrimSpace(h) == text })
-	if text == "" || at < 0 {
+	match := func(h string) bool { return strings.TrimSpace(h) == text }
+	var gone string
+	if at := slices.IndexFunc(c.held, match); text != "" && at >= 0 {
+		gone = c.held[at]
+		c.held = slices.Delete(slices.Clone(c.held), at, at+1)
+	} else if at := slices.IndexFunc(c.waiting, match); text != "" && at >= 0 {
+		gone = c.waiting[at]
+		c.waiting = slices.Delete(slices.Clone(c.waiting), at, at+1)
+	} else {
 		c.mu.Unlock()
 		return "", false
 	}
-	gone := c.held[at]
-	c.held = slices.Delete(slices.Clone(c.held), at, at+1)
-	pending, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
+	pending, waiting, ls, user, sid := c.pendingLocked(), slices.Clone(c.waiting), c.ls, c.user, c.sid
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, pending)
+	c.hub.files.keep(user, sid, pending, waiting)
 	if ls != nil {
 		ls.fs.Unqueue([]string{gone}, c.hub.now().UnixMilli())
 	}
@@ -219,9 +269,9 @@ func (c *modConn) putBack(texts []string) {
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
 	c.held = append(slices.Clone(texts), c.held...)
-	pending, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
+	pending, waiting, ls, user, sid := c.pendingLocked(), slices.Clone(c.waiting), c.ls, c.user, c.sid
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, pending)
+	c.hub.files.keep(user, sid, pending, waiting)
 	if ls != nil {
 		at := c.hub.now().UnixMilli()
 		for _, t := range texts {
@@ -312,15 +362,15 @@ func (c *modConn) markStarting(text string) {
 // order, so by the turn's end a delivered prompt has been confirmed.
 func (c *modConn) releaseHeld() {
 	c.mu.Lock()
-	if (len(c.held) == 0 && len(c.steering) == 0) || !c.knownLocked() || c.turnAheadLocked() {
+	if (len(c.held) == 0 && len(c.steering) == 0 && len(c.waiting) == 0) || !c.knownLocked() || c.turnAheadLocked() {
 		c.mu.Unlock()
 		return
 	}
 	out, ls, user, sid := c.pendingLocked(), c.ls, c.user, c.sid
-	c.held, c.steering = nil, nil
+	c.held, c.steering, c.waiting = nil, nil, nil
 	c.startingLocked()
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, nil)
+	c.hub.files.keep(user, sid, nil, nil)
 	go c.submitHeld(out, ls)
 }
 
@@ -369,13 +419,13 @@ func quoteStart(text string) string {
 // in its pane. Called with h.mu held, from dropLocked.
 func (h *modHub) carryLocked(c *modConn) {
 	c.mu.Lock()
-	held, pane, user, sid := c.pendingLocked(), c.pane, c.user, c.sid
-	c.held, c.steering = nil, nil
+	held, waiting, pane, user, sid := c.pendingLocked(), slices.Clone(c.waiting), c.pane, c.user, c.sid
+	c.held, c.steering, c.waiting = nil, nil, nil
 	c.mu.Unlock()
 	if len(held) == 0 || pane == "" {
 		return
 	}
-	h.carry[hubKey(user, pane)] = heldCarry{sid: sid, texts: held}
+	h.carry[hubKey(user, pane)] = heldCarry{sid: sid, texts: held, waiting: waiting}
 }
 
 // adoptLocked gives a new connection what its conversation held before this
@@ -383,12 +433,30 @@ func (h *modHub) carryLocked(c *modConn) {
 // with h.mu held, from hello.
 func (h *modHub) adoptLocked(c *modConn, pane string) {
 	held := h.files.load(c.user, c.sid)
+	waiting := h.files.loadWaiting(c.user, c.sid)
 	if carried, ok := h.carry[hubKey(c.user, pane)]; ok && carried.sid != c.sid {
 		delete(h.carry, hubKey(c.user, pane))
 		held = append(held, carried.texts...)
-		h.files.move(c.user, carried.sid, c.sid, held)
+		waiting = append(waiting, carried.waiting...)
+		h.files.move(c.user, carried.sid, c.sid, held, waiting)
 	}
-	c.held = held
+	c.held, c.waiting = splitWaiting(held, waiting)
+}
+
+// splitWaiting takes the prompts named in waiting out of held, one for one by
+// text, oldest first: what a restart reads back is every pending prompt and,
+// separately, which of them wait for the turn's end.
+func splitWaiting(held, waiting []string) (steer, wait []string) {
+	left := slices.Clone(waiting)
+	for _, t := range held {
+		if i := slices.Index(left, t); i >= 0 {
+			left = slices.Delete(left, i, i+1)
+			wait = append(wait, t)
+			continue
+		}
+		steer = append(steer, t)
+	}
+	return steer, wait
 }
 
 // takeReply is POST /prompt/{session}/unqueue's answer, and the queue a Stop

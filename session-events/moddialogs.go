@@ -26,8 +26,9 @@ type modDialog struct {
 
 	plan, planFilePath string // a plan's text and file
 
-	tool, title, reason string   // a permission prompt's tool, heading and why it asks
-	detail              []string // what the tool will do
+	tool, title, reason string          // a permission prompt's tool, heading and why it asks
+	detail              []string        // what the tool will do
+	input               json.RawMessage // the permission prompt's tool input, as called
 
 	// native is Claude's own plan menu as the pane draws it, read for a mod
 	// that lists plan-keys (watchPlan); nil until read. Guarded by modConn.mu.
@@ -46,7 +47,7 @@ func dialogOf(ev sessionio.ModEvent) *modDialog {
 		d.kind, d.plan, d.planFilePath = "plan", ev.Plan, ev.PlanFilePath
 	case sessionio.ModPermissionEvent:
 		d.kind, d.tool, d.reason = "permission", ev.Tool, ev.Reason
-		d.title, d.detail = permissionTitle(ev.Tool), permissionDetail(ev.Input)
+		d.title, d.detail, d.input = permissionTitle(ev.Tool), permissionDetail(ev.Input), ev.Input
 	default:
 		return nil
 	}
@@ -61,28 +62,47 @@ func (c *modConn) openDialogs() []*modDialog {
 	return c.st.open()
 }
 
+// heldCall is one held AskUserQuestion call on the wire: its questions as
+// asked, and the tool call that asked them.
+type heldCall struct {
+	Questions json.RawMessage `json:"questions"`
+	ToolID    string          `json:"toolId,omitempty"`
+}
+
+// askingBody is the `asking` reading with the call it is for: the tool call's
+// id, the tool, and for a permission prompt the tool's input as called. The
+// Dialog's own fields stay where the Text view's cards read them.
+type askingBody struct {
+	sessionio.Dialog
+	ToolID string          `json:"toolId,omitempty"`
+	Tool   string          `json:"tool,omitempty"`
+	Input  json.RawMessage `json:"input,omitempty"`
+}
+
 // showDialogs puts the open dialogs on the wire in the shapes the Text view's
 // cards already read: the held calls for questions (ADR-0034's `held`, oldest
 // first, the card answers the first), and a reading for the oldest plan or
-// permission prompt (`asking`). The source skips a body it already sent.
+// permission prompt (`asking`). Each names its tool call (toolId), so an
+// answer can target it (sessionio.AnswerRequest.ToolID). The source skips a
+// body it already sent.
 func (c *modConn) showDialogs(fs *sessionio.FileSource) {
-	var calls []map[string]json.RawMessage
-	var first json.RawMessage
+	var calls []heldCall
+	var first *modDialog
 	var asking *modDialog
 	for _, d := range c.openDialogs() {
 		switch {
 		case d.kind == "ask":
 			if first == nil {
-				first = d.raw
+				first = d
 			}
-			calls = append(calls, map[string]json.RawMessage{"questions": d.raw})
+			calls = append(calls, heldCall{Questions: d.raw, ToolID: d.toolID})
 		case asking == nil:
 			asking = d
 		}
 	}
 	held := ""
 	if first != nil {
-		body, _ := json.Marshal(map[string]any{"questions": first, "calls": calls})
+		body, _ := json.Marshal(map[string]any{"questions": first.raw, "calls": calls, "toolId": first.toolID})
 		held = string(body)
 	}
 	fs.SetHeld(held)
@@ -90,18 +110,30 @@ func (c *modConn) showDialogs(fs *sessionio.FileSource) {
 	switch {
 	case asking == nil:
 	case asking.kind == "plan":
-		body, _ := json.Marshal(c.planCard(asking))
+		body, _ := json.Marshal(askingBody{Dialog: c.planCard(asking), ToolID: asking.toolID, Tool: "ExitPlanMode"})
 		reading = string(body)
 		c.watchPlan(asking)
 	default:
-		body, _ := json.Marshal(sessionio.Dialog{
-			Kind: sessionio.DialogKindPermission, Title: asking.title,
-			Detail: asking.detail, Prompt: "Do you want to proceed?",
-			Options: []sessionio.PlanOption{{Number: 1, Label: "Yes"}, {Number: 2, Label: "No"}},
+		body, _ := json.Marshal(askingBody{
+			Dialog: sessionio.Dialog{
+				Kind: sessionio.DialogKindPermission, Title: asking.title,
+				Detail: asking.detail, Prompt: "Do you want to proceed?",
+				Options: []sessionio.PlanOption{{Number: 1, Label: "Yes"}, {Number: 2, Label: "No"}},
+			},
+			ToolID: asking.toolID, Tool: asking.tool, Input: validJSON(asking.input),
 		})
 		reading = string(body)
 	}
 	fs.SetAsking(reading)
+}
+
+// validJSON is raw when it is JSON, else nil: a malformed input from a mod
+// must not make the whole reading fail to marshal.
+func validJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil
+	}
+	return raw
 }
 
 // planApproveSynthetic is the card's one approve row for a plan whose menu has

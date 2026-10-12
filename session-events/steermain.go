@@ -23,6 +23,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 
 	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
@@ -63,9 +64,9 @@ func (c *modConn) confirmSteered(n int, fs *sessionio.FileSource, at int64) {
 	}
 	gone := c.steering[:k]
 	c.steering = c.steering[k:]
-	pending, user, sid, session := c.pendingLocked(), c.user, c.sid, c.session
+	pending, waiting, user, sid, session := c.pendingLocked(), slices.Clone(c.waiting), c.user, c.sid, c.session
 	c.mu.Unlock()
-	c.hub.files.save(user, sid, pending)
+	c.hub.files.keep(user, sid, pending, waiting)
 	fs.Unqueue(gone, at)
 	events.Emit("claude.prompt_steered", user, telemetry.Attrs{"tl.session": session, "tl.count": k})
 }

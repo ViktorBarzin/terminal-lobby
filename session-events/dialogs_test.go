@@ -116,3 +116,66 @@ func TestADialogKeepsWhatItShows(t *testing.T) {
 		t.Fatalf("permission dialog = %+v", d)
 	}
 }
+
+// Every dialog on the wire names the tool call it holds, so a client that
+// answers by toolId (the T3 view's sidecar) never has to guess which card it
+// is answering. The fields are additions: the Text view's cards read the same
+// bodies as before.
+func TestDialogBodiesNameTheirCall(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	fs, _ := rg.source("wizard", "demo")
+	c.apply([]sessionio.ModEvent{askEvent("toolu_1", "First?"), askEvent("toolu_2", "Second?")})
+	var held struct {
+		ToolID    string `json:"toolId"`
+		Questions []struct{ Question string }
+		Calls     []struct {
+			ToolID    string `json:"toolId"`
+			Questions []struct{ Question string }
+		}
+	}
+	if err := json.Unmarshal([]byte(lastMeta(fs, sessionio.MetaHeld)), &held); err != nil {
+		t.Fatal(err)
+	}
+	if held.ToolID != "toolu_1" || len(held.Questions) != 1 || len(held.Calls) != 2 ||
+		held.Calls[0].ToolID != "toolu_1" || held.Calls[1].ToolID != "toolu_2" ||
+		held.Calls[1].Questions[0].Question != "Second?" {
+		t.Fatalf("held = %+v, want each call with its toolId", held)
+	}
+
+	c.apply([]sessionio.ModEvent{
+		{Type: sessionio.ModSettledEvent, ToolID: "toolu_1", By: "web"},
+		{Type: sessionio.ModSettledEvent, ToolID: "toolu_2", By: "web"},
+		{Type: sessionio.ModPermissionEvent, ToolID: "toolu_b", Tool: "Bash",
+			Input: json.RawMessage(`{"command":"ls -la","description":"List"}`)},
+	})
+	var asking struct {
+		Kind   string          `json:"kind"`
+		Title  string          `json:"title"`
+		Detail []string        `json:"detail"`
+		ToolID string          `json:"toolId"`
+		Tool   string          `json:"tool"`
+		Input  json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(lastMeta(fs, sessionio.MetaAsking)), &asking); err != nil {
+		t.Fatal(err)
+	}
+	if asking.Kind != sessionio.DialogKindPermission || asking.Title != "Bash command" ||
+		len(asking.Detail) != 2 || asking.ToolID != "toolu_b" || asking.Tool != "Bash" ||
+		string(asking.Input) != `{"command":"ls -la","description":"List"}` {
+		t.Fatalf("asking = %+v (input %s), want the reading plus its call", asking, asking.Input)
+	}
+
+	c.apply([]sessionio.ModEvent{
+		{Type: sessionio.ModSettledEvent, ToolID: "toolu_b", By: "web"},
+		{Type: sessionio.ModPlanEvent, ToolID: "toolu_p", Plan: "# Plan"},
+	})
+	asking.ToolID, asking.Tool = "", ""
+	if err := json.Unmarshal([]byte(lastMeta(fs, sessionio.MetaAsking)), &asking); err != nil {
+		t.Fatal(err)
+	}
+	if asking.Kind != sessionio.DialogKindPlan || asking.ToolID != "toolu_p" || asking.Tool != "ExitPlanMode" {
+		t.Fatalf("plan asking = %+v, want the plan's call", asking)
+	}
+}

@@ -203,6 +203,10 @@ type modConn struct {
 	// into the running turn, oldest first, until the row Claude stores for
 	// them says they arrived (steermain.go). They are older than held.
 	steering []string
+	// waiting are held prompts sent to wait for the running turn's end rather
+	// than steer it (promptBody.Wait), oldest first. The mod is never handed
+	// them at a tool boundary; the turn's end sends them after held.
+	waiting []string
 	// starting is the number of the turn start a prompt sent while idle is
 	// waiting on, 0 when none: until Claude reports the turn, what is sent
 	// next is held for it (held.go). starts numbers them, so a timer only

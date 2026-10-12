@@ -106,6 +106,11 @@ type promptBody struct {
 	// however many times it is asked for (promptonce.go). Set by the
 	// New-session composer's first prompt.
 	ID string `json:"id"`
+	// Wait holds a prompt sent while Claude's turn runs until that turn ends,
+	// instead of handing it to the mod at the turn's next tool boundary to
+	// steer it (held.go, steermain.go). Ignored when no turn runs: the prompt
+	// is sent at once either way. The T3 view's "queue after the active run".
+	Wait bool `json:"wait"`
 }
 
 // handlePrompt types a prompt into the session.
@@ -311,7 +316,7 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 	}
 	// Behind a running turn the prompt waits here rather than in Claude,
 	// where nothing could take it back to edit (held.go).
-	if c.hold(p.Text) {
+	if c.hold(p.Text, p.Wait) {
 		events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.count": len(p.Text), "tl.client": "mod", "tl.held": true,
 		})
