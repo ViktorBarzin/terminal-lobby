@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { render, fireEvent } from "@solidjs/testing-library";
-import { T3Host } from "../src/components/T3Host";
+import { T3Host, T3Park } from "../src/components/T3Host";
 import { createFrameClaims } from "../src/t3/frame-claim";
+import { createFrameKeeper, type FrameMove } from "../src/t3/frame-keeper";
 import { loadEnvironmentId, saveEnvironmentId, type FrameChord } from "../src/t3/embed.logic";
 
 const ORIGIN = "http://127.0.0.1:17691";
@@ -425,5 +426,160 @@ describe("<T3Host> — the frame moving to another thread", () => {
       "https://evil.example",
     );
     expect(m.onFollow).not.toHaveBeenCalled();
+  });
+});
+
+describe("<T3Park> — the frame booted early and kept between uses", () => {
+  beforeEach(() => localStorage.clear());
+
+  /** What the frame was sent. jsdom gives a moved frame a fresh window, so
+   *  the stub goes on again after every move. */
+  const post = vi.fn();
+  function stubPost(frame: HTMLIFrameElement) {
+    Object.defineProperty(frame.contentWindow!, "postMessage", { value: post, configurable: true });
+    return post;
+  }
+  /** moveBefore as jsdom lacks it: the same element, moved. */
+  const move: FrameMove = (parent, node) => {
+    parent.insertBefore(node, null);
+    stubPost(node);
+    return true;
+  };
+  const now = (start: () => void) => {
+    start();
+    return () => {};
+  };
+
+  function mount(opts: { move?: FrameMove; defer?: (s: () => void) => () => void } = {}) {
+    post.mockClear();
+    const keeper = createFrameKeeper(opts.move ?? move);
+    const claims = createFrameClaims();
+    const [want, setWant] = createSignal(false);
+    const [park, setPark] = createSignal(true);
+    const onFollow = vi.fn(() => true);
+    const r = render(() => (
+      <div>
+        <Show when={park()}>
+          <T3Park origin={ORIGIN} chords={() => CHORDS} keeper={keeper} defer={opts.defer ?? now} />
+        </Show>
+        <div class="pane">
+          <T3Host
+            claimKey="a"
+            want={want}
+            prefer={() => true}
+            onFollow={onFollow}
+            threadId={() => "auth"}
+            origin={ORIGIN}
+            chords={() => CHORDS}
+            claims={claims}
+            keeper={keeper}
+          />
+        </div>
+      </div>
+    ));
+    return { r, keeper, setWant, setPark, onFollow };
+  }
+
+  it("boots one frame in the park, on T3's root, before anyone asks", () => {
+    saveEnvironmentId(ORIGIN, "env-1");
+    const { r } = mount();
+    expect(frames()).toHaveLength(1);
+    expect(r.container.querySelector(".tl-t3-park iframe")).toBeTruthy();
+    expect(frames()[0]!.getAttribute("src")).toBe(`${ORIGIN}/?embed`);
+  });
+
+  it("waits to boot until the browser is idle, and boots nothing if it goes first", () => {
+    let start: (() => void) | undefined;
+    const cancel = vi.fn();
+    const m = mount({
+      defer: (s) => {
+        start = s;
+        return cancel;
+      },
+    });
+    expect(frames()).toHaveLength(0);
+    start!();
+    expect(frames()).toHaveLength(1);
+    m.r.unmount();
+    expect(cancel).toHaveBeenCalled();
+    expect(frames()).toHaveLength(0);
+  });
+
+  it("moves the parked frame into the pane that asks, and back when it lets go", () => {
+    const m = mount();
+    const booted = frames()[0]!;
+    m.setWant(true);
+    expect(frames()).toEqual([booted]);
+    expect(m.r.container.querySelector(".pane .tl-t3-slot iframe")).toBe(booted);
+    m.setWant(false);
+    expect(frames()).toEqual([booted]);
+    expect(m.r.container.querySelector(".tl-t3-park iframe")).toBe(booted);
+    expect(booted.getAttribute("src")).toBe(`${ORIGIN}/?embed`);
+  });
+
+  it("sends a frame that is already up straight to the thread, with the chords", () => {
+    const m = mount();
+    const frame = frames()[0]!;
+    stubPost(frame);
+    fromFrame(frame, { type: "tl-ready", v: 1, environmentId: "env-9", threadId: null });
+    expect(post).not.toHaveBeenCalledWith(expect.objectContaining({ type: "tl-open" }), ORIGIN);
+    post.mockClear();
+    m.setWant(true);
+    expect(post).toHaveBeenCalledWith({ type: "tl-bindings", v: 1, chords: CHORDS }, ORIGIN);
+    expect(post).toHaveBeenCalledWith({ type: "tl-open", v: 1, threadId: "auth" }, ORIGIN);
+    expect(loadEnvironmentId(ORIGIN)).toBe("env-9");
+  });
+
+  it("opens the pane's thread once a frame still booting says it is up", () => {
+    const m = mount();
+    m.setWant(true);
+    const frame = frames()[0]!;
+    fromFrame(frame, { type: "tl-ready", v: 1, environmentId: "env-9", threadId: null });
+    expect(post).toHaveBeenCalledWith({ type: "tl-open", v: 1, threadId: "auth" }, ORIGIN);
+  });
+
+  it("acts on no key and follows no route while the frame is parked", () => {
+    const m = mount();
+    const frame = frames()[0]!;
+    stubPost(frame);
+    fromFrame(frame, { type: "tl-ready", v: 1, environmentId: "env-9", threadId: null });
+    post.mockClear();
+    const keys: KeyboardEvent[] = [];
+    const onKey = (e: KeyboardEvent): void => void keys.push(e);
+    window.addEventListener("keydown", onKey, true);
+    fromFrame(frame, altOne);
+    fromFrame(frame, {
+      type: "tl-route",
+      v: 1,
+      threadId: "5992c13c",
+      session: { key: "bw8k5gt9v314", name: "say-hi" },
+    });
+    window.removeEventListener("keydown", onKey, true);
+    expect(keys).toHaveLength(0);
+    expect(m.onFollow).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("taking the park away drops a parked frame, and leaves one a pane holds", () => {
+    const m = mount();
+    m.setPark(false);
+    expect(frames()).toHaveLength(0);
+    m.setPark(true);
+    const frame = frames()[0]!;
+    m.setWant(true);
+    m.setPark(false);
+    expect(frames()).toEqual([frame]);
+    // With no park, letting go drops it, as before the preload.
+    m.setWant(false);
+    expect(frames()).toHaveLength(0);
+  });
+
+  it("boots a fresh frame in the pane where the browser cannot move one", () => {
+    const m = mount({ move: () => false });
+    const parked = frames()[0]!;
+    m.setWant(true);
+    expect(frames()).toHaveLength(1);
+    expect(frames()[0]).not.toBe(parked);
+    expect(m.r.container.querySelector(".pane .tl-t3-slot iframe")).toBe(frames()[0]);
   });
 });

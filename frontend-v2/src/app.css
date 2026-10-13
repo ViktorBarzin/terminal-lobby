@@ -8956,6 +8956,25 @@ body.tl-kb-up {
   min-height: 0;
   background: var(--bg-page);
 }
+/* Where the frame sits in the pane of the session holding it. */
+.tl-t3-slot {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* Where the tab's one frame boots and waits between uses (t3/frame-keeper.ts):
+   laid out at the window's size, so T3 boots in its desktop layout, but
+   invisible, untouchable and out of the tab order. */
+.tl-t3-park {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  display: flex;
+  visibility: hidden;
+  pointer-events: none;
+  contain: strict;
+}
 .tl-t3-frame {
   display: block;
   flex: 1 1 auto;

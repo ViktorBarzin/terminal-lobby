@@ -115,9 +115,9 @@ export function t3ThreadId(key: string): string | null {
 
 /**
  * The frame's URL. With the environment id known it is T3's own thread route,
- * `/{environmentId}/{threadId}`; without it, the root, and the thread follows
- * by `tl-open` once the frame has said which environment it is. `embed` turns
- * on the patch.
+ * `/{environmentId}/{threadId}`; without it, or with no thread (a preload),
+ * the root, and the thread follows by `tl-open` once the frame has said which
+ * environment it is. `embed` turns on the patch.
  *
  * The lobby's origin does not travel in the URL: the frame reads its parent's
  * origin from the browser (`location.ancestorOrigins`, or the referrer), which
@@ -126,9 +126,9 @@ export function t3ThreadId(key: string): string | null {
 export function t3FrameUrl(o: {
   origin: string;
   environmentId: string | null;
-  threadId: string;
+  threadId: string | null;
 }): string {
-  if (!o.environmentId) return `${o.origin}/?embed`;
+  if (!o.environmentId || !o.threadId) return `${o.origin}/?embed`;
   return `${o.origin}/${encodeURIComponent(o.environmentId)}/${encodeURIComponent(o.threadId)}?embed`;
 }
 

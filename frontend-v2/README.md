@@ -1148,6 +1148,9 @@ src/
                          `?t3view=` override, the thread id, message parsing,
                          and the chords the frame hands back
     frame-claim.ts       At most one T3 frame per tab: the latest ask holds it
+    frame-keeper.ts      The tab's one T3 frame: booted early on a desktop,
+                         moved between panes without reloading, parked hidden
+                         between uses
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge

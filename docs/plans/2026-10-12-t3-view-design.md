@@ -1,7 +1,8 @@
 # T3 view: T3 Code's chat UI as a third view of a lobby session
 
 **Status:** first cut released in terminal-lobby 0.125.2 (designed, built
-and released 2026-10-12), model picker fixed in 0.125.3 (2026-10-13) · **Scope:** new `t3-view/` (Node/TS
+and released 2026-10-12), model picker fixed in 0.125.3, frame preloaded on desktop in
+0.126.0 (2026-10-13) · **Scope:** new `t3-view/` (Node/TS
 sidecar `tl-t3-view` plus the pinned T3 web build and its embed patch),
 `frontend-v2` (view switcher, iframe host), `session-events` (dialog ids, a
 prompt that waits for the turn's end), `tmux-api` (a claim that places its
@@ -408,7 +409,8 @@ are Claude Agent SDK stream frames, not lobby events, and `plan_questions` and
 ## Released
 
 Released 2026-10-12 as terminal-lobby 0.125.0, with fixes in 0.125.1 and
-0.125.2, and a fix Viktor reported in 0.125.3 (2026-10-13).
+0.125.2, and a fix Viktor reported in 0.125.3 (2026-10-13). 0.126.0 boots the
+frame before the first click on a desktop, at Viktor's request.
 
 - Infra (`stacks/terminal/t3view.tf`, the AdminNetworkPolicy and the devvm
   firewall) is applied. The first CI apply hit a transient
@@ -428,6 +430,7 @@ Released 2026-10-12 as terminal-lobby 0.125.0, with fixes in 0.125.1 and
 | 0.125.2 | A new thread made its session in the right project, but the frame bounced back to the old session | `08e4524c`: the frame asks again until the sidecar has claimed the session |
 | 0.125.3 | The model picker did not change the model. T3 sends a pick with the next message, and the sidecar dropped it whenever the session was busy, while the composer kept showing it | `8661b1a8`: the embed patch applies a pick when it is made, like the Text view, and a refusal shows the lobby's reason and puts the composer back on the session's model |
 | 0.125.3 | T3 showed Medium effort for a session on high, and an effort change could read back as an older level | `655f4c29`: the sidecar reads the effort off the pane; `5642f434`: the lobby reads the newest effort receipt, which the Text view's chip uses too |
+| 0.126.0 | Every switch to the T3 view booted T3's client again: measured on loopback, 2.0 s for the first open and 0.9 to 1.0 s after | frontend-v2 `t3/frame-keeper.ts`: on a desktop browser with `Element.moveBefore`, the lobby boots the one frame early in a hidden park and moves it between panes without reloading; measured 0.13 to 0.35 s from click to the session's thread. Phones, tablets and other browsers load on demand as before |
 
 Not verified yet:
 

@@ -171,6 +171,16 @@ describe("which thread the frame shows", () => {
       }),
     ).toBe("https://t3view.viktorbarzin.me/?embed");
   });
+
+  it("opens the root for a preload, which shows no thread yet", () => {
+    expect(
+      t3FrameUrl({
+        origin: "https://t3view.viktorbarzin.me",
+        environmentId: "3f2a-env",
+        threadId: null,
+      }),
+    ).toBe("https://t3view.viktorbarzin.me/?embed");
+  });
 });
 
 describe("the environment id cache", () => {

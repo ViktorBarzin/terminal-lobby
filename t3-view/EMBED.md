@@ -37,10 +37,15 @@ The lobby loads one of two URLs:
   it the client behaves as upstream. T3's own navigation drops the query, so
   the patch remembers the flag for the frame's life (sessionStorage).
 
-The lobby keeps at most one T3 frame per tab. Switching to another session
-unmounts the frame and mounts a new one for that session, so in practice the
-URL names the thread the frame should show for its whole life. `tl-open` below
-covers the first-load case and a later thread change. When T3's own
+The lobby keeps at most one T3 frame per tab. On a desktop browser with
+`Element.moveBefore` (Chromium 133 and later), the lobby boots that frame
+early, on the root (`/?embed`), in a hidden park, and moves it into whichever
+session shows the T3 view, then back to the park when that session lets it go.
+The move keeps the frame's document, so the frame never reloads and the URL
+names only the thread it booted on. Every thread after that arrives by
+`tl-open`. Elsewhere (a phone, a tablet, a browser without `moveBefore`),
+switching to another session unmounts the frame and mounts a new one for that
+session, as in the first cut. When T3's own
 navigation moves the frame to another thread, `tl-route` tells the lobby,
 which either follows to that session or sends the frame back.
 
@@ -279,8 +284,8 @@ the session's menu.
   emulator settles it.
 - Focus handover: when the person picks a session that is already showing in
   T3, the lobby does not yet move keyboard focus into the frame.
-- Following a `tl-route` mounts a new frame for the other session, which
-  loads the T3 client again. Moving the one frame between sessions would
-  avoid the reload; it is not part of this revision.
+- Without `moveBefore` (Firefox, Safari, and every phone and tablet, where
+  the lobby does not preload), following a `tl-route` mounts a new frame for
+  the other session, which loads the T3 client again.
 - Theme: the frame follows its own theme setting. Passing the lobby's light or
   dark choice is not part of version 1.

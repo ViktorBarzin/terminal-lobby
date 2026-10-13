@@ -1,17 +1,7 @@
-import { createEffect, createSignal, on, onCleanup, Show, untrack, type Component } from "solid-js";
-import {
-  keyInChords,
-  loadEnvironmentId,
-  parseFrameMessage,
-  replayInit,
-  saveEnvironmentId,
-  t3FrameAllow,
-  t3FrameUrl,
-  type FrameChord,
-  type HostMessage,
-  type RouteSession,
-} from "../t3/embed.logic";
+import { createEffect, on, onCleanup, onMount, Show, type Component } from "solid-js";
+import type { FrameChord, RouteSession } from "../t3/embed.logic";
 import { t3FrameClaims, type FrameClaims } from "../t3/frame-claim";
+import { t3FrameKeeper, type FrameKeeper } from "../t3/frame-keeper";
 
 /**
  * What the shell hands a session view so it can offer the T3 view: whether
@@ -35,8 +25,9 @@ export interface T3Wiring {
  * ONE FRAME PER TAB. Every host that would show the frame claims it
  * (t3/frame-claim.ts) and only the holder draws it; the others say where it
  * is and offer to bring it over. A host that stops wanting it (its session
- * went off screen, or back to Text) unmounts the frame rather than keeping it
- * hidden, so a kept session costs nothing in T3.
+ * went off screen, or back to Text) gives the frame back to the keeper
+ * (t3/frame-keeper.ts), which parks it booted where it can, so the next
+ * session to show T3 gets it at once, and drops it where it cannot.
  */
 export const T3Host: Component<{
   /** this session's keepalive key: fixed for the host's life. */
@@ -57,8 +48,11 @@ export const T3Host: Component<{
   chords: () => readonly FrameChord[];
   /** the claims to share; the tab's own by default. Tests bring their own. */
   claims?: FrameClaims;
+  /** the frame keeper to borrow from; the tab's own by default. */
+  keeper?: FrameKeeper;
 }> = (props) => {
   const claims = props.claims ?? t3FrameClaims;
+  const keeper = props.keeper ?? t3FrameKeeper;
   const key = props.claimKey;
 
   // `on` untracks the body, so a claim (which reads and writes the claims
@@ -105,7 +99,9 @@ export const T3Host: Component<{
               </Show>
             }
           >
-            <T3Frame
+            <T3Slot
+              keeper={keeper}
+              claimKey={key}
               origin={props.origin}
               threadId={thread}
               chords={props.chords}
@@ -121,12 +117,13 @@ export const T3Host: Component<{
 };
 
 /**
- * The frame itself, and the lobby's side of the postMessage contract.
- *
- * Its URL is fixed when it mounts: changing an iframe's `src` reloads the
- * whole T3 client, so a later thread change goes by `tl-open` instead.
+ * Where the frame sits while this session holds it. The keeper moves the
+ * frame in when this mounts and takes it back when this goes, which is
+ * before the pane leaves the page, so a kept frame is never torn down with it.
  */
-const T3Frame: Component<{
+const T3Slot: Component<{
+  keeper: FrameKeeper;
+  claimKey: string;
   origin: string;
   threadId: () => string;
   chords: () => readonly FrameChord[];
@@ -134,109 +131,65 @@ const T3Frame: Component<{
   onFocus: (() => void) | undefined;
   onFollow: ((target: RouteSession) => boolean) | undefined;
 }> = (props) => {
-  let frame: HTMLIFrameElement | undefined;
-  const [ready, setReady] = createSignal(false);
-  const src = untrack(() =>
-    t3FrameUrl({
+  let slot: HTMLDivElement | undefined;
+  const key = props.claimKey;
+  onMount(() => {
+    if (!slot) return;
+    props.keeper.show(slot, {
+      key,
       origin: props.origin,
-      environmentId: loadEnvironmentId(props.origin),
-      threadId: props.threadId(),
-    }),
-  );
-
-  /** Post to the frame, only ever to its own origin. */
-  const post = (m: HostMessage): void => {
-    frame?.contentWindow?.postMessage(m, props.origin);
-  };
-  const sendChords = (): void => post({ type: "tl-bindings", v: 1, chords: [...props.chords()] });
-
-  /**
-   * Make this session's tile the focused one, and say whether it now is.
-   *
-   * In a workspace the lobby moves tile focus on a capture pointerdown in its
-   * own document, and a press inside a cross-origin frame never reaches it.
-   * The keybinding engine acts on the selected session, so without this a
-   * chord typed in the frame of tile A ran against tile B.
-   */
-  const takeFocus = (): boolean => {
-    if (!props.prefer()) props.onFocus?.();
-    return props.prefer();
-  };
-  // Keyboard focus moving into the frame blurs the lobby's window, with the
-  // frame as the document's active element.
-  const onBlur = (): void => {
-    if (frame && document.activeElement === frame) takeFocus();
-  };
-  window.addEventListener("blur", onBlur);
-  onCleanup(() => window.removeEventListener("blur", onBlur));
-
-  const onMessage = (e: MessageEvent): void => {
-    // Both: the origin says whose page it is, the source says it is OUR
-    // frame rather than another window of the same origin.
-    if (!frame || e.origin !== props.origin || e.source !== frame.contentWindow) return;
-    const m = parseFrameMessage(e.data);
-    if (!m) return;
-    if (m.type === "tl-key") {
-      // Only a chord the lobby asked for: the frame is another origin's page.
-      if (!keyInChords(m, props.chords())) return;
-      // A chord acts on the selected session: drop it rather than run it
-      // against another tile's session.
-      if (!takeFocus()) return;
-      // Dispatched on the frame element, so the lobby's window and document
-      // listeners (the keybinding engine, the dock's Ctrl/Cmd+J, the help
-      // overlay's Escape) see it as a key pressed on this pane.
-      frame.dispatchEvent(new KeyboardEvent("keydown", replayInit(m)));
-      return;
-    }
-    if (m.type === "tl-route") {
-      // The lobby's header, keepalive and every forwarded chord follow this
-      // host's session, so the frame cannot be left showing another one.
-      // A route that is no thread (a new thread's draft) stays put.
-      if (m.threadId === null) return;
-      const own = props.threadId();
-      if (m.session?.key === own) return;
-      if (m.session && props.onFollow?.(m.session)) return;
-      post({ type: "tl-open", v: 1, threadId: own });
-      return;
-    }
-    if (loadEnvironmentId(props.origin) !== m.environmentId) {
-      saveEnvironmentId(props.origin, m.environmentId);
-    }
-    setReady(true);
-    sendChords();
-    const want = props.threadId();
-    if (m.threadId !== want) post({ type: "tl-open", v: 1, threadId: want });
-  };
-  window.addEventListener("message", onMessage);
-  onCleanup(() => window.removeEventListener("message", onMessage));
+      threadId: () => props.threadId(),
+      chords: () => props.chords(),
+      prefer: () => props.prefer(),
+      onFocus: () => props.onFocus?.(),
+      onFollow: (target) => props.onFollow?.(target) ?? false,
+    });
+  });
+  onCleanup(() => props.keeper.hide(key));
 
   // A changed binding (Settings, another tab) reaches a frame already up.
-  createEffect(
-    on(
-      props.chords,
-      () => {
-        if (ready()) sendChords();
-      },
-      { defer: true },
-    ),
-  );
-  createEffect(
-    on(
-      props.threadId,
-      (threadId) => {
-        if (ready()) post({ type: "tl-open", v: 1, threadId });
-      },
-      { defer: true },
-    ),
-  );
+  createEffect(on(props.chords, () => props.keeper.rebind(key), { defer: true }));
+  createEffect(on(props.threadId, () => props.keeper.open(key), { defer: true }));
 
-  return (
-    <iframe
-      ref={frame}
-      class="tl-t3-frame"
-      src={src}
-      title="T3 view"
-      allow={t3FrameAllow(props.origin, window.location.hostname)}
-    />
-  );
+  return <div ref={slot} class="tl-t3-slot" />;
+};
+
+/** Run `start` once the browser is idle, and return a cancel. */
+function whenIdle(start: () => void): () => void {
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(start, { timeout: 5000 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(start, 2000);
+  return () => window.clearTimeout(id);
+}
+
+/**
+ * The park: where the tab's one T3 frame boots before anyone asks for it, and
+ * waits between uses, hidden and out of the tab order. App mounts it on a
+ * desktop that can keep a frame (t3/frame-keeper.ts `canKeepFrame`), for an
+ * admin acting as themselves.
+ *
+ * It boots once the browser is idle, so the lobby's own start (the session
+ * list, the terminal attach) goes first.
+ */
+export const T3Park: Component<{
+  origin: string;
+  chords: () => readonly FrameChord[];
+  keeper?: FrameKeeper;
+  /** when to boot; once the browser is idle by default. Returns a cancel. */
+  defer?: (start: () => void) => () => void;
+}> = (props) => {
+  const keeper = props.keeper ?? t3FrameKeeper;
+  let el: HTMLDivElement | undefined;
+  onMount(() => {
+    const cancel = (props.defer ?? whenIdle)(() => {
+      if (el) keeper.park({ el, origin: props.origin, chords: props.chords });
+    });
+    onCleanup(() => {
+      cancel();
+      keeper.park(null);
+    });
+  });
+  return <div ref={el} class="tl-t3-park" aria-hidden="true" inert />;
 };

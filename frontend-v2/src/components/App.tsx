@@ -106,7 +106,12 @@ import { createDockStore } from "../store/dock";
 import { createSidebarWidthStore } from "../store/sidebar-width";
 import { textColumn, textColumnDragging } from "../store/text-column";
 import { columnCss } from "../store/text-column.logic";
-import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
+import {
+  createCoarsePointer,
+  createMobileFlip,
+  isMobileFlip,
+  isMobilePlatform,
+} from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
 import { installViewportSync } from "../mobile/viewport";
 import { installSoftKeysReserve } from "../mobile/softkeys-reserve";
@@ -136,7 +141,8 @@ import {
 } from "../lib/new-commands";
 import { requestMode } from "../store/viewmode";
 import { followTarget, frameChords, t3ViewOrigin } from "../t3/embed.logic";
-import type { T3Wiring } from "./T3Host";
+import { T3Park, type T3Wiring } from "./T3Host";
+import { canKeepFrame } from "../t3/frame-keeper";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 /** sessionStorage: this tab went back to the phone's list (opensOnContent). */
@@ -2158,6 +2164,13 @@ export const App: Component = () => {
       return true;
     },
   };
+  // Boot the T3 frame before the first click, where it can be kept between
+  // uses (t3/frame-keeper.ts): a desktop whose browser has moveBefore. A
+  // phone or tablet loads it on demand instead, rather than spend memory and
+  // battery on a hidden T3 client.
+  const t3Preload = createMemo(
+    () => !!t3.origin && t3.admin() && !isMobilePlatform() && canKeepFrame(),
+  );
   // Both overlays render OVER the terminal and take focus off it, so dismissing
   // one leaves focus on <body> and the pty deaf. refocusTerminal calls the
   // bridge the mounted TerminalNative publishes; it is a no-op with no session
@@ -2522,6 +2535,10 @@ export const App: Component = () => {
         "tl-acting-as": !!actingAs(),
       }}
     >
+      {/* The T3 frame's park: out of the grid (position: fixed) and hidden. */}
+      <Show when={t3Preload() && t3.origin}>
+        {(origin) => <T3Park origin={origin()} chords={t3Chords} />}
+      </Show>
       <aside class="tl-shell-sidebar">
         {/* The cards are the preload's only consumer: a pointer resting on
             one is what starts the attach, and the store it asks is the
