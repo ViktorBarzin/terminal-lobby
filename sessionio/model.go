@@ -381,8 +381,11 @@ func ClaudeEffortHint(pane string) string {
 	// back as nothing at all. The receipt of the change is on the pane too and
 	// is the same session speaking; it stands in, and only stands in, because
 	// it reports what was ASKED FOR where the hint reports what is in force.
-	for _, line := range strings.Split(pane, "\n") {
-		if level, ok := EffortFromReceipt(line); ok {
+	// Newest first, for the same reason as the hint: earlier changes' receipts
+	// are still in the scrollback above.
+	lines := strings.Split(pane, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if level, ok := EffortFromReceipt(lines[i]); ok {
 			return level
 		}
 	}

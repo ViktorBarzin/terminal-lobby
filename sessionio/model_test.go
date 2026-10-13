@@ -346,6 +346,23 @@ func TestClaudeEffortHintFallsBackToTheReceiptWhenTheLineIsTaken(t *testing.T) {
 	}
 }
 
+// THE NEWEST RECEIPT IS THE READING. The pane holds scrollback, so an earlier
+// change's receipt sits above the latest one. Measured 2026-10-13 from the T3
+// view: a session moved from xhigh to high read back xhigh, because the walk
+// took the first receipt it met while the notice held the hint's line.
+func TestClaudeEffortHintTakesTheNewestReceipt(t *testing.T) {
+	pane := "" +
+		"❯ /effort xhigh\n" +
+		"  ⎿  Set effort level to xhigh (this session only): Deeper reasoning\n" +
+		"❯ /effort\n" +
+		"  ⎿  Set effort level to high (this session only): Comprehensive implementation\n" +
+		"                    Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll\n" +
+		"❯ \n"
+	if got := ClaudeEffortHint(pane); got != "high" {
+		t.Fatalf("effort = %q, want high from the newest receipt", got)
+	}
+}
+
 // The HINT still wins where both are on screen, because it reports the level in
 // force and the receipt only reports what was asked for. That is the difference
 // when something on the box overrides the change.
