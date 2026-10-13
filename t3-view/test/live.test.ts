@@ -5,7 +5,7 @@ import { LobbyApi } from "../src/lobby/api.ts";
 import { SequenceClock } from "../src/sequence.ts";
 import { HeldPrompts } from "../src/threads/held.ts";
 import { LiveThread } from "../src/threads/live.ts";
-import { modeFromPane } from "../src/threads/modes.ts";
+import { effortFromPane, modeFromPane } from "../src/threads/modes.ts";
 import { PendingDispatches } from "../src/threads/pending.ts";
 import { type FakeLobby, SESSION_NAME, startFakeLobby } from "./helpers/fakeLobby.ts";
 import { testThread } from "./helpers/projection.ts";
@@ -65,6 +65,25 @@ describe("LiveThread mode at ready", () => {
     live?.dispose();
     await lobby?.close();
     expect((await open("> \n")).projection.thread.runtimeMode).toBe("full-access");
+  });
+});
+
+describe("LiveThread effort from the pane", () => {
+  const effortOf = (thread: LiveThread) =>
+    thread.projection.thread.modelSelection.options?.find((o) => o.id === "effort")?.value;
+
+  // The state frame names no effort for a session nobody changed it in, which
+  // left T3 showing its default (Medium) for a session on high.
+  it("takes the effort from the hint above the input", async () => {
+    const thread = await open(
+      "> \n                                        ● max · /effort\n  ⏸ manual mode on (shift+tab to cycle)\n",
+    );
+    expect(effortOf(thread)).toBe("max");
+  });
+
+  it("keeps the stream's effort when the pane names none", async () => {
+    const thread = await open("> \n  ⏸ manual mode on (shift+tab to cycle)\n");
+    expect(effortOf(thread)).toBe("high");
   });
 });
 
@@ -132,5 +151,31 @@ describe("modeFromPane", () => {
     expect(modeFromPane("⏵⏵ bypass permissions on\n...\n⏸ manual mode on")).toBe("manual");
     expect(modeFromPane("⏵⏵ don't ask on (shift+tab to cycle)")).toBe("dontAsk");
     expect(modeFromPane("nothing here")).toBe("");
+  });
+});
+
+describe("effortFromPane", () => {
+  it("reads the hint above the input", () => {
+    expect(effortFromPane("❯ \n                                   ● high · /effort\n")).toBe("high");
+    expect(effortFromPane("  ◐ xhigh · /effort")).toBe("xhigh");
+  });
+
+  it("reads the spinner while a turn runs", () => {
+    expect(
+      effortFromPane("✢ Combobulating… (5m 23s · ↓ 17.8k tokens · thinking with high effort)"),
+    ).toBe("high");
+  });
+
+  it("takes the newest reading in the pane", () => {
+    expect(effortFromPane("  ● low · /effort\n...\n✻ Working (thinking with max effort)")).toBe(
+      "max",
+    );
+  });
+
+  it("ignores the welcome banner, a picker's ruler and models without effort", () => {
+    expect(effortFromPane("▝▜██████▀  claude-opus-5-5 with high effort · Claude API")).toBe("");
+    expect(effortFromPane("▔▔▔▔▔▔▔▔ ● high · /effort ▔")).toBe("");
+    expect(effortFromPane("   ○ Effort not supported for claude-haiku-4-5-20251001")).toBe("");
+    expect(effortFromPane("  ● ultracode · /effort")).toBe("");
   });
 });

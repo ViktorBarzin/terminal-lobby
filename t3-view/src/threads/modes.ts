@@ -88,3 +88,20 @@ export function modeFromPane(pane: string): string {
   }
   return found;
 }
+
+/**
+ * The effort level a Claude pane shows, or "" when it shows none: the hint
+ * above the input when idle (`● high · /effort`, the line sessionio's
+ * ClaudeEffortHint reads) or the spinner while a turn runs (`thinking with
+ * high effort`). The stream's `state` frame names an effort only once the
+ * lobby changed it, so without this T3 drew its default for every other
+ * session. The newest reading in the pane wins.
+ */
+const PANE_EFFORT =
+  /^[^\S\n]*\S[^\S\n]+(low|medium|high|xhigh|max)[^\S\n]+·|thinking with (low|medium|high|xhigh|max) effort/gm;
+
+export function effortFromPane(pane: string): string {
+  let found = "";
+  for (const match of pane.matchAll(PANE_EFFORT)) found = match[1] ?? match[2] ?? found;
+  return found;
+}

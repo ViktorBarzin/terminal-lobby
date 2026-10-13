@@ -25,7 +25,7 @@ import type { SequenceClock } from "../sequence.ts";
 import type { HeldPrompts } from "./held.ts";
 import type { DomainEvent } from "./mapper.ts";
 import { ThreadModel } from "./model.ts";
-import { modeFromPane } from "./modes.ts";
+import { effortFromPane, modeFromPane } from "./modes.ts";
 import type { PendingDispatches } from "./pending.ts";
 
 export interface ThreadLocation {
@@ -272,8 +272,8 @@ export class LiveThread {
   }
 
   /**
-   * The mode the pane shows, folded at every `ready` (a first open and each
-   * resync). The `state` frame's mode comes from session-events' record of
+   * The mode and effort the pane shows, folded at every `ready` (a first open
+   * and each resync). The `state` frame's mode comes from session-events' record of
    * the transcript, which the CLI does not write when the mode changes, so it
    * can be stale; the Solid view reads GET /pane for the same reason.
    */
@@ -283,9 +283,14 @@ export class LiveThread {
     model: ThreadModel,
   ): Promise<void> {
     const pane = await this.#o.api.pane(relay, where.name, where.owner);
-    const mode = pane === undefined ? "" : modeFromPane(pane);
-    if (mode === "" || this.#disposed || model !== this.#model) return;
-    this.#broadcast(model.commit(model.mapper.confirmMode(mode)));
+    if (pane === undefined || this.#disposed || model !== this.#model) return;
+    const mode = modeFromPane(pane);
+    if (mode !== "") this.#broadcast(model.commit(model.mapper.confirmMode(mode)));
+    const effort = effortFromPane(pane);
+    const current = model.mapper.thread.modelSelection.model;
+    if (effort !== "" && current !== "") {
+      this.#broadcast(model.commit(model.mapper.confirmModel({ model: current, effort })));
+    }
   }
 
   /**
