@@ -30,10 +30,10 @@ index 00d5c05..5e9f71e 100644
        </SidebarProvider>
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..08a2864
+index 0000000..ac1fd64
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,374 @@
 +// terminal-lobby embed patch, the pure half. The contract is terminal-lobby's
 +// t3-view/EMBED.md (version 1); embed.tsx wires this to the DOM and router.
 +
@@ -356,22 +356,80 @@ index 0000000..08a2864
 +    runtimeMode: seen?.runtimeMode !== server.runtimeMode,
 +  };
 +}
++
++export interface PickedModel {
++  readonly instanceId: string;
++  readonly model: string;
++  readonly options?: ReadonlyArray<{ readonly id: string; readonly value: unknown }>;
++}
++
++function effortOf(selection: PickedModel): unknown {
++  return selection.options?.find((option) => option.id === "effort")?.value;
++}
++
++/**
++ * The composer's model pick to apply to the session now, or null. T3 keeps a
++ * pick as a draft that rides on the next send, and the lobby cannot change
++ * the model while a turn runs, so a pick made then was dropped without a
++ * word while the composer went on showing it. The lobby's own Text view
++ * applies a pick when it is made, and the embed does the same. Only a pick
++ * the person made counts (T3 seeds drafts from the last model used), only for
++ * the session's provider, and only when it differs from what the session is
++ * on: the model, or an effort the pick names.
++ */
++export function modelPickToApply(
++  pick: PickedModel | undefined,
++  explicit: boolean,
++  server: PickedModel | null | undefined,
++): PickedModel | null {
++  if (!explicit || pick === undefined || server === null || server === undefined) return null;
++  if (pick.instanceId !== server.instanceId) return null;
++  if (pick.model !== server.model) return pick;
++  const effort = effortOf(pick);
++  return effort !== undefined && effort !== effortOf(server) ? pick : null;
++}
++
++/** Names a pick by what applying it changes, so one pick is sent once. */
++export function modelPickKey(pick: PickedModel): string {
++  return JSON.stringify([pick.instanceId, pick.model, effortOf(pick) ?? null]);
++}
++
++/**
++ * The draft without the provider's pick, so the composer shows the session's
++ * model again: after the session took the pick, or after the lobby refused it.
++ */
++export function withoutModelPick<
++  D extends {
++    readonly modelSelectionByProvider: Partial<Record<string, unknown>>;
++    readonly modelSelectionExplicit?: boolean;
++  },
++>(draft: D, instanceId: string): Omit<D, "modelSelectionExplicit"> {
++  const { modelSelectionExplicit: _explicit, ...kept } = draft;
++  const { [instanceId]: _dropped, ...picks } = draft.modelSelectionByProvider;
++  return { ...kept, modelSelectionByProvider: picks };
++}
 diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
 new file mode 100644
-index 0000000..dbd1fd4
+index 0000000..d1878cf
 --- /dev/null
 +++ b/apps/web/src/embed.tsx
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,323 @@
 +// terminal-lobby embed patch (t3-view/EMBED.md). Framed with ?embed,
 +// the lobby draws the chrome: index.css hides T3's header and panels under
 +// html[data-t3-embed], AppSidebarLayout drops the sidebar, and chords the
 +// lobby names in tl-bindings go to it, since keys typed in a cross-origin
 +// frame never reach the parent.
 +import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
++import {
++  isAtomCommandInterrupted,
++  squashAtomCommandFailure,
++} from "@t3tools/client-runtime/state/runtime";
++import type { ScopedThreadRef } from "@t3tools/contracts";
 +import { useNavigate, useParams } from "@tanstack/react-router";
 +import { useEffect, useMemo } from "react";
 +
-+import { useComposerDraftStore } from "./composerDraftStore";
++import { stackedThreadToast, toastManager } from "./components/ui/toast";
++import { resolveComposerDraftKey, useComposerDraftStore } from "./composerDraftStore";
 +import {
 +  draftModesToClear,
 +  embedFlag,
@@ -379,6 +437,8 @@ index 0000000..dbd1fd4
 +  findRouteSession,
 +  isTextEntry,
 +  keyMessage,
++  modelPickKey,
++  modelPickToApply,
 +  parentOrigin,
 +  parseLobbyMessage,
 +  readyMessage,
@@ -389,6 +449,7 @@ index 0000000..dbd1fd4
 +  threadFromLookup,
 +  threadLookupPath,
 +  withPlanModeDefault,
++  withoutModelPick,
 +  type FrameChord,
 +  type FrameMessage,
 +  type RouteSession,
@@ -396,6 +457,8 @@ index 0000000..dbd1fd4
 +} from "./embed.logic";
 +import { useThreadShell } from "./state/entities";
 +import { usePrimaryEnvironmentId } from "./state/environments";
++import { threadEnvironment } from "./state/threads";
++import { useOrchestrationCommand } from "./state/use-orchestration-command";
 +import { resolveThreadRouteRef } from "./threadRoutes";
 +
 +const FLAG_KEY = "t3-embed";
@@ -508,10 +571,8 @@ index 0000000..dbd1fd4
 +// The server thread's modes last seen on this page, by scoped thread key.
 +const seenModes = new Map<string, ThreadModes>();
 +
-+// The composer draft's Plan/Build and runtime picks follow the server thread:
-+// a mode the server leaves (a plan approved from its card, a mode changed in
-+// the lobby) is cleared from the draft, so the next send does not restore it.
-+function useDraftFollowsServerModes() {
++// The thread the frame shows: its scoped key, its ref and its shell.
++function useRoutedThread() {
 +  const routeKey = useParams({
 +    strict: false,
 +    select: (params) => {
@@ -524,6 +585,14 @@ index 0000000..dbd1fd4
 +    [routeKey],
 +  );
 +  const shell = useThreadShell(threadRef);
++  return { routeKey, threadRef, shell };
++}
++
++// The composer draft's Plan/Build and runtime picks follow the server thread:
++// a mode the server leaves (a plan approved from its card, a mode changed in
++// the lobby) is cleared from the draft, so the next send does not restore it.
++function useDraftFollowsServerModes() {
++  const { routeKey, threadRef, shell } = useRoutedThread();
 +  const interactionMode = shell?.interactionMode;
 +  const runtimeMode = shell?.runtimeMode;
 +
@@ -539,9 +608,80 @@ index 0000000..dbd1fd4
 +  }, [routeKey, threadRef, interactionMode, runtimeMode]);
 +}
 +
++// The pick sent for each thread, by scoped key, while the lobby works on it,
++// so a re-render does not send it twice.
++const sentPicks = new Map<string, string>();
++
++function draftOf(threadRef: ScopedThreadRef) {
++  const state = useComposerDraftStore.getState();
++  const key = resolveComposerDraftKey(state, threadRef);
++  return key === null ? null : (state.draftsByThreadKey[key] ?? null);
++}
++
++function forgetModelPick(threadRef: ScopedThreadRef, instanceId: string) {
++  useComposerDraftStore.setState((state) => {
++    const key = resolveComposerDraftKey(state, threadRef);
++    const draft = key === null ? undefined : state.draftsByThreadKey[key];
++    if (key === null || draft === undefined) return state;
++    return {
++      draftsByThreadKey: { ...state.draftsByThreadKey, [key]: withoutModelPick(draft, instanceId) },
++    };
++  });
++}
++
++// A model or effort picked in the composer goes to the session at once, as
++// the lobby's Text view does, rather than riding on the next send (see
++// modelPickToApply). Either way the draft lets go of the pick afterwards, so
++// the composer shows the session's model: the new one, or the old one with a
++// toast giving the lobby's reason when it refused.
++function useModelPickApplies() {
++  const { routeKey, threadRef, shell } = useRoutedThread();
++  const draft = useComposerDraftStore((state) => {
++    if (threadRef === null) return null;
++    const key = resolveComposerDraftKey(state, threadRef);
++    return key === null ? null : (state.draftsByThreadKey[key] ?? null);
++  });
++  const serverSelection = shell?.modelSelection;
++  const updateMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
++    reportFailure: false,
++  });
++
++  useEffect(() => {
++    if (routeKey === null || threadRef === null || draft === null) return;
++    const instanceId = draft.activeProvider;
++    const pick = instanceId === null ? undefined : draft.modelSelectionByProvider[instanceId];
++    if (instanceId === null || pick === undefined) return;
++    const explicit = draft.modelSelectionExplicit === true;
++    if (modelPickToApply(pick, explicit, serverSelection) === null) return;
++    const key = modelPickKey(pick);
++    if (sentPicks.get(routeKey) === key) return;
++    sentPicks.set(routeKey, key);
++    void updateMetadata({
++      environmentId: threadRef.environmentId,
++      input: { threadId: threadRef.threadId, modelSelection: pick },
++    }).then((result) => {
++      if (sentPicks.get(routeKey) === key) sentPicks.delete(routeKey);
++      if (result._tag === "Failure" && isAtomCommandInterrupted(result)) return;
++      // A newer pick made while this one was in flight stays in the draft.
++      const now = draftOf(threadRef)?.modelSelectionByProvider[instanceId];
++      if (now !== undefined && modelPickKey(now) === key) forgetModelPick(threadRef, instanceId);
++      if (result._tag !== "Failure") return;
++      const error = squashAtomCommandFailure(result);
++      toastManager.add(
++        stackedThreadToast({
++          type: "error",
++          title: "Model not changed",
++          description: error instanceof Error ? error.message : "The session did not take it.",
++        }),
++      );
++    });
++  }, [routeKey, threadRef, draft, serverSelection, updateMetadata]);
++}
++
 +/** Announces the environment to the lobby and follows its tl-open. */
 +export function EmbedBridge() {
 +  useDraftFollowsServerModes();
++  useModelPickApplies();
 +  const navigate = useNavigate();
 +  const environmentId = usePrimaryEnvironmentId();
 +  const threadId = useParams({

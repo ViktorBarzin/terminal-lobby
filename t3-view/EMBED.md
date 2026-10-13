@@ -163,6 +163,19 @@ Details of the patch's side:
   (`draftModesToClear` in `embed.logic.ts`, `useDraftFollowsServerModes` in
   `embed.tsx`). A pick made since the last change is kept until the send
   applies it. A pick left unsent across a reload is dropped.
+- In embed mode a model or effort picked in the composer goes to the session
+  when it is picked, as the lobby's Text view does, rather than riding on the
+  next send. T3 keeps the pick in the same draft, and the lobby cannot change
+  the model while a turn runs or a question is open, so a pick sent with a
+  message was dropped while the composer went on showing it. The patch sends
+  `thread.model-selection.set` for a pick the person made (T3 also seeds the
+  draft from the last model used, which is not sent) when it differs from the
+  server thread's model or effort, then drops the pick from the draft so the
+  composer shows the session's model. When the sidecar refuses, a toast gives
+  the lobby's reason (for a running turn, that the session is working) and the
+  composer goes back to the model the session is on (`modelPickToApply` and
+  `withoutModelPick` in `embed.logic.ts`, `useModelPickApplies` in
+  `embed.tsx`).
 
 A `FrameChord` is:
 

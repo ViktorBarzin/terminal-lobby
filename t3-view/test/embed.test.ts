@@ -13,6 +13,8 @@ import {
   isTextEntry,
   type KeyLike,
   keyMessage,
+  modelPickKey,
+  modelPickToApply,
   parentOrigin,
   parseLobbyMessage,
   readyMessage,
@@ -23,6 +25,7 @@ import {
   threadFromLookup,
   threadLookupPath,
   withPlanModeDefault,
+  withoutModelPick,
 } from "@t3tools/web/src/embed.logic.ts";
 
 const T3 = { hostname: "t3view.viktorbarzin.me" };
@@ -436,5 +439,68 @@ describe("findRouteSession", () => {
     );
     expect(found).toEqual({ settled: false, session: null });
     expect(asked).toBe(2);
+  });
+});
+
+describe("modelPickToApply", () => {
+  const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+  const effort = (value: string) => [{ id: "effort", value }];
+
+  it("applies a model the person picked that the session is not on", () => {
+    const pick = { instanceId: "claudeAgent", model: "claude-sonnet-5", options: effort("high") };
+    expect(modelPickToApply(pick, true, opus)).toEqual(pick);
+  });
+
+  it("applies an effort the person picked for the session's model", () => {
+    const pick = { ...opus, options: effort("max") };
+    expect(modelPickToApply(pick, true, { ...opus, options: effort("high") })).toEqual(pick);
+    expect(modelPickToApply(pick, true, opus)).toEqual(pick);
+  });
+
+  it("leaves a pick that matches the session alone", () => {
+    expect(modelPickToApply(opus, true, opus)).toBeNull();
+    expect(modelPickToApply(opus, true, { ...opus, options: effort("high") })).toBeNull();
+    const same = { ...opus, options: effort("high") };
+    expect(modelPickToApply(same, true, same)).toBeNull();
+  });
+
+  // T3 seeds a thread's draft from the last model used anywhere; only a
+  // person's own pick in this composer is a change to make.
+  it("leaves a seeded draft alone", () => {
+    expect(modelPickToApply({ ...opus, model: "claude-sonnet-5" }, false, opus)).toBeNull();
+  });
+
+  it("leaves another provider and an unknown session model alone", () => {
+    expect(modelPickToApply({ instanceId: "codex", model: "gpt-5" }, true, opus)).toBeNull();
+    expect(modelPickToApply(opus, true, null)).toBeNull();
+    expect(modelPickToApply(undefined, true, opus)).toBeNull();
+  });
+});
+
+describe("modelPickKey", () => {
+  it("tells picks apart by model and effort", () => {
+    const a = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    expect(modelPickKey(a)).toBe(modelPickKey({ ...a }));
+    expect(modelPickKey(a)).not.toBe(modelPickKey({ ...a, options: [{ id: "effort", value: "max" }] }));
+    expect(modelPickKey(a)).not.toBe(modelPickKey({ ...a, model: "claude-sonnet-5" }));
+  });
+});
+
+describe("withoutModelPick", () => {
+  it("drops the provider's pick and the explicit flag, keeping the rest of the draft", () => {
+    const draft = {
+      prompt: "half typed",
+      activeProvider: "claudeAgent",
+      modelSelectionByProvider: {
+        claudeAgent: { instanceId: "claudeAgent", model: "claude-sonnet-5" },
+        codex: { instanceId: "codex", model: "gpt-5" },
+      },
+      modelSelectionExplicit: true,
+    };
+    expect(withoutModelPick(draft, "claudeAgent")).toEqual({
+      prompt: "half typed",
+      activeProvider: "claudeAgent",
+      modelSelectionByProvider: { codex: { instanceId: "codex", model: "gpt-5" } },
+    });
   });
 });
