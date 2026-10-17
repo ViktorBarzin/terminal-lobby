@@ -106,6 +106,11 @@ export interface PromptFieldSinks {
  *  the URL bar folding away moves it by about 56px. */
 const KEYBOARD_MIN_PX = 150;
 
+/** How long a phone's Send waits for the keyboard's last correction. The
+ *  correction is one round trip from the keyboard to the page, so this only
+ *  bounds the wait when there is none to apply. */
+const CORRECTION_WAIT_MS = 120;
+
 /**
  * The words the watching pill shows: who is being watched, from the session
  * view's one sentence ("Watching alice: take control to type in their
@@ -1330,6 +1335,42 @@ export const PromptField: Component<{
       return stopping() ? "Stopping: waiting for the turn to end" : "Stop: interrupts this turn";
     return sendTitle();
   };
+  /** Where a phone's Send puts the focus for a moment (settleCorrection). */
+  let hopEl: HTMLInputElement | undefined;
+  /** A phone's Send is waiting on the keyboard's last correction. */
+  let settling = false;
+  /**
+   * Let the keyboard apply the correction it holds for the last word.
+   *
+   * iOS keeps the correction for the word being typed until a space or a
+   * return, and a finger's press on Send leaves the field focused
+   * (keepFocusOnSend), so the field was read and cleared with the word as
+   * typed (Viktor, 2026-10-17). UIKit applies a pending correction when a
+   * field gives up the focus, so the focus goes to `hopEl` and straight back,
+   * which keeps the keyboard up, and the send waits for the correction's
+   * `input` or CORRECTION_WAIT_MS, whichever is first.
+   *
+   * Not yet seen on an iPhone. The same hop is the workaround on WebKit bug
+   * 236937 for the keyboard keeping a cleared field's old text. On the
+   * Android emulator (Gboard, 2026-10-17) the keyboard stays up across the
+   * hop and the word goes as typed: Gboard corrects only on a separator.
+   */
+  const settleCorrection = (): Promise<void> =>
+    new Promise((resolve) => {
+      const field = ta;
+      const hop = hopEl;
+      if (!field || !hop) return resolve();
+      const done = (): void => {
+        clearTimeout(timer);
+        field.removeEventListener("input", done);
+        hop.value = "";
+        resolve();
+      };
+      field.addEventListener("input", done);
+      hop.focus({ preventScroll: true });
+      field.focus({ preventScroll: true });
+      const timer = setTimeout(done, CORRECTION_WAIT_MS);
+    });
   /**
    * The press. Enter never reaches here with an empty field: it goes straight
    * to `submit`, which refuses an empty send, so Enter never stops Claude.
@@ -1340,6 +1381,15 @@ export const PromptField: Component<{
       // The caller gives the field the focus back once whatever the Stop
       // hands back has landed in it (TextView stopHandingBack).
       props.onStop?.();
+      return;
+    }
+    if (coarse() && ta && document.activeElement === ta) {
+      if (settling) return;
+      settling = true;
+      void settleCorrection().then(() => {
+        settling = false;
+        submit();
+      });
       return;
     }
     submit();
@@ -1595,6 +1645,13 @@ export const PromptField: Component<{
             <span id={labelId} class="tl-sr-only">
               {props.label}
             </span>
+            <input
+              ref={hopEl}
+              class="tl-correction-hop"
+              type="text"
+              tabindex={-1}
+              aria-hidden="true"
+            />
           </div>
           {/* The round button is the surface's last control, always, in one
               of three states (Composer.queue.test.tsx).

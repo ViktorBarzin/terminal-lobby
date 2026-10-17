@@ -6,7 +6,7 @@
  * point of them. What is asserted here is the seam the extraction opened: the
  * three things the new-session composer needs and a live session never did.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import { PromptField } from "../src/components/PromptField";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
@@ -354,5 +354,73 @@ describe("<PromptField> — what Safari's AutoFill reads", () => {
       new InputEvent("beforeinput", { inputType: "insertReplacementText", bubbles: true }),
     );
     expect(n).toBe(2);
+  });
+});
+
+/**
+ * iOS holds the correction for the word being typed until a space, and the
+ * round button keeps the field focused (keepFocusOnSend), so a message sent
+ * straight after its last word went out uncorrected (Viktor, 2026-10-17).
+ * UIKit applies a pending correction when the field gives up focus, so a
+ * phone's Send moves the focus off and back, then waits for the correction.
+ */
+describe("<PromptField> — a phone's Send takes the last word's autocorrect", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() =>
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: q.includes("coarse"),
+          media: q,
+          addEventListener() {},
+          removeEventListener() {},
+        }) as unknown as MediaQueryList,
+    ),
+  );
+  const sendButton = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-send")!;
+
+  it("sends the corrected word when the keyboard applies it on the hop", async () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    const ta = field(container);
+    ta.focus();
+    type(ta, "fix teh");
+    // The keyboard answers the field losing focus a moment later, as an
+    // insertReplacementText on the field.
+    ta.addEventListener(
+      "focusout",
+      () =>
+        setTimeout(() => {
+          ta.value = "fix the";
+          fireEvent.input(ta);
+        }, 5),
+      { once: true },
+    );
+    fireEvent.click(sendButton(container));
+    await vi.waitFor(() => expect(sent).toEqual(["fix the"]));
+    expect(document.activeElement).toBe(ta);
+    expect(ta.value).toBe("");
+  });
+
+  it("sends the words as typed when no correction comes", async () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    const ta = field(container);
+    ta.focus();
+    type(ta, "fine as is");
+    fireEvent.click(sendButton(container));
+    await vi.waitFor(() => expect(sent).toEqual(["fine as is"]));
+    expect(document.activeElement).toBe(ta);
+  });
+
+  it("sends once when Send is pressed twice while it waits", async () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    const ta = field(container);
+    ta.focus();
+    type(ta, "only once");
+    fireEvent.click(sendButton(container));
+    fireEvent.click(sendButton(container));
+    await vi.waitFor(() => expect(sent).toEqual(["only once"]));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sent).toEqual(["only once"]);
   });
 });
