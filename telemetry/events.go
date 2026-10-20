@@ -308,8 +308,12 @@ var knownEvents = map[string]bool{
 	// (session-events/steermain.go): tl.count prompts, confirmed by the row
 	// Claude stored. Their text is never recorded.
 	"claude.prompt_steered": true,
-	"claude.answered":       true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
-	"claude.state_changed":  true, // running/awaiting/done transition (tl.to)
+	// Queued ghosts cleared after the session stayed idle with nothing held
+	// (session-events/held.go settleQueue): tl.count entries whose departure
+	// was never seen. Their text is never recorded.
+	"claude.queue_settled": true,
+	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
+	"claude.state_changed": true, // running/awaiting/done transition (tl.to)
 	// A permission prompt the mod is holding (session-events/permissionasked.go):
 	// tl.tool, tl.tool_id, tl.agent, and tl.reason = Claude Code's own words for
 	// why the call needs approval, capped at 200 runes. Never the command or
