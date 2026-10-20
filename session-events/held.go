@@ -374,6 +374,57 @@ func (c *modConn) releaseHeld() {
 	go c.submitHeld(out, ls)
 }
 
+// queueSettleWait is how long a session stays idle before what its stream
+// still shows queued is cleared (settleQueue). Long enough for a held prompt
+// sent at the turn's end to open its turn (5 seconds measured, turnStartWait).
+var queueSettleWait = 30 * time.Second
+
+// settleQueue clears the stream's queue once the session has stayed idle for
+// queueSettleWait with nothing held. Claude runs what it has queued as soon
+// as it is idle, so an entry left by then has gone and only its departure was
+// missed: a ghost the person could no longer cancel, because nothing held it
+// (Viktor, 2026-10-20). Called from apply, under applyMu.
+func (c *modConn) settleQueue() {
+	c.mu.Lock()
+	if c.settling || !c.settledLocked() {
+		c.mu.Unlock()
+		return
+	}
+	fs, turns := c.ls.fs, c.turns
+	c.mu.Unlock()
+	if len(fs.Queued()) == 0 {
+		return
+	}
+	c.mu.Lock()
+	c.settling = true
+	c.mu.Unlock()
+	time.AfterFunc(queueSettleWait, func() {
+		c.applyMu.Lock()
+		defer c.applyMu.Unlock()
+		c.mu.Lock()
+		c.settling = false
+		still := turns == c.turns && c.settledLocked()
+		user, session := c.user, c.session
+		c.mu.Unlock()
+		if !still {
+			// A turn ran in between: wait again from now if it has ended.
+			c.settleQueue()
+			return
+		}
+		if gone := fs.ClearQueue(c.hub.now().UnixMilli()); len(gone) > 0 {
+			log.Printf("mod %s/%s: cleared %d queued after going idle", user, session, len(gone))
+			events.Emit("claude.queue_settled", user, telemetry.Attrs{"tl.session": session, "tl.count": len(gone)})
+		}
+	})
+}
+
+// settledLocked reports whether the session is known idle with nothing held,
+// so nothing can be waiting on its queue. Called with c.mu held.
+func (c *modConn) settledLocked() bool {
+	return c.ls != nil && c.knownLocked() && !c.turnAheadLocked() &&
+		len(c.held) == 0 && len(c.steering) == 0 && len(c.waiting) == 0
+}
+
 // submitHeld sends held prompts to the mod in one batch, oldest first, so they
 // reach Claude together. One the mod does not confirm is shown as an error
 // row naming it: it may still run (a command in hand goes out again to the

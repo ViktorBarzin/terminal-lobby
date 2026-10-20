@@ -436,12 +436,16 @@ func (f *FileSource) feedRow(ev ModEvent) {
 		}
 	}
 	var lead []Event
-	// A prompt that waited behind a turn arrives as a prompt row: it leaves the
-	// queue as it opens its own turn.
-	if ev.Door == "prompt" && rec.Role() == "user" && ev.AgentID == "" {
+	// A prompt that waited behind a turn arrives as a user row and leaves the
+	// queue: through the prompt door as it opens its own turn, or through
+	// another when Claude takes it into the turn already running (measured
+	// 2026-10-20, where only the prompt door was read and the ghost stayed).
+	if rec.Role() == "user" && ev.AgentID == "" {
 		text := Unmark(strings.TrimSpace(rec.Text()))
 		f.mu.Lock()
-		f.mod.opened = text
+		if ev.Door == "prompt" {
+			f.mod.opened = text
+		}
 		for i, q := range f.mod.queued {
 			if q == text {
 				f.mod.queued = append(f.mod.queued[:i], f.mod.queued[i+1:]...)
@@ -571,6 +575,32 @@ func (f *FileSource) Unqueue(texts []string, at int64) {
 	for _, e := range gone {
 		f.appendLive(e)
 	}
+}
+
+// Queued is what the log still shows queued, oldest first.
+func (f *FileSource) Queued() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.queueLocked()
+}
+
+// ClearQueue takes everything the log still shows queued off the queue at
+// `at` (epoch ms) and returns it, oldest first; nil when nothing is queued.
+// For a session gone idle: Claude runs what it has queued as soon as it is
+// idle, so an entry left then is one whose departure was never seen.
+func (f *FileSource) ClearQueue(at int64) []string {
+	f.mu.Lock()
+	left := f.queueLocked()
+	if len(left) == 0 {
+		f.mu.Unlock()
+		return nil
+	}
+	if f.mod != nil {
+		f.mod.queued, f.mod.sent = nil, nil
+	}
+	f.mu.Unlock()
+	f.appendLive(Event{Kind: KindMeta, Meta: MetaQueueCleared, TurnID: f.TurnID(), At: at})
+	return left
 }
 
 // lobbyPlugin is the name Claude Code gives the lobby's mod in a prompt's

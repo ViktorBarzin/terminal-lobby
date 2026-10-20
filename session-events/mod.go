@@ -212,6 +212,11 @@ type modConn struct {
 	// next is held for it (held.go). starts numbers them, so a timer only
 	// ends the wait it began.
 	starting, starts int
+	// turns counts the events seen while a main turn ran or that bounded one,
+	// so a queue settle (held.go) clears nothing once a turn has been seen
+	// since it began. settling says one is under way.
+	turns    int
+	settling bool
 	// planPolls are the plans whose menu watchPlan is reading off the pane.
 	planPolls map[*modDialog]bool
 }
@@ -871,6 +876,7 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 			// The turn a prompt was waiting on started (held.go), even one
 			// that also ended inside this batch.
 			c.starting = 0
+			c.turns++
 		}
 		c.mu.Unlock()
 		merged = mergeWrites(merged, w)
@@ -924,6 +930,7 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		c.showHeld()
 	}
 	c.releaseHeld()
+	c.settleQueue()
 }
 
 // source is the log this connection feeds, nil before its hello built one.

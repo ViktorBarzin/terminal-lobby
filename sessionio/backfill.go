@@ -1,6 +1,9 @@
 package sessionio
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Reading a transcript backwards.
 //
@@ -134,6 +137,34 @@ type SessionState struct {
 	Prompts []string `json:"prompts"`
 }
 
+// queueLocked folds the whole log's queue operations into what is waiting,
+// oldest first. Called with f.mu held.
+func (f *FileSource) queueLocked() []string {
+	var queue []string
+	for _, e := range f.logbuf {
+		if e.Kind != KindMeta {
+			continue
+		}
+		switch e.Meta {
+		case MetaQueued:
+			if e.Body != "" {
+				queue = append(queue, e.Body)
+			}
+		case MetaUnqueued:
+			if j := slices.Index(queue, e.Body); j >= 0 {
+				queue = slices.Delete(queue, j, j+1)
+			}
+		case MetaDequeued:
+			if len(queue) > 0 {
+				queue = queue[1:]
+			}
+		case MetaQueueCleared:
+			queue = nil
+		}
+	}
+	return queue
+}
+
 // State folds the whole log into the session state above, keeping at most
 // `maxPrompts` of history.
 func (f *FileSource) State(maxPrompts int) SessionState {
@@ -163,23 +194,6 @@ func (f *FileSource) State(maxPrompts int) SessionState {
 				if e.Context != nil {
 					st.Context, ctxAt = e.Context, i
 				}
-			case MetaQueued:
-				if e.Body != "" {
-					st.Queue = append(st.Queue, e.Body)
-				}
-			case MetaUnqueued:
-				for j, q := range st.Queue {
-					if q == e.Body {
-						st.Queue = append(st.Queue[:j], st.Queue[j+1:]...)
-						break
-					}
-				}
-			case MetaDequeued:
-				if len(st.Queue) > 0 {
-					st.Queue = st.Queue[1:]
-				}
-			case MetaQueueCleared:
-				st.Queue = st.Queue[:0]
 			case MetaPictureSource:
 				if n := len(st.Prompts); n > 0 && e.Body != "" {
 					st.Prompts[n-1] = PromptWithPictures(st.Prompts[n-1], strings.Split(e.Body, "\n"))
@@ -187,6 +201,7 @@ func (f *FileSource) State(maxPrompts int) SessionState {
 			}
 		}
 	}
+	st.Queue = append(st.Queue, f.queueLocked()...)
 	if ctxAt >= 0 {
 		for _, e := range f.logbuf[ctxAt+1:] {
 			if e.Kind == KindTurnEnd {

@@ -544,3 +544,55 @@ func TestModFeedSubagentNeverMovesTheMainTurn(t *testing.T) {
 		t.Errorf("subagent prompt = %+v, want a sidechain user event naming a596", prompt)
 	}
 }
+
+// A prompt Claude takes into the turn it is already running arrives as a row
+// through another door than "prompt". Measured live 2026-10-20: a message
+// queued mid-turn was delivered 0.3 s later, word for word, and its ghost
+// stayed on the queue for good. Its row takes it off the queue all the same.
+func TestModAPromptTakenIntoTheRunningTurnLeavesTheQueue(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "second", Origin: json.RawMessage(`{"kind":"composer"}`)})
+	fs.Feed(modRow(t, "user", "user", "queue", []map[string]any{{"type": "text", "text": "second"}}))
+	if got := strings.Join(modKinds(fs.Replay(0)), ","); got != "user,meta:queued,meta:unqueued,user" {
+		t.Fatalf("kinds = %s", got)
+	}
+	if st := fs.State(0); len(st.Queue) != 0 {
+		t.Fatalf("queue after its row = %q", st.Queue)
+	}
+}
+
+// Once Claude has gone idle nothing can still be waiting on its queue, so
+// ClearQueue takes off whatever is left, on every device, and adds nothing
+// when the queue is already empty.
+func TestModClearQueueTakesEverythingLeftOff(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "first"}}))
+	fs.QueueSent("c1", "beta")
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "gamma", Origin: json.RawMessage(`{"kind":"composer"}`)})
+	fs.Feed(ModEvent{Type: ModTurnEndEvent})
+	if got := fs.ClearQueue(1790900000600); !slices.Equal(got, []string{"beta", "gamma"}) {
+		t.Fatalf("cleared %q", got)
+	}
+	evs := fs.Replay(0)
+	if got := strings.Join(modKinds(evs), ","); got != "user,meta:queued,meta:queued,turn_end,meta:queue-cleared" {
+		t.Fatalf("kinds = %s", got)
+	}
+	if evs[4].At != 1790900000600 {
+		t.Fatalf("cleared at %d", evs[4].At)
+	}
+	if st := fs.State(0); len(st.Queue) != 0 {
+		t.Fatalf("queue after the clear = %q", st.Queue)
+	}
+	if got := fs.ClearQueue(1790900000700); got != nil {
+		t.Fatalf("cleared %q from an empty queue", got)
+	}
+	if n := len(fs.Replay(0)); n != len(evs) {
+		t.Fatalf("an empty clear added %d events", n-len(evs))
+	}
+	// Cleared, a later row with the same words is a new prompt.
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "beta"}}))
+	if got := strings.Join(modKinds(fs.Replay(0))[5:], ","); got != "user" {
+		t.Fatalf("after the clear: %s", got)
+	}
+}

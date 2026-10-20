@@ -443,3 +443,68 @@ func TestWaitingPromptsSurviveARestart(t *testing.T) {
 		t.Fatalf("taken after the restart: %q, want only the steer", got)
 	}
 }
+
+// settleFast shortens queueSettleWait for one test.
+func settleFast(t *testing.T, d time.Duration) {
+	t.Helper()
+	was := queueSettleWait
+	queueSettleWait = d
+	t.Cleanup(func() { queueSettleWait = was })
+}
+
+// eventually waits up to two seconds for ok.
+func eventually(ok func() bool) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for !ok() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	return ok()
+}
+
+// A ghost that outlives the turn it waited behind is waiting on nothing: an
+// idle Claude runs whatever it has queued. Viktor, 2026-10-20: "sometimes the
+// message gets stuck in queued state even though it's sent... let's auto
+// cleanup such messages". Once the session has stayed idle for
+// queueSettleWait, what the stream still shows queued is cleared.
+func TestAQueueLeftWhenClaudeGoesIdleIsCleared(t *testing.T) {
+	settleFast(t, 20*time.Millisecond)
+	rg, _ := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	c.source().QueueSent("c1", "already delivered")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}})
+	if !eventually(func() bool { return len(queueOf(c)) == 0 }) {
+		t.Fatalf("queue after going idle = %q", queueOf(c))
+	}
+}
+
+// While a turn runs the queue is left alone, however long it runs.
+func TestAQueueIsKeptWhileATurnRuns(t *testing.T) {
+	settleFast(t, 5*time.Millisecond)
+	rg, _ := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	c.source().QueueSent("c1", "next")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModLevelEvent, Running: true}})
+	time.Sleep(50 * time.Millisecond)
+	if q := queueOf(c); !slices.Equal(q, []string{"next"}) {
+		t.Fatalf("queue = %q", q)
+	}
+}
+
+// A turn that starts inside the wait owns the queue again: the wait that
+// began before it clears nothing, and the next idle spell starts its own.
+func TestATurnStartingInsideTheWaitKeepsTheQueue(t *testing.T) {
+	settleFast(t, 30*time.Millisecond)
+	rg, _ := heldMux(t, t.TempDir())
+	c := running(t, rg, "sid1")
+	c.source().QueueSent("c1", "next")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}})
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnStartEvent}})
+	time.Sleep(80 * time.Millisecond)
+	if q := queueOf(c); !slices.Equal(q, []string{"next"}) {
+		t.Fatalf("queue while the next turn runs = %q", q)
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModTurnEndEvent}})
+	if !eventually(func() bool { return len(queueOf(c)) == 0 }) {
+		t.Fatalf("queue after going idle again = %q", queueOf(c))
+	}
+}

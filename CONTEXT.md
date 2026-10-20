@@ -889,7 +889,9 @@ desktop, a box with the text on top and "+", the **Model sheet**'s button and
 the round button beneath. Bypass and No ask turn its border the danger colour. A
 watching device's pill reads "Watching" with Take control. The prompts waiting
 behind the turn are drawn as ghost bubbles at the end of the conversation, until
-Claude reads them at its next tool boundary (ADR-0042). A ghost is discarded by a
+Claude reads them at its next tool boundary (ADR-0042). A ghost still drawn once
+Claude has been idle for 30 seconds is cleared: an idle Claude runs whatever it
+has queued, so nothing can still be waiting. A ghost is discarded by a
 sideways swipe or its ×, and press and hold (or its pencil, with a mouse) takes it
 out of the queue into an edit form. On a
 desktop, Up in the empty field takes them all back into the field to edit,
