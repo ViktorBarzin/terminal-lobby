@@ -269,12 +269,46 @@ sequenceDiagram
   Note over L: replayed as a keydown on the iframe;<br/>the lobby jumps to session 1
 ```
 
-## What the embed mode hides
+## What the patch hides
 
-From the design (decisions 9 and 24): T3's sidebar and its header, the
-terminal drawer toggle, and the git and preview panels. The lobby's own
-session bar stays above the frame and carries the title, the view switcher and
-the session's menu.
+The patched web client only ever ships with `tl-t3-view`, which answers a
+subset of T3's RPCs (`src/rpc/handlers.ts`) and fails the rest
+(`src/rpc/stubs.ts`, `src/rpc/authorization.ts`). So the patch runs in
+lobby-server mode on every page load, full page and embedded alike: `embed.tsx`
+sets `data-t3-lobby` on `<html>` at startup, unconditionally, and `index.css`
+hides these under `html[data-t3-lobby]` (ADR-0045, design decision 12):
+
+| Selector | What it hides | Why |
+|---|---|---|
+| `[data-workspace-titlebar-controls]` | The titlebar toggles for the terminal drawer, the right panel and the thread details panel | `terminal.*`, and the right panel's diffs, files, preview and pull requests (`orchestration.getTurnDiff`, `review.*`, `projects.listEntries`, `preview.*`, `pullRequests.*`) are unserved |
+| `[data-thread-details-panel]` | Thread details: environment and branch pickers, open-in-editor, project scripts, commit/push/PR actions, scheduled automations | `vcs.*`, `git.*`, `sourceControl.*`, `shell.openInEditor`, `scheduledTasks.*` are unserved |
+| `[data-thread-terminal-drawer]` | The terminal drawer, should a keyboard shortcut open it | `terminal.*` is unserved |
+| `[data-sidebar-utility="Pull Requests"]`, `[data-sidebar-utility="Usage"]` | The sidebar's links to those pages | `pullRequests.*` and `server.getUsageSummary` are unserved |
+| `[data-settings-section="/settings/..."]` for providers, keybindings, integrations, scheduled-tasks, source-control, storage, projects and archived | Those Settings sections | Provider setup and installs (`provider.*`, `server.updateProvider`), server keybindings, device hosts and preview, scheduled tasks, source control accounts, storage cleanup, project scripts and archived threads are all unserved |
+
+`data-sidebar-utility` and `data-settings-section` are attributes the patch
+adds to `SidebarChrome.tsx` and `SettingsSidebarNav.tsx`, since upstream gives
+those items no stable hook. The others are upstream's own.
+
+Some things need no CSS because the sidecar's answers already keep them away:
+
+- Pickers and Settings list only Claude, because the server config the
+  sidecar sends lists only the Claude provider, and T3 builds its provider
+  entries from that list.
+- The composer's branch and worktree pickers do not render, because
+  `vcs.refreshStatus` and `vcs.listRefs` report `isRepo: false`.
+
+Embedded (`?embed`, inside the lobby's frame) adds two more under
+`html[data-t3-embed]`, from the first design (decisions 9 and 24): T3's sidebar
+(`[data-slot="sidebar"]`) and its chat header (`[data-chat-header]`). The
+lobby's own session bar stays above the frame and carries the title, the view
+switcher and the session's menu.
+
+The hiding is a convenience, not a boundary: the sidecar refuses these RPCs
+whatever the client shows. `test/embed.test.ts` checks that every selector
+under `html[data-t3-lobby]` still names an attribute the patched client
+renders, so a pin bump that renames one fails a test rather than showing the
+control again.
 
 ## Open questions
 
@@ -289,6 +323,10 @@ the session's menu.
   the other session, which loads the T3 client again.
 - Theme: the frame follows its own theme setting. Passing the lobby's light or
   dark choice is not part of version 1.
+- Lobby-server mode hides entry points, not routes or commands. A hidden
+  Settings section is still reachable by its URL or from Settings search, and
+  T3's command palette and keyboard shortcuts still offer the terminal, the
+  right panel, Pull Requests and Usage; each then meets the sidecar's refusal.
 
 ## Auth inside the frame
 

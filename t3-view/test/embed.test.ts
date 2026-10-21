@@ -1,3 +1,7 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 // The embed patch's pure half (patches/embed.patch adds it to the pinned
@@ -481,7 +485,9 @@ describe("modelPickKey", () => {
   it("tells picks apart by model and effort", () => {
     const a = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
     expect(modelPickKey(a)).toBe(modelPickKey({ ...a }));
-    expect(modelPickKey(a)).not.toBe(modelPickKey({ ...a, options: [{ id: "effort", value: "max" }] }));
+    expect(modelPickKey(a)).not.toBe(
+      modelPickKey({ ...a, options: [{ id: "effort", value: "max" }] }),
+    );
     expect(modelPickKey(a)).not.toBe(modelPickKey({ ...a, model: "claude-sonnet-5" }));
   });
 });
@@ -502,5 +508,74 @@ describe("withoutModelPick", () => {
       activeProvider: "claudeAgent",
       modelSelectionByProvider: { codex: { instanceId: "codex", model: "gpt-5" } },
     });
+  });
+});
+
+// Lobby-server mode is CSS over attributes the client renders. A pin bump that
+// renames one would leave a control showing with nothing failing, so each
+// hidden selector must still name an attribute (and value) in the patched source.
+const WEB_SRC = fileURLToPath(new URL("../node_modules/@t3tools/web/src/", import.meta.url));
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
+/** The [attr] and [attr="value"] parts of every rule under html[data-t3-lobby]. */
+function lobbyModeHides(css: string): { attribute: string; value: string | null }[] {
+  const selectors = css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split(/[{}]/)
+    .flatMap((part) => part.split(","))
+    .map((selector) => selector.trim())
+    .filter((selector) => selector.startsWith("html[data-t3-lobby] "));
+  return selectors.map((selector) => {
+    const match = /\[([\w-]+)(?:="([^"]*)")?\]$/.exec(selector);
+    if (match === null) throw new Error(`not an attribute selector: ${selector}`);
+    return { attribute: match[1] ?? "", value: match[2] ?? null };
+  });
+}
+
+describe("lobby-server mode", () => {
+  const sources = sourceFiles(WEB_SRC).map((file) => readFileSync(file, "utf8"));
+  const hides = lobbyModeHides(readFileSync(join(WEB_SRC, "index.css"), "utf8"));
+
+  it("is switched on at startup, outside the embed check", () => {
+    const embed = readFileSync(join(WEB_SRC, "embed.tsx"), "utf8");
+    const on = embed.indexOf('document.documentElement.dataset.t3Lobby = "";');
+    expect(on).toBeGreaterThan(-1);
+    expect(on).toBeLessThan(embed.indexOf("if (host !== null)"));
+  });
+
+  it("hides the terminal, git, provider and other unserved controls", () => {
+    expect(hides.map((hide) => hide.attribute)).toEqual(
+      expect.arrayContaining([
+        "data-workspace-titlebar-controls",
+        "data-thread-details-panel",
+        "data-thread-terminal-drawer",
+        "data-sidebar-utility",
+        "data-settings-section",
+      ]),
+    );
+    expect(hides).toContainEqual({
+      attribute: "data-settings-section",
+      value: "/settings/providers",
+    });
+  });
+
+  it.each(
+    hides.map(
+      (hide) =>
+        [hide.value === null ? hide.attribute : `${hide.attribute}="${hide.value}"`, hide] as const,
+    ),
+  )("%s names something the client renders", (_selector, { attribute, value }) => {
+    const attributeUse = new RegExp(`\\s${attribute}(?=[\\s=>/])`);
+    expect(sources.some((source) => attributeUse.test(source))).toBe(true);
+    if (value !== null) {
+      expect(sources.some((source) => source.includes(`"${value}"`))).toBe(true);
+    }
   });
 });
