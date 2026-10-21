@@ -1,0 +1,309 @@
+# Follow T3 Code's stable releases (ADR-0045).
+#
+# Once a day this asks GitHub for T3 Code's latest stable release and compares
+# it with t3-view/T3_PIN. When they differ it rebuilds the T3 view against the
+# new release and, if everything passes, lands the new pin on Forgejo master.
+# The push mirrors back here and the ordinary release.yml ships it, so this
+# workflow never builds or publishes a package itself.
+#
+# A release that fails any step is held: nothing lands, the pin stays on the
+# last release that passed, and tomorrow's run tries again. The box reports
+# the hold (tl-t3-upstream-check writes how long the newest stable release has
+# gone uninstalled; the infra alert T3StableHeld reads it), so a red run here
+# is not the only signal.
+#
+# Three jobs, because two things here must never share a runner:
+#   check  reads the latest release and the pin. Holds only the read-only
+#          GitHub token, runs no upstream code.
+#   build  runs upstream's code: pnpm install of T3's lockfile, T3's own web
+#          build, and the stub generator, which bundles T3's contracts. It
+#          gets no secret and a checkout with no token left in it.
+#   land   holds FORGEJO_GIT_TOKEN and runs nothing of upstream's. It takes
+#          two files from build's artifact (it writes T3_PIN itself from
+#          check's outputs and takes only the generated stubs), commits them
+#          on Forgejo master and pushes.
+# release/releaseworkflow_test.go pins this split.
+name: t3-stable
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch: {}
+
+# Each job names what it needs.
+permissions: {}
+
+concurrency:
+  group: t3-stable
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      bump: ${{ steps.latest.outputs.bump }}
+      tag: ${{ steps.latest.outputs.tag }}
+      commit: ${{ steps.latest.outputs.commit }}
+      repo: ${{ steps.latest.outputs.repo }}
+      base: ${{ steps.latest.outputs.base }}
+      tree: ${{ steps.latest.outputs.tree }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # GitHub's releases/latest, not npm: npm's `t3` carries no gitHead, and
+      # its versions have not always had a matching tag. The tag is peeled to
+      # its commit here so the build verifies exactly what was compared.
+      - name: latest stable release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pin() { sed -n "s/^$1=//p" t3-view/T3_PIN | head -n1; }
+          repo="$(pin repo)"
+          slug="${repo#https://github.com/}"
+          slug="${slug%.git}"
+          if [[ ! "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::T3_PIN repo=$repo is not a GitHub repository"
+            exit 1
+          fi
+          tag="$(gh api "repos/$slug/releases/latest" --jq .tag_name)"
+          # The tag goes into T3_PIN, a commit message and shell below, so it
+          # has to look like a version and nothing else.
+          if [[ ! "$tag" =~ ^v[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::latest release tag '$tag' does not look like a version"
+            exit 1
+          fi
+          refs="$(git ls-remote "$repo" "refs/tags/$tag" "refs/tags/$tag^{}")"
+          # An annotated tag lists its commit on the ^{} line; a lightweight
+          # tag (v0.1.0 is one) has only the plain line.
+          commit="$(awk -v r="refs/tags/$tag^{}" '$2 == r { print $1 }' <<<"$refs")"
+          if [ -z "$commit" ]; then
+            commit="$(awk -v r="refs/tags/$tag" '$2 == r { print $1 }' <<<"$refs")"
+          fi
+          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::could not resolve $tag in $repo to a commit"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "commit=$commit"
+            echo "repo=$repo"
+            # What build compiles and land checks master against: the commit
+            # this run started from, and its t3-view tree.
+            echo "base=$(git rev-parse HEAD)"
+            echo "tree=$(git rev-parse HEAD:t3-view)"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$tag" = "$(pin tag)" ] && [ "$commit" = "$(pin commit)" ]; then
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            echo "T3_PIN is already the latest stable release, $tag ($commit)"
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::T3 $tag ($commit) is newer than the pin, $(pin tag)"
+          fi
+
+  # Runs upstream's code. No secret, no token in the checkout, read-only
+  # permissions. The steps mirror release.yml's t3 view steps and t3-web.yml's
+  # build, with the full web build: a patch that no longer applies, or a build
+  # that drops it, fails here.
+  build:
+    needs: check
+    if: needs.check.outputs.bump == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.base }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      # 24, as t3-web.yml: corepack leaves Node from 25 on, and the box runs 24.
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+
+      - name: move the pin
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+          COMMIT: ${{ needs.check.outputs.commit }}
+          REPO: ${{ needs.check.outputs.repo }}
+        run: |
+          set -euo pipefail
+          printf 'tag=%s\ncommit=%s\nrepo=%s\n' "$TAG" "$COMMIT" "$REPO" > t3-view/T3_PIN
+          cat t3-view/T3_PIN
+
+      # The pnpm store by pin, as release.yml and t3-web.yml key it, so the
+      # release that follows the landing reuses this install.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: t3-pnpm-${{ needs.check.outputs.commit }}
+
+      - name: build the T3 web client
+        env:
+          PNPM_STORE_DIR: ${{ runner.temp }}/pnpm-store
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          set -euo pipefail
+          command -v corepack >/dev/null || npm install -g corepack
+          t3-view/scripts/build-web.sh out/t3
+
+      # The checks t3-web.yml makes: the embed patch applied and survived the
+      # build, rather than applying and being tree-shaken away.
+      - name: check the build
+        run: |
+          set -euo pipefail
+          web=out/t3/web
+          test -f "$web/index.html"
+          test "$(cat "$web/BUILD_KEY")" = "$(t3-view/scripts/build-web.sh --print-key)"
+          if ls t3-view/patches/*.patch >/dev/null 2>&1; then
+            grep -lq 'tl-bindings' "$web"/assets/*.js
+          fi
+
+      # An RPC upstream added becomes a stub; test/stubs.test.ts fails until
+      # the committed table matches the pin, so this is regenerated before the
+      # tests run.
+      - name: regenerate the stubs
+        run: |
+          set -euo pipefail
+          t3-view/scripts/link-t3.sh out/t3
+          t3-view/scripts/gen-stubs.sh
+          git diff --stat -- t3-view/src/rpc/stubs.ts
+
+      - name: test (t3 view)
+        run: |
+          set -euo pipefail
+          cd t3-view
+          npm test
+          npm run typecheck
+
+      # The package's own tests, which read T3_PIN and the T3 view's files.
+      - name: test (release)
+        run: |
+          set -euo pipefail
+          cd release
+          go test -race ./...
+
+      # Only the pin and the stub table may move. Any other tracked file
+      # changing means a step above rewrote this repo's source, and that is
+      # not something to land. Untracked files never reach land.
+      - name: collect the changed files
+        run: |
+          set -euo pipefail
+          unexpected="$(git status --porcelain --untracked-files=no | grep -vE '^ M t3-view/(T3_PIN|src/rpc/stubs\.ts)$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "::error::the gate changed files other than the pin and the stubs:"
+            echo "$unexpected"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/t3-stable"
+          cp t3-view/T3_PIN t3-view/src/rpc/stubs.ts "$RUNNER_TEMP/t3-stable/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t3-stable
+          path: ${{ runner.temp }}/t3-stable/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Holds the Forgejo token and runs nothing of upstream's: no checkout of
+  # this repo's scripts, no node, no install. Forgejo is canonical (ADR-0003)
+  # and this repo is its mirror, which can lag, so the commit is made on
+  # Forgejo's master as fetched here.
+  land:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: t3-stable
+          path: ${{ runner.temp }}/t3-stable
+
+      - name: land the pin on Forgejo master
+        env:
+          FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+          FORGEJO_REPO_PATH: ${{ secrets.FORGEJO_REPO_PATH }}
+          TAG: ${{ needs.check.outputs.tag }}
+          COMMIT: ${{ needs.check.outputs.commit }}
+          REPO: ${{ needs.check.outputs.repo }}
+          TREE: ${{ needs.check.outputs.tree }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          art="$RUNNER_TEMP/t3-stable"
+          test -s "$art/stubs.ts"
+          printf 'tag=%s\ncommit=%s\nrepo=%s\n' "$TAG" "$COMMIT" "$REPO" > "$RUNNER_TEMP/T3_PIN"
+          # The build wrote the same three lines; a mismatch means the
+          # artifact is not the one this run built.
+          cmp "$RUNNER_TEMP/T3_PIN" "$art/T3_PIN"
+
+          remote="https://x-access-token:${FORGEJO_GIT_TOKEN}@${FORGEJO_REPO_PATH}"
+          git init -q work
+          cd work
+          git config user.name "terminal-lobby CI"
+          git config user.email "ci@terminal-lobby.invalid"
+
+          cat > "$RUNNER_TEMP/message" <<EOF
+          feat(t3-view): follow T3 $TAG
+
+          T3 Code $TAG is the latest stable release. The daily stable follower
+          (.github/workflows/t3-stable.yml, ADR-0045) built the T3 web client
+          against it with the embed patch, regenerated the RPC stubs, and
+          passed the T3 view's tests, its typecheck and the release tests, so
+          the pin moves and the next release ships it.
+
+          Tag: $TAG ($COMMIT)
+          Release: ${REPO%.git}/releases/tag/$TAG
+          Run: $RUN_URL
+          EOF
+
+          # Fetch Forgejo's master, put the two files on it, commit. Returns 2
+          # when there is nothing to do. Every command carries its own
+          # `|| return 1`, because set -e does not apply inside a function
+          # called from an || list.
+          prepare() {
+            git fetch -q --depth=1 "$remote" master || return 1
+            git checkout -q -B master FETCH_HEAD || return 1
+            if cmp -s "$RUNNER_TEMP/T3_PIN" t3-view/T3_PIN; then
+              echo "Forgejo master is already pinned to $TAG"
+              return 2
+            fi
+            # The build tested the stubs against this run's t3-view tree. If
+            # master's has moved since (a patch, a handler, a hand-moved
+            # pin), the tested pair may not fit it, so hold until tomorrow's
+            # run builds on the new tree.
+            have="$(git rev-parse HEAD:t3-view)" || return 1
+            if [ "$have" != "$TREE" ]; then
+              echo "::error::t3-view on Forgejo master changed since this run built ($TREE, now $have); tomorrow's run rebuilds on it"
+              return 1
+            fi
+            cp "$RUNNER_TEMP/T3_PIN" t3-view/T3_PIN || return 1
+            cp "$art/stubs.ts" t3-view/src/rpc/stubs.ts || return 1
+            git add t3-view/T3_PIN t3-view/src/rpc/stubs.ts || return 1
+            git commit -q -F "$RUNNER_TEMP/message" || return 1
+          }
+
+          rc=0
+          prepare || rc=$?
+          if [ "$rc" -eq 2 ]; then exit 0; fi
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          if git push -q "$remote" HEAD:master; then
+            echo "landed T3 $TAG on Forgejo master: $(git rev-parse --short HEAD)"
+            exit 0
+          fi
+          # Someone landed in between. Once more on top of the new master;
+          # a second rejection fails the run and tomorrow's tries again.
+          echo "push rejected; fetching master and retrying once"
+          rc=0
+          prepare || rc=$?
+          if [ "$rc" -eq 2 ]; then exit 0; fi
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          git push -q "$remote" HEAD:master
+          echo "landed T3 $TAG on Forgejo master: $(git rev-parse --short HEAD)"

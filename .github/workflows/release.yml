@@ -20,6 +20,9 @@ on:
       # t3-web.yml builds the T3 web client into the cache this workflow
       # reads; editing that workflow alone changes nothing in the .deb.
       - '.github/workflows/t3-web.yml'
+      # t3-stable.yml moves the pin by landing a commit, and that commit is
+      # what releases; the workflow file itself is not in the .deb.
+      - '.github/workflows/t3-stable.yml'
       # The container image is built by container.yml out of its own inputs,
       # and packaging/build-deb.sh reads none of them. A push touching only
       # these was cutting a .deb version whose contents had not moved.

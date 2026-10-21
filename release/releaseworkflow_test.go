@@ -271,3 +271,150 @@ func TestPathsIgnoreNamesNothingTheBuildReads(t *testing.T) {
 		}
 	}
 }
+
+// .github/workflows/t3-stable.yml follows T3 Code's stable releases (ADR-0045).
+// It runs upstream's code (the web build, the install, the generator), and it
+// pushes to Forgejo master, which needs FORGEJO_GIT_TOKEN. Those two never
+// share a job: the build job runs upstream code with no credential, and the
+// land job holds the credential and runs nothing of upstream's. These tests
+// pin that split, since a step moved between jobs reads as an innocent edit.
+
+// workflowJobs splits a workflow into the text before `jobs:` and each job's
+// body by name. Jobs are the two-space-indented keys under `jobs:`.
+func workflowJobs(t *testing.T, yml string) (string, map[string]string) {
+	t.Helper()
+	i := strings.Index(yml, "\njobs:\n")
+	if i < 0 {
+		t.Fatal("no top-level jobs: in the workflow")
+	}
+	header, body := yml[:i], yml[i+len("\njobs:\n"):]
+	key := regexp.MustCompile(`(?m)^  ([A-Za-z0-9_-]+):\s*$`)
+	locs := key.FindAllStringSubmatchIndex(body, -1)
+	if len(locs) == 0 {
+		t.Fatal("no jobs under jobs:")
+	}
+	jobs := map[string]string{}
+	for n, l := range locs {
+		end := len(body)
+		if n+1 < len(locs) {
+			end = locs[n+1][0]
+		}
+		jobs[body[l[2]:l[3]]] = body[l[0]:end]
+	}
+	return header, jobs
+}
+
+func t3StableWorkflow(t *testing.T) (string, map[string]string) {
+	t.Helper()
+	header, jobs := workflowJobs(t, repoFile(t, ".github", "workflows", "t3-stable.yml"))
+	for _, name := range []string{"check", "build", "land"} {
+		if _, ok := jobs[name]; !ok {
+			t.Fatalf("t3-stable.yml has no %s job; have %v", name, keys(jobs))
+		}
+	}
+	return header, jobs
+}
+
+// noComments drops YAML comment lines, so prose explaining the split does not
+// count as the thing it explains.
+func noComments(s string) string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestT3StableRunsDailyAndOnDemand(t *testing.T) {
+	header, _ := t3StableWorkflow(t)
+	if !regexp.MustCompile(`(?m)^\s+schedule:\s*\n\s+- cron: '[^']+'`).MatchString(header) {
+		t.Error("t3-stable.yml has no schedule, so nothing follows upstream")
+	}
+	if !strings.Contains(header, "workflow_dispatch") {
+		t.Error("t3-stable.yml cannot be run by hand")
+	}
+	if !regexp.MustCompile(`(?m)^permissions: \{\}\s*$`).MatchString(header) {
+		t.Error("t3-stable.yml grants a default token permission; each job should name its own")
+	}
+}
+
+func TestT3StableGivesForgejoSecretsToTheLandJobOnly(t *testing.T) {
+	header, jobs := t3StableWorkflow(t)
+	if strings.Contains(noComments(header), "secrets.") {
+		t.Error("t3-stable.yml reads a secret outside any job, where every job sees it")
+	}
+	for name, body := range jobs {
+		uses := strings.Contains(noComments(body), "secrets.")
+		if name == "land" && !strings.Contains(noComments(body), "secrets.FORGEJO_GIT_TOKEN") {
+			t.Error("the land job does not read FORGEJO_GIT_TOKEN, so it cannot push")
+		}
+		if name != "land" && uses {
+			t.Errorf("the %s job reads a secret; only land may", name)
+		}
+	}
+}
+
+// The build job runs upstream code, so it holds nothing worth taking: no
+// secret, no Forgejo address, and no GitHub token left in the checkout.
+func TestT3StableBuildJobHoldsNoCredential(t *testing.T) {
+	_, jobs := t3StableWorkflow(t)
+	build := noComments(jobs["build"])
+	for _, banned := range []string{"secrets.", "FORGEJO", "github.token", "GITHUB_TOKEN", "GH_TOKEN"} {
+		if strings.Contains(build, banned) {
+			t.Errorf("the build job mentions %s", banned)
+		}
+	}
+	if !strings.Contains(build, "persist-credentials: false") {
+		t.Error("the build job's checkout leaves the GitHub token in .git/config for upstream code to read")
+	}
+	if !regexp.MustCompile(`(?m)^\s+permissions:\s*\n\s+contents: read\s*$`).MatchString(build) {
+		t.Error("the build job does not narrow its token to contents: read")
+	}
+}
+
+// What makes the job a gate: the full web build with the embed patch, the
+// regenerated stubs, and the tests that cover the T3 view.
+func TestT3StableBuildJobRunsTheGate(t *testing.T) {
+	_, jobs := t3StableWorkflow(t)
+	build := noComments(jobs["build"])
+	for _, want := range []string{
+		"t3-view/scripts/build-web.sh out/t3",
+		"t3-view/scripts/link-t3.sh out/t3",
+		"t3-view/scripts/gen-stubs.sh",
+		"npm test",
+		"npm run typecheck",
+		"go test -race ./...",
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("the build job does not run %s", want)
+		}
+	}
+	if strings.Contains(build, "--deps-only") {
+		t.Error("the build job skips the web build, so a patch that breaks it would land")
+	}
+}
+
+func TestT3StableLandJobRunsNoUpstreamCode(t *testing.T) {
+	_, jobs := t3StableWorkflow(t)
+	land := noComments(jobs["land"])
+	if !regexp.MustCompile(`(?m)^\s+needs: \[check, build\]\s*$`).MatchString(land) {
+		t.Error("the land job does not wait for build, so a failing release could land")
+	}
+	for _, banned := range []string{"build-web.sh", "link-t3.sh", "gen-stubs.sh", "npm ", "pnpm", "corepack", "node ", "actions/checkout", "actions/cache"} {
+		if strings.Contains(land, banned) {
+			t.Errorf("the land job runs %s, next to the Forgejo token", banned)
+		}
+	}
+}
+
+func TestT3StableNeverForcePushes(t *testing.T) {
+	yml := noComments(repoFile(t, ".github", "workflows", "t3-stable.yml"))
+	for _, banned := range []string{"--force", "push -f", "+HEAD", "+refs/"} {
+		if strings.Contains(yml, banned) {
+			t.Errorf("t3-stable.yml carries %q; a rejected push retries on top of master, never over it", banned)
+		}
+	}
+}
