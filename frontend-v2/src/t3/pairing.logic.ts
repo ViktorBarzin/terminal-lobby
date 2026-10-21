@@ -7,6 +7,10 @@
  * it three ways: a link to T3's own `/pair` route with the code in the
  * fragment, a QR code of that link, and the code itself for typing. The app
  * hands the code to tl-t3-view, which exchanges it for the app's own token.
+ *
+ * Nothing tells the lobby when that happens, so while a code is showing the
+ * page polls GET /devices. A device that was not listed when the code was
+ * minted is the one that used it: the card drops the code and names it.
  */
 
 // ---- the pairing card's states ---------------------------------------------
@@ -14,16 +18,32 @@
 export type PairState =
   | { kind: "idle" }
   | { kind: "requesting" }
-  /** `expiresAt` is a unix second, as tmux-api sends it. */
-  | { kind: "showing"; code: string; expiresAt: number }
+  /**
+   * `expiresAt` is a unix second, as tmux-api sends it. `known` holds the ids
+   * of the devices paired before this code was minted.
+   */
+  | { kind: "showing"; code: string; expiresAt: number; known: readonly string[] }
   | { kind: "expired" }
+  /** The code was used; `label` is the new device's own, possibly empty. */
+  | { kind: "paired"; label: string }
   | { kind: "error"; message: string };
+
+/** A paired device, as far as noticing a new one needs. */
+interface ListedDevice {
+  id: string;
+  label: string;
+}
 
 export type PairEvent =
   | { type: "request" }
-  | { type: "granted"; code: string; expiresAt: number }
+  | { type: "granted"; code: string; expiresAt: number; known: readonly string[] }
   | { type: "failed"; message: string }
-  | { type: "tick"; nowMs: number };
+  | { type: "tick"; nowMs: number }
+  /** A fresh GET /devices, newest first. */
+  | { type: "devices"; devices: readonly ListedDevice[] };
+
+/** How often the page asks for the device list while a code is showing. */
+export const PAIR_POLL_MS = 3000;
 
 /**
  * One step of the card. A press while a request is in flight is ignored, so a
@@ -36,7 +56,7 @@ export function pairStep(state: PairState, event: PairEvent): PairState {
       return state.kind === "requesting" ? state : { kind: "requesting" };
     case "granted":
       return state.kind === "requesting"
-        ? { kind: "showing", code: event.code, expiresAt: event.expiresAt }
+        ? { kind: "showing", code: event.code, expiresAt: event.expiresAt, known: event.known }
         : state;
     case "failed":
       return state.kind === "requesting" ? { kind: "error", message: event.message } : state;
@@ -44,7 +64,22 @@ export function pairStep(state: PairState, event: PairEvent): PairState {
       return state.kind === "showing" && secondsLeft(state.expiresAt, event.nowMs) <= 0
         ? { kind: "expired" }
         : state;
+    case "devices": {
+      if (state.kind !== "showing") return state;
+      const fresh = event.devices.find((d) => !state.known.includes(d.id));
+      return fresh ? { kind: "paired", label: fresh.label } : state;
+    }
   }
+}
+
+/** Whether the page should be polling the device list: only while a code shows. */
+export function pollsDevices(state: PairState): boolean {
+  return state.kind === "showing";
+}
+
+/** "Paired: Pixel 9", or a generic name for an app that gave no label. */
+export function pairedNote(label: string): string {
+  return `Paired: ${label || "T3 app"}`;
 }
 
 /** Whole seconds until `expiresAt` (unix s), rounded up, never below zero. */

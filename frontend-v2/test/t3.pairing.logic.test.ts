@@ -11,6 +11,8 @@ import {
   lastUsedLabel,
   pairLink,
   pairStep,
+  pairedNote,
+  pollsDevices,
   qrPath,
   secondsLeft,
   type PairState,
@@ -20,14 +22,24 @@ const NOW = 1_800_000_000_000; // ms
 const IN_FIVE = NOW / 1000 + 300; // unix s
 
 describe("the pairing card", () => {
-  const showing: PairState = { kind: "showing", code: "ABCDEFGHJKLM", expiresAt: IN_FIVE };
+  const showing: PairState = {
+    kind: "showing",
+    code: "ABCDEFGHJKLM",
+    expiresAt: IN_FIVE,
+    known: ["laptop"],
+  };
 
   it("asks for a code, then shows the one tmux-api minted", () => {
     const asking = pairStep({ kind: "idle" }, { type: "request" });
     expect(asking).toEqual({ kind: "requesting" });
-    expect(pairStep(asking, { type: "granted", code: "ABCDEFGHJKLM", expiresAt: IN_FIVE })).toEqual(
-      showing,
-    );
+    expect(
+      pairStep(asking, {
+        type: "granted",
+        code: "ABCDEFGHJKLM",
+        expiresAt: IN_FIVE,
+        known: ["laptop"],
+      }),
+    ).toEqual(showing);
   });
 
   it("keeps showing the code until its expiry, then offers a new one", () => {
@@ -57,9 +69,9 @@ describe("the pairing card", () => {
   it("ignores a second press while a request is in flight, and stray answers", () => {
     const asking: PairState = { kind: "requesting" };
     expect(pairStep(asking, { type: "request" })).toBe(asking);
-    expect(pairStep({ kind: "idle" }, { type: "granted", code: "X", expiresAt: IN_FIVE })).toEqual({
-      kind: "idle",
-    });
+    expect(
+      pairStep({ kind: "idle" }, { type: "granted", code: "X", expiresAt: IN_FIVE, known: [] }),
+    ).toEqual({ kind: "idle" });
     expect(pairStep({ kind: "idle" }, { type: "failed", message: "x" })).toEqual({ kind: "idle" });
     expect(pairStep({ kind: "idle" }, { type: "tick", nowMs: NOW })).toEqual({ kind: "idle" });
   });
@@ -67,9 +79,67 @@ describe("the pairing card", () => {
   it("treats a code that is already past its expiry as expired", () => {
     const stale = pairStep(
       { kind: "requesting" },
-      { type: "granted", code: "ABCDEFGHJKLM", expiresAt: NOW / 1000 - 1 },
+      { type: "granted", code: "ABCDEFGHJKLM", expiresAt: NOW / 1000 - 1, known: [] },
     );
     expect(pairStep(stale, { type: "tick", nowMs: NOW })).toEqual({ kind: "expired" });
+  });
+});
+
+describe("noticing the code was used", () => {
+  const showing: PairState = {
+    kind: "showing",
+    code: "ABCDEFGHJKLM",
+    expiresAt: IN_FIVE,
+    known: ["laptop"],
+  };
+  const laptop = { id: "laptop", label: "T3 desktop" };
+  const phone = { id: "phone", label: "Pixel 9" };
+
+  it("polls the device list only while a code is showing", () => {
+    expect(pollsDevices(showing)).toBe(true);
+    for (const state of [
+      { kind: "idle" },
+      { kind: "requesting" },
+      { kind: "expired" },
+      { kind: "error", message: "x" },
+      { kind: "paired", label: "Pixel 9" },
+    ] as PairState[]) {
+      expect(pollsDevices(state), state.kind).toBe(false);
+    }
+  });
+
+  it("keeps the code while the list holds only the devices paired before it", () => {
+    expect(pairStep(showing, { type: "devices", devices: [laptop] })).toBe(showing);
+    expect(pairStep(showing, { type: "devices", devices: [] })).toBe(showing);
+  });
+
+  it("clears the code and names the device that appeared since it was minted", () => {
+    expect(pairStep(showing, { type: "devices", devices: [phone, laptop] })).toEqual({
+      kind: "paired",
+      label: "Pixel 9",
+    });
+  });
+
+  it("ignores a device list that arrives when no code is showing", () => {
+    for (const state of [
+      { kind: "idle" },
+      { kind: "requesting" },
+      { kind: "expired" },
+      { kind: "paired", label: "Pixel 9" },
+    ] as PairState[]) {
+      expect(pairStep(state, { type: "devices", devices: [phone] })).toBe(state);
+    }
+  });
+
+  it("asks for another code after a pairing, and stops counting down", () => {
+    const paired: PairState = { kind: "paired", label: "Pixel 9" };
+    expect(pairStep(paired, { type: "request" })).toEqual({ kind: "requesting" });
+    expect(pairStep(paired, { type: "tick", nowMs: NOW + 400_000 })).toBe(paired);
+  });
+
+  it("says which device paired, or a generic name when it gave none", () => {
+    expect(pairedNote("Pixel 9")).toBe("Paired: Pixel 9");
+    expect(pairedNote("")).toBe("Paired: T3 app");
   });
 });
 

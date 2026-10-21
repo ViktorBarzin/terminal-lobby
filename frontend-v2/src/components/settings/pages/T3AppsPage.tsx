@@ -4,6 +4,7 @@ import {
   Show,
   Switch,
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   onMount,
@@ -22,8 +23,11 @@ import {
   deviceKind,
   groupCode,
   lastUsedLabel,
+  PAIR_POLL_MS,
   pairLink,
   pairStep,
+  pairedNote,
+  pollsDevices,
   qrPath,
   secondsLeft,
   type PairEvent,
@@ -78,7 +82,10 @@ const PairQr: Component<{ link: string }> = (props) => {
  *
  * "Pair a device" asks tmux-api for a code good for five minutes and one use,
  * shown as a link, a QR code of the link, and the code itself. When it lapses
- * the card offers a new one. `origin` is where T3's apps connect
+ * the card offers a new one. While the code shows, the page polls the device
+ * list every three seconds (not in a hidden tab), and when a device appears
+ * that was not listed at mint time it drops the code, lists the device and
+ * names it. `origin` is where T3's apps connect
  * (`defaultT3Origin`); null on a dev server, which shows the code alone.
  *
  * App leaves the page out of a lens tab: tmux-api refuses to pair or revoke
@@ -100,14 +107,34 @@ export const T3AppsPage: Component<{
     setPair((state) => pairStep(state, event));
   };
 
+  const [devices, setDevices] = createSignal<DeviceView[] | null>(null);
+  const [listError, setListError] = createSignal("");
+  const [status, setStatus] = createSignal("");
+  const reload = async (): Promise<void> => {
+    try {
+      setDevices(await api.list());
+      setListError("");
+    } catch (e) {
+      setListError((e as Error).message);
+    }
+  };
+  onMount(() => void reload());
+
   const requestCode = async (): Promise<void> => {
     if (pair().kind === "requesting") return;
     step({ type: "request" });
     setCopied("");
     try {
-      const { code, expiresAt } = await api.pair();
+      // The devices listed alongside the mint are the ones paired before
+      // this code: nobody can use it until the page shows it.
+      const [{ code, expiresAt }, listed] = await Promise.all([
+        api.pair(),
+        api.list().catch(() => null),
+      ]);
+      if (listed) setDevices(listed);
+      const known = (listed ?? devices() ?? []).map((d) => d.id);
       setNowMs(Date.now());
-      step({ type: "granted", code, expiresAt });
+      step({ type: "granted", code, expiresAt, known });
     } catch (e) {
       step({ type: "failed", message: (e as Error).message });
     }
@@ -123,6 +150,48 @@ export const T3AppsPage: Component<{
     }, 1000);
     onCleanup(() => window.clearInterval(timer));
   });
+
+  const [tabVisible, setTabVisible] = createSignal(document.visibilityState !== "hidden");
+  onMount(() => {
+    const onVisibility = () => setTabVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", onVisibility);
+    onCleanup(() => document.removeEventListener("visibilitychange", onVisibility));
+  });
+
+  // Nothing tells the page a code was used, so it asks for the device list
+  // while the code shows and the tab is visible. Expiry, a pairing, a hidden
+  // tab or leaving the page stops it.
+  const polling = createMemo(() => pollsDevices(pair()) && tabVisible());
+  createEffect(() => {
+    if (!polling()) return;
+    let stopped = false;
+    let inFlight = false;
+    const poll = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const listed = await api.list();
+        if (stopped) return;
+        setDevices(listed);
+        setListError("");
+        step({ type: "devices", devices: listed });
+      } catch {
+        // Keep the code showing; the next poll tries again.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), PAIR_POLL_MS);
+    onCleanup(() => {
+      stopped = true;
+      window.clearInterval(timer);
+    });
+  });
+
+  const pairedLabel = () => {
+    const state = pair();
+    return state.kind === "paired" ? pairedNote(state.label) : "";
+  };
 
   const showing = () => {
     const state = pair();
@@ -144,19 +213,6 @@ export const T3AppsPage: Component<{
     if (!url) return;
     setCopied((await copyText(url, linkEl)) ? "Copied" : "Selected. Press Ctrl+C to copy");
   };
-
-  const [devices, setDevices] = createSignal<DeviceView[] | null>(null);
-  const [listError, setListError] = createSignal("");
-  const [status, setStatus] = createSignal("");
-  const reload = async (): Promise<void> => {
-    try {
-      setDevices(await api.list());
-      setListError("");
-    } catch (e) {
-      setListError((e as Error).message);
-    }
-  };
-  onMount(() => void reload());
 
   const revoke = async (device: DeviceView): Promise<void> => {
     const name = device.label || "this app";
@@ -252,6 +308,11 @@ export const T3AppsPage: Component<{
               <Show when={pairError()}>
                 <span class="tl-set-hint tl-set-hint-static" role="alert">
                   {pairError()}
+                </span>
+              </Show>
+              <Show when={pairedLabel()}>
+                <span class="tl-set-hint tl-set-hint-static" role="status">
+                  {pairedLabel()}
                 </span>
               </Show>
             </div>

@@ -511,7 +511,6 @@ describe("who is offered the T3 view", () => {
   });
 });
 
-
 describe("which lobby session a route in the frame names", () => {
   const sessions = [
     { name: "say-hi", bornAs: "bw8k5gt9v314", tool: "claude" as const, owner: "wizard" },

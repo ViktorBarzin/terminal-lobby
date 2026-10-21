@@ -1153,9 +1153,10 @@ src/
                          `?t3view=` override, the thread id, message parsing,
                          the chords the frame hands back and who is offered
                          it. T3's apps pair with the same origin
-    pairing.logic.ts     PURE Settings → T3 apps: the pairing card's states,
-                         the link and grouped code, the countdown, a device
-                         row's words, and the QR code's SVG path
+    pairing.logic.ts     PURE Settings → T3 apps: the pairing card's states
+                         (a used code noticed from the device list), the link
+                         and grouped code, the countdown, a device row's
+                         words, and the QR code's SVG path
     frame-claim.ts       At most one T3 frame per tab: the latest ask holds it
     frame-keeper.ts      The tab's one T3 frame: booted early on a desktop,
                          moved between panes without reloading, parked hidden

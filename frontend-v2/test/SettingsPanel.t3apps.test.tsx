@@ -35,9 +35,14 @@ function fakeApi(devices: DeviceView[] = []): DevicesApi & {
   pair: ReturnType<typeof vi.fn>;
   list: ReturnType<typeof vi.fn>;
   revoke: ReturnType<typeof vi.fn>;
+  /** A device using the code: tmux-api lists it from now on. */
+  paired: (d: DeviceView) => void;
 } {
   let held = [...devices];
   return {
+    paired: (d) => {
+      held = [d, ...held];
+    },
     pair: vi.fn(async () => ({ code: "ABCDEFGHJKLM", expiresAt: NOW / 1000 + 300 })),
     list: vi.fn(async () => held),
     revoke: vi.fn(async (id: string) => {
@@ -135,6 +140,99 @@ describe("Settings → T3 apps: pairing", () => {
     const { container } = render(() => <T3AppsPage origin={ORIGIN} api={fakeApi()} />);
     await flush();
     expect(text(container)).toContain("Settings → Connections → Add environment");
+  });
+});
+
+describe("Settings → T3 apps: noticing the code was used", () => {
+  const POLL = 3000;
+
+  async function showCode(api: ReturnType<typeof fakeApi>) {
+    const view = render(() => <T3AppsPage origin={ORIGIN} api={api} />);
+    await flush();
+    fireEvent.click(button(view.container, "Pair a device")!);
+    await flush();
+    expect(view.container.querySelector('input[aria-label="Pairing link"]')).toBeTruthy();
+    return view;
+  }
+
+  it("clears the code, lists the new device and names it once it pairs", async () => {
+    const api = fakeApi([laptop]);
+    const { container } = await showCode(api);
+
+    await vi.advanceTimersByTimeAsync(POLL);
+    expect(container.querySelector('input[aria-label="Pairing link"]')).toBeTruthy();
+
+    api.paired(phone);
+    await vi.advanceTimersByTimeAsync(POLL);
+    expect(container.querySelector('input[aria-label="Pairing link"]')).toBeNull();
+    expect(container.querySelector("svg.tl-t3-qr")).toBeNull();
+    expect(text(container)).not.toContain("ABCD EFGH JKLM");
+    expect(text(container)).toContain("Paired: Pixel 9");
+    const rows = container.querySelectorAll(".tl-t3-device");
+    expect(rows).toHaveLength(2);
+    expect(text(rows[0] as HTMLElement)).toContain("Pixel 9");
+    expect(button(container, "Pair a device")).toBeTruthy();
+
+    const calls = api.list.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * POLL);
+    expect(api.list).toHaveBeenCalledTimes(calls);
+  });
+
+  it("polls every three seconds while the code shows, and stops when it expires", async () => {
+    const api = fakeApi();
+    await showCode(api);
+    const before = api.list.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(POLL - 1);
+    expect(api.list).toHaveBeenCalledTimes(before);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.list).toHaveBeenCalledTimes(before + 1);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    const atExpiry = api.list.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * POLL);
+    expect(api.list).toHaveBeenCalledTimes(atExpiry);
+  });
+
+  it("stops polling when the page unmounts", async () => {
+    const api = fakeApi();
+    const { unmount } = await showCode(api);
+    await vi.advanceTimersByTimeAsync(POLL);
+    unmount();
+    const atUnmount = api.list.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * POLL);
+    expect(api.list).toHaveBeenCalledTimes(atUnmount);
+  });
+
+  it("does not poll while the tab is hidden, and resumes when it shows again", async () => {
+    let visibility: DocumentVisibilityState = "visible";
+    const spy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    try {
+      const api = fakeApi();
+      await showCode(api);
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+      const hidden = api.list.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(10 * POLL);
+      expect(api.list).toHaveBeenCalledTimes(hidden);
+
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(POLL);
+      expect(api.list.mock.calls.length).toBeGreaterThan(hidden);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps the code when a poll fails", async () => {
+    const api = fakeApi();
+    const { container } = await showCode(api);
+    api.list.mockRejectedValueOnce(new Error("devices HTTP 502"));
+    await vi.advanceTimersByTimeAsync(POLL);
+    expect(container.querySelector('input[aria-label="Pairing link"]')).toBeTruthy();
+    api.paired(phone);
+    await vi.advanceTimersByTimeAsync(POLL);
+    expect(text(container)).toContain("Paired: Pixel 9");
   });
 });
 
