@@ -6,6 +6,16 @@ server and web build from that tag on the devvm and driving the web app with
 Playwright (desktop 1280x800 and phone 390x844). This replaces the static trace
 in `docs/plans/2026-10-12-t3-view-design.md` ("What the web client needs").
 
+The pin has since moved to `v0.1.0` (commit `81493efb`, 2026-10-21). For the
+sidecar that release changed little: `WsRpcGroup` has the same 193 RPCs,
+`embed.patch` applies with offsets only, effect went from 4.0.2 (patched) to
+4.0.4 (unpatched), and the HTTP API gained
+`GET /api/orchestration/threads/:id/transcript`, which the composer's
+"attach thread" calls. The routes T3's own apps use to pair and connect
+(`/oauth/token`, `/api/auth/websocket-ticket`, `/ws?wsTicket=`) were read
+from that tag's source, not traced; README.md "Bearer path" lists them. The
+measurements below are still the `v0.0.46-nightly` ones.
+
 Raw captures, with scratch paths replaced by `$SCRATCH` and signed asset
 tokens redacted, are under [`trace/`](trace/):
 

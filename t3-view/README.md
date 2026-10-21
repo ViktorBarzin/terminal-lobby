@@ -3,8 +3,12 @@
 `tl-t3-view` serves T3 Code's web client against lobby sessions. It hosts an
 unmodified T3 web build (plus the patches in `patches/`) and implements T3's
 orchestration protocol v2 with T3's own `packages/contracts`, so the web
-client treats it as a T3 server. Design: [ADR-0044](../docs/adr/0044-t3-code-renders-a-session-through-its-own-protocol.md)
-and [the T3 view design](../docs/plans/2026-10-12-t3-view-design.md). What the
+client treats it as a T3 server. T3's own apps (desktop, mobile, a browser on
+another origin) pair with it as devices and connect with a bearer. Design:
+[ADR-0044](../docs/adr/0044-t3-code-renders-a-session-through-its-own-protocol.md),
+[ADR-0045](../docs/adr/0045-t3-apps-are-clients-of-lobby-sessions.md),
+[the T3 view design](../docs/plans/2026-10-12-t3-view-design.md) and
+[T3 everywhere](../docs/plans/2026-10-21-t3-everywhere-design.md). What the
 real client asks of its server was measured in [TRACE.md](TRACE.md).
 
 Status: built on branch, first cut, not released. The shell lists the user's
@@ -22,6 +26,7 @@ images are the second cut.
 | `scripts/build-web.sh` | Extracts the pin, applies patches, installs T3's web closure from T3's lockfile, builds `apps/web`. CI runs the same script |
 | `scripts/link-t3.sh` | Points `node_modules/` at that checkout. Generated, gitignored |
 | `scripts/build-sidecar.sh` | Bundles `src/main.ts` with esbuild into one `tl-t3-view.mjs` for system node |
+| `scripts/gen-stubs.sh` | Rewrites `src/rpc/stubs.ts` from the pinned `WsRpcGroup` (below) |
 | `scripts/dev-proxy.mjs` | Plays Traefik for local browser testing (below) |
 | `src/` | The sidecar |
 | `test/` | vitest |
@@ -43,13 +48,30 @@ digest of `patches/`. The web build only needs rebuilding when that key
 changes. On the devvm with a warm pnpm store, the whole script took 2 min 57 s
 and peaked at 3.3 GB RSS (`PNPM_STORE_DIR` reuses a store).
 
-There is no second lockfile. `effect` (4.0.2 with T3's patch), `@effect/platform-node`,
+There is no second lockfile. `effect` (4.0.4; T3 carries no patch for it at
+`v0.1.0`), `@effect/platform-node`,
 esbuild, vitest and TypeScript 7 all come from T3's `pnpm-lock.yaml` at the pin.
 `link-t3.sh` also links two app packages for single files that import only
 contracts: `t3` (the server's `auth/RpcAuthorization.ts`) and `@t3tools/web`
 (the first-run gate logic, in tests). Because the web-only install leaves
 `apps/server` without `node_modules`, the script gives it `effect` and
 `@t3tools/contracts` inside the generated checkout.
+
+The sidecar reports the pinned tag (`T3_PIN`'s `tag=`, without the `v`) as
+its `serverVersion`. `build-sidecar.sh`, `gen-stubs.sh` and `vitest.config.ts`
+read it from `T3_PIN` and hand it to the bundle as a define, so a pin bump
+changes it with nothing else to edit.
+
+### Moving the pin
+
+1. Set `tag=` and `commit=` in `T3_PIN` (the commit is
+   `git rev-parse <tag>^{commit}` in a T3 clone).
+2. `build-web.sh` and `link-t3.sh` as above. A patch that no longer applies
+   stops the build.
+3. `scripts/gen-stubs.sh`, then `npm test` and `npm run typecheck`. An RPC
+   upstream added is a stub from then on; one the sidecar should answer gets
+   a handler in `servedHandlers`, after which `gen-stubs.sh` leaves it out of
+   the table.
 
 ## Running
 
@@ -77,7 +99,7 @@ same `TL_AUTH_HEADER` as tmux-api, and drop the secret with
 umask 077; sudo sed -n 's/^TL_PROXY_SECRET=//p' /etc/terminal-lobby.local.conf > "$W/proxy-secret"
 TL_T3_VIEW_PORT=17690 TL_T3_VIEW_WEB_DIR="$W/web" node dist/tl-t3-view.mjs &
 node scripts/dev-proxy.mjs --listen 127.0.0.1:17691 --target 127.0.0.1:17690 \
-  --identity <an identity that maps to an admin> --secret-file "$W/proxy-secret" &
+  --identity <a lobby identity> --secret-file "$W/proxy-secret" &
 # open the http://127.0.0.1:17691/?token=... link the proxy prints on stderr
 ```
 
@@ -91,16 +113,30 @@ random token at startup and prints a link carrying it, once. Opening the link
 sets an HttpOnly cookie for that port, and the proxy answers 401 to every
 request and upgrade without it, forwarding nothing. Keep the link to
 yourself, and stop the proxy when the check is done. Prefer an identity that
-maps to a throwaway admin over your own where one exists.
+maps to a throwaway account over your own where one exists.
 
 ## Inbound auth
 
 The devvm's nftables accept loopback and 10.0.10.10, so every local OS user
-can reach the sidecar's port. The identity header alone proves nothing there.
-The lobby's control is the proxy secret: Traefik adds `X-TL-Proxy-Secret`, and
-the Go services compare it with `TL_PROXY_SECRET`
-([authuser/resolve.go](../authuser/resolve.go)).
+can reach the sidecar's port. A request is admitted on one of two paths
+(`src/access.ts`), chosen by what it carries, and never falls from one to the
+other:
 
+| Request carries | Path | Checked by |
+|---|---|---|
+| `?wsTicket=<ticket>` | bearer | the ticket's bearer, through tmux-api `/whoami` |
+| `Authorization: Bearer <token>` | bearer | the bearer, through tmux-api `/whoami` |
+| anything else | browser | the identity header and `X-TL-Proxy-Secret`, through tmux-api `/whoami` |
+
+A request with a bearer or a ticket is decided on the bearer path alone: a
+forged identity header beside a bad bearer gets the bearer's 401 and the
+header gate is never asked.
+
+### Browser path
+
+The identity header alone proves nothing on this box. The lobby's control is
+the proxy secret: Traefik adds `X-TL-Proxy-Secret`, and the Go services
+compare it with `TL_PROXY_SECRET` ([authuser/resolve.go](../authuser/resolve.go)).
 The sidecar verifies the secret without holding it:
 
 ```mermaid
@@ -113,33 +149,97 @@ sequenceDiagram
     S-->>B: served
   else
     S->>T: GET /whoami with the same two headers
-    T-->>S: 200 {osUser, admin} / 401 / 403
-    S-->>B: served if admin and not acting as someone else, else 401/403
+    T-->>S: 200 {osUser} / 401 / 403
+    S-->>B: served unless acting as someone else, else 401/403
   end
 ```
 
-- Every route goes through the gate, including static files and the `/ws`
-  upgrade. A refused caller gets 401 or 403 before routing, so it does not
-  learn which paths exist or which protocol version the sidecar speaks.
+- Every route except the credential-less ones below goes through the gate,
+  including static files and the `/ws` upgrade. A refused caller gets 401 or
+  403 before routing, so it does not learn which paths exist.
 - tmux-api does the secret comparison, so the secret stays in tmux-api's
-  environment only. The sidecar's cache holds a SHA-256 digest of an admitted
-  secret, keyed by identity, for 30 seconds. A later request is admitted from
-  the cache only when the digest of the secret it presents matches, compared
-  with `timingSafeEqual`.
+  environment only. The cache holds a SHA-256 digest of an admitted secret,
+  keyed by identity, for 30 seconds, compared with `timingSafeEqual`.
 - Refusals are never cached. A burst of concurrent requests for the same pair
   (a page load fetches about 280 assets) shares one `/whoami` call.
-- Only admins are admitted (`/whoami`'s `admin`), and an answer that carries
+- Every lobby user is admitted, admin or not. An answer that carries
   `realUser` (acting as someone else) is refused.
 - tmux-api unreachable: 502.
-- The `/ws` upgrade must carry an `Origin` whose host is the request's `Host`,
-  or it gets 403, as session-events' `sameOrigin` does (`src/origin.ts`). The
-  Authentik cookie covers the whole `viktorbarzin.me` site, so a page on any
-  sibling host would otherwise reach the gate with the admin's identity. A
-  write whose `Sec-Fetch-Site` names another origin is refused the same way.
-- The secret a request presented travels with its `Identity`, because later
-  stages relay the identity header and the secret on every call to
-  session-events and tmux-api, as the browser's own calls do. It lives as long
-  as the request or WebSocket that brought it.
+- A browser's `/ws` upgrade must carry an `Origin` whose host is the request's
+  `Host`, or it gets 403, as session-events' `sameOrigin` does
+  (`src/origin.ts`). The Authentik cookie covers the whole `viktorbarzin.me`
+  site, so a page on any sibling host would otherwise reach the gate with the
+  user's identity. A browser write whose `Sec-Fetch-Site` names another origin
+  is refused the same way.
+
+### Bearer path: paired apps
+
+A T3 app pairs with a code the lobby's Settings shows (tmux-api
+`POST /devices/pair`), and from then on sends its device token:
+
+```mermaid
+sequenceDiagram
+  participant A as T3 app
+  participant S as tl-t3-view
+  participant T as tmux-api
+  A->>S: GET /.well-known/t3/environment (no credential)
+  A->>S: POST /oauth/token, subject_token=<code>
+  S->>T: POST /devices/exchange {code, label, deviceType, os} (loopback)
+  T-->>S: {token}
+  S-->>A: {access_token, token_type: Bearer, scope}
+  A->>S: POST /api/auth/websocket-ticket, Authorization: Bearer
+  S->>T: GET /whoami, Authorization: Bearer (cached 30 s by sha256)
+  S-->>A: {ticket, expiresAt} (single use, 60 s, memory only)
+  A->>S: GET /ws?wsTicket=... (any Origin)
+  loop every 60 s, and on any 401 from a lobby call
+    S->>T: GET /whoami, Authorization: Bearer
+  end
+```
+
+- The sidecar holds no credential of its own. Every call it makes for a
+  paired app (tmux-api, session-events) carries the app's
+  `Authorization: Bearer`, and authuser resolves it there like any bearer.
+- `/oauth/token` reaches tmux-api's `POST /devices/exchange` on loopback with
+  no forwarding headers, which that route requires. The token has no fixed
+  expiry, so `expires_in` is ten years; tmux-api stops a device that is unused
+  for 90 days.
+- Refusals are T3's JSON errors. A bad or revoked bearer, or a spent or
+  expired ticket, is 401 `{_tag: "EnvironmentAuthInvalidError", code:
+  "auth_invalid", reason, traceId}`, which makes T3's client offer to pair
+  again. tmux-api unreachable is 500 `EnvironmentInternalError`, which the
+  client retries.
+- Bearer answers carry T3's CORS headers (`Access-Control-Allow-Origin: *`,
+  no credentials), and `OPTIONS` on any path is a 204 preflight with T3's
+  method and header list: the desktop renderer runs on `t3code://app`. They
+  grant no credentials, so a page elsewhere cannot use a browser's cookie
+  through them.
+- A bearer request skips the origin and cross-site checks. A page cannot make
+  a browser attach someone's bearer, and a ticket is issued only to a bearer.
+- Tickets and tokens are never logged.
+
+### Revocation and shared streams
+
+Each open WebSocket that came in on a bearer is checked again every 60 s, and
+at once when a lobby call made with that bearer answers 401
+(`src/revocation.ts`). When tmux-api now refuses the bearer, its sockets close
+with code 4401 and the hub forgets the credential.
+
+A thread's upstream stream from session-events is shared by every client of
+that (OS user, session), so it runs under one client's credential
+(`src/hub.ts`, `src/threads/live.ts`):
+
+- Each WebSocket holds its credential with the user's hub while it is open. An
+  HTTP request only marks its credential as the most recent.
+- A stream opens under the newest held credential, or the most recent one
+  when no socket is open, and remembers which.
+- Whenever the set of held credentials changes, a stream whose credential no
+  open socket holds is ended and reopened under a held one, resuming from its
+  last event id. So one device closing its app never ends another client's
+  view, and while any socket is open no stream runs on a credential nobody is
+  re-checking.
+- A revoked credential is dropped from the holders, and its streams move the
+  same way. With no other client left, they stay closed until one connects;
+  without a subscriber they are forgotten after 60 s as before.
 
 Caches of lobby data are keyed by OS user first (`src/hub.ts` keeps one
 `UserHub` per OS user), and a live thread by (OS user, thread id).
@@ -148,25 +248,33 @@ Caches of lobby data are keyed by OS user first (`src/hub.ts` keeps one
 
 | Route | Answer |
 |---|---|
-| `GET /.well-known/t3/environment` | Descriptor, `orchestrationProtocolVersion: 2`, a host-derived stable `environmentId` |
+| `GET /.well-known/t3/environment` | Descriptor, no credential needed: `orchestrationProtocolVersion: 2`, a host-derived stable `environmentId`, `serverVersion` from the pin |
 | `GET /.well-known/t3/thread/:key` | The user's thread id for the key the lobby frames a session by; 404 when none |
 | `GET /.well-known/t3/session/:threadId` | The other way: `{ key, name }`, the lobby key and the session's name now, for one of the user's own threads; 404 for someone else's or an unknown one. The embed patch's `tl-route` reports use it |
-| `GET /api/auth/session` | `authenticated: true`; permissions `orchestration:read`, `orchestration:operate`, `filesystem:read` |
+| `GET /api/auth/session` | `authenticated: true`, `sessionMethod` `browser-session-cookie` or `bearer-access-token`; permissions `orchestration:read`, `orchestration:operate`, `filesystem:read`. No credential, or a refused bearer: 200 `authenticated: false`, as T3's server answers |
+| `POST /api/auth/browser-session` | A browser opening `/pair#token=...` while signed in: the same success, no cookie issued, the code not spent |
+| `POST /oauth/token` | No credential needed: T3's token exchange, a pairing code for a device token (above); bad code 401, malformed 400 |
+| `POST /api/auth/websocket-ticket` | Bearer only: `{ticket, expiresAt}`, one upgrade within 60 s |
 | `GET /api/orchestration/shell` | Shell snapshot; 400 without `x-t3-orchestration-protocol: 2` |
 | `GET /api/orchestration/threads/:id/bounded` | The thread's projection; the window is the whole projection for now (`hasMoreHistory: false`); 404 for a thread the lobby does not list |
 | `GET /api/orchestration/threads/:id/history` | An empty page: there is no older history to fetch until paging lands |
+| `GET /api/orchestration/threads/:id/transcript` | `{threadId, title, updatedAt, items}` from the projection's visible rows, as T3's server builds it; 400 `thread_transcript_too_large` past T3's 50 MB attachment limit, 404 for a thread the lobby does not list |
 | `POST /api/observability/v1/traces` | 204 (the client posts traces unconditionally) |
-| `GET /ws?orchestrationProtocol=2` | Effect RPC, `RpcSerialization.layerJson`; 426 on any other version |
+| `GET /ws?orchestrationProtocol=2` | Effect RPC, `RpcSerialization.layerJson`; 426 on any other version. A browser upgrade must be same-origin; a ticket or bearer upgrade may come from any origin |
+| `OPTIONS *` | CORS preflight, 204 |
 | `GET *` | The web build; `index.html` for app routes, and a 302 to the thread's id for `/{environmentId}/{key}` named by another key; other `/api/`, `/ws`, `/.well-known/` paths 404 |
 
 RPC (`src/rpc/`):
 
-- `stubs.ts` has a default for all 193 RPCs of `WsRpcGroup` at the pin. A unary
-  RPC dies with "tl-t3-view does not serve <tag>" and logs a warning; a
-  subscription stays open and silent, because the client re-raises a failed
-  subscription. Keys are written out, so a pin bump that adds an RPC is a type
-  error in `handlers.ts`, and one that removes an RPC fails `test/stubs.test.ts`.
-- `handlers.ts` has the real handlers: config, lifecycle, probe, shell,
+- `stubs.ts` is generated by `scripts/gen-stubs.sh`: every RPC of the pinned
+  `WsRpcGroup` (193 at `v0.1.0`) that `servedHandlers` does not answer,
+  mapped to a fallback (`fallback.ts`). A unary RPC dies with "tl-t3-view does
+  not serve <tag>" and logs a warning; a subscription stays open and silent,
+  because the client re-raises a failed subscription. A pin bump that adds an
+  RPC is a type error in `handlers.ts` until the table is regenerated, and
+  `test/stubs.test.ts` fails while the committed file differs from what the
+  generator writes.
+- `handlers.ts` (`servedHandlers`) has the real handlers: config, lifecycle, probe, shell,
   archived shell, `thread.visit`, and honest empty answers for what the client
   calls unprompted (previews, VCS status, refs, source control, scheduled
   tasks, project clones, file metadata, `t3.json`, project favicons).

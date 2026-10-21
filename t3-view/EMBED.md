@@ -289,3 +289,18 @@ the session's menu.
   the other session, which loads the T3 client again.
 - Theme: the frame follows its own theme setting. Passing the lobby's light or
   dark choice is not part of version 1.
+
+## Auth inside the frame
+
+The frame is a browser on the sidecar's own origin, so it takes the
+sidecar's browser path (README.md "Inbound auth"): Traefik's forward-auth and
+the proxy secret, with no pairing. Since ADR-0045 the T3 view is for every
+lobby user, not only admins. Two answers changed for paired apps and are
+harmless to the frame:
+
+- `GET /.well-known/t3/environment` answers without a credential, so the
+  patch's same-origin read of it works as before and needs nothing new.
+- `/api/auth/session` names the method, and for the frame that stays
+  `browser-session-cookie`. A `/pair#token=...` link opened in a signed-in
+  browser makes the client post `/api/auth/browser-session`, which the
+  sidecar answers with the same success without spending the code.
