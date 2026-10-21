@@ -30,7 +30,7 @@ import { tmuxApiWhoami } from "./whoami.ts";
 function start(): void {
   let config: ReturnType<typeof loadConfig>;
   try {
-    config = loadConfig(process.env, hostname());
+    config = loadConfig(process.env);
   } catch (error) {
     if (error instanceof ConfigError) {
       process.stderr.write(`tl-t3-view: ${error.message}\n`);

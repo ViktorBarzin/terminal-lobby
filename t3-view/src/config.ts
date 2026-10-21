@@ -24,7 +24,7 @@ export interface SidecarConfig {
   readonly sessionEventsUrl: string;
   /** The built T3 web client (build-web.sh's web/). */
   readonly webDir: string;
-  /** The environment's name in T3's UI. */
+  /** The environment's name in T3's UI (TL_T3_VIEW_LABEL, else "Terminal Lobby"). */
   readonly environmentLabel: string;
   /**
    * Where the sidecar keeps what must outlive a restart (prompts awaiting
@@ -42,6 +42,9 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 const DEFAULT_AUTH_HEADER = "X-Authentik-Username";
 const DEFAULT_PORT = 7690;
+// What T3 lists this server as. The box's hostname said "devvm", which names
+// the machine rather than the lobby the sessions live in.
+const DEFAULT_LABEL = "Terminal Lobby";
 
 function value(env: Env, key: string): string | undefined {
   const raw = env[key]?.trim();
@@ -64,7 +67,7 @@ function parsePort(raw: string | undefined): number {
 
 const withoutTrailingSlash = (url: string): string => url.replace(/\/+$/, "");
 
-export function loadConfig(env: Env, hostname: string): SidecarConfig {
+export function loadConfig(env: Env): SidecarConfig {
   if ((env.TL_PROXY_SECRET ?? "") !== "") {
     throw new ConfigError(
       "TL_PROXY_SECRET is set in tl-t3-view's environment. The sidecar verifies the " +
@@ -84,7 +87,7 @@ export function loadConfig(env: Env, hostname: string): SidecarConfig {
       value(env, "TL_T3_VIEW_SESSION_EVENTS") ?? "http://127.0.0.1:7685",
     ),
     webDir: value(env, "TL_T3_VIEW_WEB_DIR") ?? "/usr/lib/terminal-lobby/tl-t3-view/web",
-    environmentLabel: value(env, "TL_T3_VIEW_LABEL") ?? hostname,
+    environmentLabel: value(env, "TL_T3_VIEW_LABEL") ?? DEFAULT_LABEL,
     // systemd's StateDirectory= sets STATE_DIRECTORY, colon-separated when
     // the unit names several.
     stateDir: value(env, "TL_T3_VIEW_STATE_DIR") ?? value(env, "STATE_DIRECTORY")?.split(":")[0],
