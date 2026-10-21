@@ -10,9 +10,10 @@ package authuser
 //
 // The order inside Resolve is deliberate and is what the tests pin:
 //
-//  1. a bearer credential, when the request presents one and this box has any.
-//     It is a whole answer on its own, so it comes before the secret it
-//     replaces — see bearer.go;
+//  1. a bearer credential: a device token, by its prefix, whether or not any
+//     device is paired (devices.go); otherwise a tokens-file credential, when
+//     this box has any. Either is a whole answer on its own, so it comes
+//     before the secret it replaces — see bearer.go;
 //  2. the proxy secret, when configured, BEFORE anything reads identity — an
 //     unauthenticated caller must not reach identity resolution at all;
 //  3. the identity header, by its configured name only;
@@ -79,6 +80,12 @@ type Config struct {
 	// means no credentials exist and the bearer path is unavailable. See
 	// bearer.go.
 	BearerTokensPath string
+
+	// DevicesPath is TL_DEVICES and DevicesSeenPath is TL_DEVICES_SEEN: the
+	// paired T3 apps and when each was last used. Empty means the defaults
+	// under /var/lib/terminal-lobby. See devices.go.
+	DevicesPath     string
+	DevicesSeenPath string
 }
 
 // Header is the identity header's configured name, or the compiled default
@@ -109,6 +116,8 @@ func ConfigFromEnv() Config {
 		ProxySecret:      os.Getenv("TL_PROXY_SECRET"),
 		MultiUser:        strings.TrimSpace(os.Getenv("TL_MULTI_USER")),
 		BearerTokensPath: strings.TrimSpace(os.Getenv("TL_BEARER_TOKENS")),
+		DevicesPath:      strings.TrimSpace(os.Getenv("TL_DEVICES")),
+		DevicesSeenPath:  strings.TrimSpace(os.Getenv("TL_DEVICES_SEEN")),
 	}
 }
 
@@ -128,6 +137,14 @@ type Identity struct {
 	MultiUser bool
 	// Admin reports whether RealOSUser administers this box.
 	Admin bool
+	// Method names the credential that answered: MethodBrowser for the
+	// identity header, MethodToken for a tokens-file credential, MethodDevice
+	// for a paired T3 app. A route that only a signed-in person may use, such
+	// as pairing another device, checks it.
+	Method string
+	// DeviceID is the paired app's id when Method is MethodDevice, and empty
+	// otherwise.
+	DeviceID string
 }
 
 // Resolve answers the whole question for one request.
@@ -139,7 +156,13 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 	// path exactly as it was. And with no credentials on the box the feature is
 	// off, so an Authorization header goes back to being whatever the proxy
 	// upstream is doing with it rather than a refusal.
+	//
+	// A device token is told apart by its prefix and answered by the device
+	// registry alone, before the tokens file is read (devices.go).
 	if token, presented := bearerToken(r); presented {
+		if strings.HasPrefix(token, DeviceTokenPrefix) {
+			return g.resolveDevice(r, token)
+		}
 		if creds := g.bearerCreds(); len(creds) > 0 {
 			return g.resolveBearer(r, token, creds)
 		}
@@ -155,7 +178,7 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 	}
 
 	multi := g.MultiUser()
-	out := Identity{Header: raw, MultiUser: multi}
+	out := Identity{Header: raw, MultiUser: multi, Method: MethodBrowser}
 
 	if !multi {
 		// Single-user: the account is whoever the service runs as. The header

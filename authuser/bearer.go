@@ -28,20 +28,26 @@ package authuser
 // every credential on the box.
 //
 // The middle field is a verifier, not the token, and that is the whole reason
-// this file can be trusted with anything. TL_PROXY_SECRET lives in
-// /etc/terminal-lobby.local.conf, 0640 root:root: systemd reads it as root and
-// hands it over after dropping to User=wizard, so nothing else running as
-// wizard ever sees it. This file has no such help — the service opens it
-// itself, at request time, as wizard — so it has to be readable by the account
-// every other lobby process also runs as. Holding tokens there would make the
-// per-caller credential weaker than the shared secret it replaces. Holding
-// digests hands a reader something it cannot present.
+// this file can be trusted with anything. The service opens it itself, at
+// request time, as the service account, so it has to be readable by the account
+// every lobby process runs as. Holding digests hands a reader something it
+// cannot present.
 //
-// Which leaves who may WRITE it, and that one the file mode cannot answer: the
-// service account owning the file is exactly the state 0600 describes, and an
-// account that owns the file appends a line naming any terminal account on the
-// box. So the owner must be root. Both halves are checked on every read, and
-// either one failing means no credentials rather than an error.
+// What the file modes protect, and from whom. TL_PROXY_SECRET lives in
+// /etc/terminal-lobby.local.conf, 0640 root:root, which keeps it from the box's
+// other OS users. It does not keep it from the service account: systemd hands
+// it over in the environment, and any process running as that account can read
+// it from the service's /proc/<pid>/environ (measured 2026-10-21). That account
+// also holds sudo on this box. So no file here is a boundary against the service
+// account itself; the boundary these checks enforce is against other OS users.
+//
+// Which leaves who may WRITE it. The service account owning the file is the
+// state 0600 describes, and an account that owns the file appends a line naming
+// any terminal account on the box. So the owner must be root, which makes
+// issuing a machine credential an operator's act under sudo rather than a file
+// write any process can make. Both halves are checked on every read, and either
+// one failing means no credentials rather than an error. Device tokens follow a
+// different owner rule, and devices.go explains why.
 //
 // What the tests pin, and what a reader should be able to rely on:
 //
@@ -325,7 +331,8 @@ func (g *Gate) resolveBearer(r *http.Request, token string, creds []bearerCred) 
 		// Admin drives whether the SPA offers the act-as picker. A bearer
 		// cannot act as anyone whatever account it resolves to, so reporting it
 		// as an administrator would advertise a control that could only fail.
-		Admin: false,
+		Admin:  false,
+		Method: MethodToken,
 	}, nil
 }
 

@@ -48,6 +48,7 @@ import (
 	"errors"
 	"os"
 	"regexp"
+	"time"
 )
 
 // DefaultAdminsPath is where t3-provision-users.sh installs the admin list,
@@ -140,6 +141,21 @@ type Gate struct {
 	// stopping early reports which one did.
 	countTokenReads    func()
 	countTokenCompares func()
+
+	// OnDeviceUsed reports a request a paired T3 app authenticated, by the
+	// device's id, so tmux-api can record when each device was last used
+	// (devices.go). Fired only on a successful device resolve. A hook for
+	// OnActAs's reason: every service resolves device tokens, and only the
+	// registry's writer should write.
+	OnDeviceUsed func(deviceID string)
+
+	// devicesOwnerUID, now and countDeviceReads are test seams for the device
+	// registry. Nil means the production answer: this process's uid, the real
+	// clock, and no count. A test cannot create a file another uid owns, and
+	// the idle limit is ninety days.
+	devicesOwnerUID  func() int
+	now              func() time.Time
+	countDeviceReads func()
 
 	// LookupUser verifies a mapped account exists on this host. Nil means
 	// os/user.Lookup; the tests supply their own.
