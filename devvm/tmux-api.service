@@ -25,6 +25,13 @@ EnvironmentFile=-/etc/terminal-lobby.local.conf
 ExecStart=/usr/local/bin/tmux-api
 Restart=always
 User=wizard
+# Paired T3 apps (tmux-api/devices.go): the device registry and its last-use
+# file live in /var/lib/terminal-lobby, which systemd creates and hands to
+# User= before the service starts. Owner-only, because authuser refuses a
+# registry any other account could read. Every lobby service reads it, and
+# they all run as this same account.
+StateDirectory=terminal-lobby
+StateDirectoryMode=0700
 # Web Push VAPID keypair (Notifications Part 2), installed from Vault by
 # deploy.sh. The leading '-' keeps the service booting when the file is absent
 # (push simply stays dark). Read by systemd as root before the User=wizard

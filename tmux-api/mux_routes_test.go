@@ -106,6 +106,13 @@ func serviceRoutes() []route {
 		{"/push/focus", http.MethodPost, "/push/focus", handlePushFocus},
 		{"/push/vapid-public", http.MethodGet, "/push/vapid-public", handlePushVAPIDPublic},
 		{"/push/test", http.MethodPost, "/push/test", handlePushTest},
+		// Paired T3 apps (devices.go). The exchange is loopback-only, and an
+		// httptest request comes from 192.0.2.1, so the probe is refused there
+		// before anything is read.
+		{"/devices", http.MethodGet, "/devices", handleDevices},
+		{"/devices/pair", http.MethodPost, "/devices/pair", handleDevicePair},
+		{"/devices/exchange", http.MethodPost, "/devices/exchange", handleDeviceExchange},
+		{"/devices/", http.MethodDelete, "/devices/a1b2c3d4e5f60718", handleDeviceByID},
 		{"/health", http.MethodGet, "/health", nil},
 	}
 }
@@ -290,6 +297,7 @@ func TestEveryHandlerFuncHasARoute(t *testing.T) {
 		"setNetworkHeader":  "stamps a header on a response another handler is already writing",
 		"linkCaller":        "identity helper for /links; refuses a lens tab",
 		"viewedLink":        "view-cookie helper for the /link/ transcript routes",
+		"deviceOwner":       "identity helper for /devices; refuses a bearer and a lens tab",
 	}
 
 	fset := token.NewFileSet()

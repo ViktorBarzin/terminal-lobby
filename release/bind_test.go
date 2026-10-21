@@ -262,3 +262,39 @@ func TestTheStateDirectoryIsDeclaredAndOwnerOnly(t *testing.T) {
 		t.Errorf("StateDirectoryMode=%s opens /var/lib/%s to group or other", mode, name)
 	}
 }
+
+// Paired T3 apps are kept in /var/lib/terminal-lobby, which tmux-api's unit
+// creates with StateDirectory= as User=. Without it the service account cannot
+// create a directory under /var/lib, and the first pairing would fail with a
+// 500. Owner-only: the registry holds token digests, and authuser refuses a
+// registry anyone but the service account can read. session-events and the
+// other services read it as the same account, so 0700 does not lock them out.
+func TestTmuxAPIDeclaresTheDeviceStateDirectory(t *testing.T) {
+	unit := repoFile(t, "devvm", "tmux-api.service")
+	src := repoFile(t, "authuser", "devices.go")
+	for _, constant := range []string{"DefaultDevicesPath", "DefaultDevicesSeenPath"} {
+		m := regexp.MustCompile(constant + `\s*=\s*"([^"]+)"`).FindStringSubmatch(src)
+		if m == nil {
+			t.Fatalf("no %s constant in authuser/devices.go", constant)
+		}
+		name := unitKey(unit, "StateDirectory")
+		if name == "" {
+			t.Fatal("devvm/tmux-api.service declares no StateDirectory; paired devices would have nowhere to be written")
+		}
+		if got := filepath.Join("/var/lib", name); got != filepath.Dir(m[1]) {
+			t.Errorf("the unit creates %s and authuser's %s lives in %s", got, constant, filepath.Dir(m[1]))
+		}
+	}
+	mode := unitKey(unit, "StateDirectoryMode")
+	bits, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil {
+		t.Fatalf("StateDirectoryMode=%q is not an octal mode: %v", mode, err)
+	}
+	if bits&0o077 != 0 {
+		t.Errorf("StateDirectoryMode=%s opens the device registry's directory to group or other", mode)
+	}
+	if user := unitKey(unit, "User"); user == "" || user != unitKey(repoFile(t, "devvm", "session-events.service"), "User") {
+		t.Errorf("tmux-api runs as %q and session-events as %q; both read the 0700 registry, so they must be one account",
+			user, unitKey(repoFile(t, "devvm", "session-events.service"), "User"))
+	}
+}

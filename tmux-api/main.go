@@ -474,6 +474,9 @@ func main() {
 			"tl.to": target, "tl.kind": reason,
 		})
 	}
+	// Every service resolves device tokens; this one also records when each
+	// was last used, because it is the registry's only writer (devices.go).
+	wireDeviceGate(actAsGate)
 	actAsGate.Configure("tmux-api", addr)
 	if a := os.Getenv("TMUX_API_ADDR"); a != "" {
 		addr = a
@@ -559,6 +562,13 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/push/focus", handlePushFocus)
 	mux.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
 	mux.HandleFunc("/push/test", handlePushTest)
+	// Paired T3 apps (devices.go). pair, list and revoke are a signed-in
+	// browser's; exchange is tl-t3-view's, on loopback, and the code it carries
+	// is its only credential.
+	mux.HandleFunc("/devices", handleDevices)
+	mux.HandleFunc("/devices/pair", handleDevicePair)
+	mux.HandleFunc("/devices/exchange", handleDeviceExchange)
+	mux.HandleFunc("/devices/", handleDeviceByID)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})

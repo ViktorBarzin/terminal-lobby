@@ -29,7 +29,13 @@ func TestMain(m *testing.M) {
 	actAsGate = &authuser.Gate{
 		AdminsPath: filepath.Join(dir, "no-admins"),
 		MapPath:    filepath.Join(dir, "no-user-map"),
-		Config:     authuser.Config{MultiUser: "on"},
+		// The paired-device registry, so no test reads the box's real one or
+		// writes into /var/lib.
+		Config: authuser.Config{
+			MultiUser:       "on",
+			DevicesPath:     filepath.Join(dir, "devices.json"),
+			DevicesSeenPath: filepath.Join(dir, "devices-seen.json"),
+		},
 	}
 	mapPath = actAsGate.MapPath
 	// The public-link store, so no test reads or writes the box's real
