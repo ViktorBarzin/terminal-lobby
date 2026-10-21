@@ -1,6 +1,6 @@
 # T3's apps are clients of lobby sessions
 
-Status: accepted 2026-10-21, not yet built.
+Status: accepted 2026-10-21. Stages 1 to 3 shipped the same day in terminal-lobby 0.128.0 and 0.129.0; the iPhone check and the retirement of `t3-serve` are still to come.
 
 Viktor, 2026-10-20: *"let's try the t3 interoperability again. i think tmux
 sessions are not needed anymore. it would be good to be able to see t3 sessions
@@ -25,7 +25,7 @@ Design and the full decision list:
 | What a session is | One Claude conversation, hosted by the lobby. T3 is a UI over it, not a second host |
 | Which clients | T3 web, desktop and phone, plus the lobby's own Terminal, Text and T3 views. All drive the same live process |
 | Starting a session | Unchanged on either side. A thread started in any T3 client is a lobby session from its first prompt (ADR-0044 decision 21) |
-| Where T3 is served | `t3.viktorbarzin.me`, one environment for all users. `t3view.viktorbarzin.me` redirects there |
+| Where T3 is served | `t3.viktorbarzin.me`, one environment for all users. `t3view.viktorbarzin.me` keeps serving the sidecar until the iPhone check, so a rollback is one constant in the lobby, and becomes a redirect after it |
 | How a T3 app proves who it is | A pairing code the lobby shows as a link and QR code. tmux-api mints the code, exchanges it for a bearer token and checks that token on every request. Tokens are listed and revocable in the lobby |
 | Who gets it | Every lobby user. The T3 view stops being admin-only |
 | Which sessions cross | Claude only. Codex, pi and plain shells stay in the lobby |

@@ -1,6 +1,6 @@
 # T3 everywhere: T3's apps as clients of lobby sessions
 
-**Status:** design agreed 2026-10-21, not yet built · **ADR:**
+**Status:** stages 1 to 3 done 2026-10-21 (terminal-lobby 0.128.0 and 0.129.0, infra 2ed2e4b9f); stage 4, the iPhone check, is next · **ADR:**
 [0045](../adr/0045-t3-apps-are-clients-of-lobby-sessions.md) · **Builds on:**
 [ADR-0044](../adr/0044-t3-code-renders-a-session-through-its-own-protocol.md)
 and the [T3 view design](2026-10-12-t3-view-design.md) · **Scope:** `t3-view/`,
@@ -63,7 +63,7 @@ first prompt. A session started in the lobby shows in every T3 client's sidebar.
 | 3 | Clients | T3 web, desktop and phone apps, and the lobby's own views |
 | 4 | Users | Every lobby user (today wizard and emo). The T3 view drops its admin-only gate |
 | 5 | Starting a session | Unchanged on both sides |
-| 6 | Address | `t3.viktorbarzin.me` serves `tl-t3-view` and the T3 web build. `t3view.viktorbarzin.me` redirects there |
+| 6 | Address | `t3.viktorbarzin.me` serves `tl-t3-view` and the T3 web build. `t3view.viktorbarzin.me` keeps serving the sidecar until stage 4, then redirects there |
 | 7 | Browser auth | Authentik forward-auth, as today; `tl-t3-view` checks the identity through tmux-api `/whoami` |
 | 8 | Native auth | T3's pairing flow. A "Connect T3" item in the lobby shows a pairing link and QR code. tmux-api mints the code, exchanges it for a bearer token at `/oauth/token`, and checks the token on every request and WebSocket ticket. The lobby lists tokens by device and revokes them |
 | 9 | Native route | An Authentik-less carve-out on `t3.viktorbarzin.me`, as `stacks/t3code` has today, pointed at `tl-t3-view`, with the rate-limit middleware kept |
@@ -113,6 +113,21 @@ appears live on the other.
 | T3 desktop | `T3-Code-<version>-x86_64.AppImage` from T3's GitHub release, under Xvfb |
 | T3 Android | The shared emulator over adb. There is no Play Store on that image, so a release APK from GitHub |
 | T3 iPhone | The App Store app through `homelab ios`, which was down on 2026-10-20 (no tunnel to the phone, Mac unreachable), or Viktor on his own phone |
+
+## Where the rollout stands
+
+| Stage | State | Evidence |
+|---|---|---|
+| 1. Build | Done, 0.128.0 | Pairing, bearer routes, single-use tickets, revocation, the T3 apps page, the daily stable check |
+| 2. Verify on loopback | Done | A code from the lobby's page swapped for a token; 27 sessions listed; a ticket upgrades once and is refused on reuse; revoking closed a live socket with 4401 within one 60 s re-check; a thread started in T3 ran in tmux and a turn typed in its terminal appeared in T3 live |
+| 3. Switch `t3.viktorbarzin.me` | Done | The descriptor, the desktop preflight (204) and the bearer route answer from the sidecar; browsers still go through Authentik; `/probe` still reaches `t3-dispatch`. The lobby frames `t3.` from 0.129.0 |
+| 3. Desktop | Done | T3 Code 0.1.0 AppImage under Xvfb paired, listed sessions, ran a new thread, showed a tmux-typed turn live, and dropped the connection on revoke. The headless box has no keyring, so pairing needed a test-only workaround for Electron's secure storage |
+| 3. Android | Done | Nightly `t3code-android-internal-2.0.0-93.apk` on the shared emulator: paired, listed sessions, new thread, tmux-typed turn live within about 3 s, revoke shown as "The environment credential is invalid." |
+| 3. Lobby's own T3 view framed from `t3.` | Not yet seen | Needs a browser signed in to Authentik |
+| 4. iPhone | Waiting for the rig | |
+| 5. Retire `t3-serve` | After stage 4 | |
+
+The first daily stable run found T3 v0.1.1, published at 02:29 UTC the same day, and held it: the embed patch no longer applies to `AppSidebarLayout.tsx`. `tl_t3_upstream_unadopted_since_seconds` reports it, and `T3StableHeld` fires if it is still held after 36 hours.
 
 ## What we did not do
 
