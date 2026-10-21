@@ -5,12 +5,14 @@ import { t3FrameKeeper, type FrameKeeper } from "../t3/frame-keeper";
 
 /**
  * What the shell hands a session view so it can offer the T3 view: whether
- * the caller is an admin (from /whoami), where the T3 view is served, and the
- * lobby's live chords for the frame to hand back. `origin` is null where no
- * T3 view is configured (a dev server with no `?t3view=`), which offers none.
+ * the caller is signed in as themselves (from /whoami), where the T3 view is
+ * served, and the lobby's live chords for the frame to hand back. `origin` is
+ * null where no T3 view is configured (a dev server with no `?t3view=`),
+ * which offers none.
  */
 export interface T3Wiring {
-  admin: () => boolean;
+  /** /whoami has answered and names no act-as. False until it lands. */
+  self: () => boolean;
   origin: string | null;
   chords: () => readonly FrameChord[];
   /** Move the lobby to the caller's own session the frame went to, in the T3
@@ -167,8 +169,8 @@ function whenIdle(start: () => void): () => void {
 /**
  * The park: where the tab's one T3 frame boots before anyone asks for it, and
  * waits between uses, hidden and out of the tab order. App mounts it on a
- * desktop that can keep a frame (t3/frame-keeper.ts `canKeepFrame`), for an
- * admin acting as themselves.
+ * desktop that can keep a frame (t3/frame-keeper.ts `canKeepFrame`), for a
+ * caller acting as themselves.
  *
  * It boots once the browser is idle, so the lobby's own start (the session
  * list, the terminal attach) goes first.

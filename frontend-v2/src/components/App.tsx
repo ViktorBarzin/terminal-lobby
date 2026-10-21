@@ -2143,14 +2143,14 @@ export const App: Component = () => {
   // included, since the terminal is drawn in this document.
   const engine = createKeybindingEngine();
   // The T3 view (docs/plans/2026-10-12-t3-view-design.md): where it is served,
-  // whether this caller is an admin acting as themselves, and the chords its
-  // frame hands back to this engine. Each SessionView decides from these
-  // whether its own session offers it.
+  // whether this caller is acting as themselves (every user since ADR-0045,
+  // not only admins), and the chords its frame hands back to this engine.
+  // Each SessionView decides from these whether its own session offers it.
   const t3Chords = createMemo(() => frameChords(engine.bindings()));
   const t3: T3Wiring = {
-    admin: () => {
+    self: () => {
       const w = store.whoami();
-      return w?.admin === true && !w.realUser;
+      return !!w && !w.realUser;
     },
     origin: t3ViewOrigin(window.location),
     chords: t3Chords,
@@ -2169,7 +2169,7 @@ export const App: Component = () => {
   // phone or tablet loads it on demand instead, rather than spend memory and
   // battery on a hidden T3 client.
   const t3Preload = createMemo(
-    () => !!t3.origin && t3.admin() && !isMobilePlatform() && canKeepFrame(),
+    () => !!t3.origin && t3.self() && !isMobilePlatform() && canKeepFrame(),
   );
   // Both overlays render OVER the terminal and take focus off it, so dismissing
   // one leaves focus on <body> and the pty deaf. refocusTerminal calls the

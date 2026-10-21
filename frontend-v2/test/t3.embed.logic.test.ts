@@ -478,20 +478,32 @@ describe("the chords the frame hands back", () => {
 });
 
 describe("who is offered the T3 view", () => {
-  const base = { admin: true, actingAs: false, foreign: false, tool: "claude" as const };
+  const base = { actingAs: false, foreign: false, tool: "claude" as const };
 
-  it("an admin, as themselves, on their own Claude session", () => {
+  it("every user, as themselves, on their own Claude session (ADR-0045 decision 4)", () => {
     expect(t3Offered(base)).toBe(true);
   });
 
-  it("nobody else", () => {
-    expect(t3Offered({ ...base, admin: false })).toBe(false);
+  it("nobody acting as someone else, on someone else's session, or on another tool", () => {
     expect(t3Offered({ ...base, actingAs: true })).toBe(false);
     expect(t3Offered({ ...base, foreign: true })).toBe(false);
     expect(t3Offered({ ...base, tool: "pi" })).toBe(false);
     expect(t3Offered({ ...base, tool: "codex" })).toBe(false);
     expect(t3Offered({ ...base, tool: "shell" })).toBe(false);
     expect(t3Offered({ ...base, tool: undefined })).toBe(false);
+  });
+
+  it("is true for exactly one row of the truth table", () => {
+    const rows = [false, true].flatMap((actingAs) =>
+      [false, true].flatMap((foreign) =>
+        (["claude", "pi", "codex", "shell", undefined] as const).map((tool) => ({
+          actingAs,
+          foreign,
+          tool,
+        })),
+      ),
+    );
+    expect(rows.filter((r) => t3Offered(r))).toEqual([base]);
   });
 });
 

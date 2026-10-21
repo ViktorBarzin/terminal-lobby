@@ -1,7 +1,8 @@
 /**
  * The switcher's third option (docs/plans/2026-10-12-t3-view-design.md,
- * decisions 11, 12, 16 and 17): T3 Code's web client in a frame, offered to an
- * admin acting as themselves on their own Claude session, and to nobody else.
+ * decisions 11, 12, 16 and 17; ADR-0045 decision 4): T3 Code's web client in a
+ * frame, offered to every user acting as themselves on their own Claude
+ * session, and to nobody else.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createSignal } from "solid-js";
@@ -18,8 +19,8 @@ import { TileFocusContext } from "../src/lib/ownwhile";
 
 const ORIGIN = "http://127.0.0.1:17691";
 
-const wiring = (admin: () => boolean = () => true): T3Wiring => ({
-  admin,
+const wiring = (self: () => boolean = () => true): T3Wiring => ({
+  self,
   origin: ORIGIN,
   chords: () => [],
 });
@@ -51,13 +52,13 @@ describe("<SessionView> — the T3 option", () => {
     expect(t3Button(container)).toBeNull();
   });
 
-  it("is offered to an admin on their own Claude session", () => {
+  it("is offered to the caller on their own Claude session, admin or not", () => {
     const { container } = mount({ t3: wiring() });
     expect(t3Button(container)).toBeTruthy();
     expect(t3Button(container)!.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("is not offered to a non-admin", () => {
+  it("is not offered while acting as someone else", () => {
     const { container } = mount({ t3: wiring(() => false) });
     expect(t3Button(container)).toBeNull();
   });
@@ -75,11 +76,11 @@ describe("<SessionView> — the T3 option", () => {
     }
   });
 
-  it("appears when /whoami lands and says admin", () => {
-    const [admin, setAdmin] = createSignal(false);
-    const { container } = mount({ t3: wiring(admin) });
+  it("appears when /whoami lands and names no act-as", () => {
+    const [self, setSelf] = createSignal(false);
+    const { container } = mount({ t3: wiring(self) });
     expect(t3Button(container)).toBeNull();
-    setAdmin(true);
+    setSelf(true);
     expect(t3Button(container)).toBeTruthy();
   });
 

@@ -367,17 +367,17 @@ export const SessionView: Component<{
     owner: foreignOwner,
   });
   /**
-   * Whether this session offers the T3 view (design decisions 12, 16, 17): an
-   * admin, as themselves, on their own Claude session, with a T3 view
-   * configured. False until /whoami and the session list have both said so,
-   * which `createViewMode` reads as "show the default for now".
+   * Whether this session offers the T3 view (design decisions 12, 16, 17;
+   * ADR-0045 decision 4): any user, as themselves, on their own Claude
+   * session, with a T3 view configured. False until /whoami and the session
+   * list have both said so, which `createViewMode` reads as "show the default
+   * for now".
    */
   const t3Offered = createMemo(
     () =>
       !!props.t3?.origin &&
       offersT3({
-        admin: props.t3.admin(),
-        actingAs: !!props.lens?.(),
+        actingAs: !!props.lens?.() || !props.t3.self(),
         foreign: !!foreignOwner,
         tool: props.tool?.(),
       }),
@@ -1902,7 +1902,7 @@ export const SessionView: Component<{
                   classList={{ on: mode() === "t3" }}
                   aria-pressed={mode() === "t3"}
                   aria-label="T3 view"
-                  title={mode() === "t3" ? "Back to the Text view" : "T3 view (admin preview)"}
+                  title={mode() === "t3" ? "Back to the Text view" : "T3 view"}
                   onClick={() => setMode(mode() === "t3" ? "text" : "t3")}
                 >
                   <T3Glyph />

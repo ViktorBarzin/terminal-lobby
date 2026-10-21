@@ -808,8 +808,8 @@ src/
                          stay on the session bar, which follows focus
     SessionView.tsx      The per-session two-view surface (text | terminal),
                          and the T3 header over both: title, "project · state"
-                         subtitle, one group with the view icon and "…". An
-                         admin's own Claude session has a third view, T3
+                         subtitle, one group with the view icon and "…". The
+                         caller's own Claude session has a third view, T3
     T3Host.tsx           The T3 view: T3 Code's web client framed from its own
                          origin, one frame per tab, and the lobby's side of
                          the postMessage contract (t3-view/EMBED.md)

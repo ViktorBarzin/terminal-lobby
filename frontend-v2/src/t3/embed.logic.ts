@@ -388,16 +388,16 @@ export function frameChords(b: {
 // ---- who is offered it -----------------------------------------------------
 
 /**
- * Whether a session offers the T3 view (design decisions 12, 16 and 17): an
- * admin, acting as themselves, on their own Claude session. The sidecar
- * refuses everyone else on its own; this only keeps the switcher from
- * offering a view that would answer 403.
+ * Whether a session offers the T3 view: any lobby user (ADR-0045 decision 4,
+ * which dropped the admin-only gate of the first cut), acting as themselves,
+ * on their own Claude session (design decisions 12, 16 and 17). The sidecar
+ * shows each caller only their own sessions and refuses act-as on its own;
+ * this only keeps the switcher from offering a view that could not work.
  */
 export function t3Offered(o: {
-  admin: boolean;
   actingAs: boolean;
   foreign: boolean;
   tool: SessionTool | undefined;
 }): boolean {
-  return o.admin && !o.actingAs && !o.foreign && o.tool === "claude";
+  return !o.actingAs && !o.foreign && o.tool === "claude";
 }
