@@ -30,7 +30,7 @@ COMMIT="$(git rev-parse --short HEAD)"
 # the path it happened to run in.
 echo "==> building Go services (commit $COMMIT)"
 LDFLAGS="-X main.buildID=$COMMIT"
-for svc in tmux-api clipboard-upload session-events file-api skills-api agent-api tl-session-watch tl-browser; do
+for svc in tmux-api clipboard-upload session-events file-api skills-api agent-api tl-session-watch tl-browser tl-t3-upstream-check; do
   (cd "$svc" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
     go build -trimpath -ldflags "$LDFLAGS" -o "$STAGE/bin/$svc" .)
 done
@@ -87,6 +87,10 @@ fi
 t3-view/scripts/link-t3.sh "$T3_WORK"
 t3-view/scripts/build-sidecar.sh -o "$STAGE/bin/tl-t3-view.mjs"
 cp -a "$T3_WORK/web" "$STAGE/tl-t3-view-web"
+# The pin itself, for tl-t3-upstream-check (ADR-0045). One file, not the
+# directory: t3-view/ also holds the sources and the generated node_modules.
+mkdir -p "$STAGE/t3-view"
+cp t3-view/T3_PIN "$STAGE/t3-view/T3_PIN"
 
 # The bundle has to parse under the node that runs it, and the web build has
 # to be the one this checkout's pin and patch name, with the patch in it.

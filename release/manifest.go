@@ -300,6 +300,8 @@ var Package = Manifest{
 		"tl-session-watch",
 		// The T3 view's sidecar (ADR-0044).
 		"tl-t3-view",
+		// The daily check behind the T3StableHeld alert (ADR-0045).
+		"tl-t3-upstream-check.timer",
 	},
 	// The T3 bridge and its syncer are gone (ADR-0029). This is the release
 	// that stops them: the files go with the manifest entries above, and the
@@ -392,6 +394,11 @@ var Package = Manifest{
 		// File rather than part of the web tree beside it, so its unit
 		// watches it and a new sidecar restarts.
 		{Src: "bin/tl-t3-view.mjs", Dest: "/usr/lib/terminal-lobby/tl-t3-view/tl-t3-view.mjs", Mode: 0o644},
+		// The pin the T3 view was built from, which tl-t3-upstream-check
+		// compares with T3 Code's latest stable release (ADR-0045). Shipped so
+		// the check reads what is installed, not what master says.
+		{Src: "t3-view/T3_PIN", Dest: "/usr/lib/terminal-lobby/tl-t3-view/T3_PIN", Mode: 0o644},
+		{Src: "bin/tl-t3-upstream-check", Dest: "/usr/local/bin/tl-t3-upstream-check", Mode: 0o755},
 		// Invoked by ttyd per WebSocket, by sessions, and by tmux-api via sudo.
 		{Src: "devvm/tmux-attach.sh", Dest: "/usr/local/bin/tmux-attach.sh", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-attach", Dest: "/usr/local/bin/tmux-user-attach", Mode: 0o755, Unmanaged: true},
@@ -500,6 +507,8 @@ var Package = Manifest{
 		{Src: "devvm/clipboard-cleanup.timer", Dest: "/etc/systemd/system/clipboard-cleanup.timer", Mode: 0o644},
 		{Src: "devvm/tl-session-watch.service", Dest: "/etc/systemd/system/tl-session-watch.service", Mode: 0o644},
 		{Src: "devvm/tl-t3-view.service", Dest: "/etc/systemd/system/tl-t3-view.service", Mode: 0o644},
+		{Src: "devvm/tl-t3-upstream-check.service", Dest: "/etc/systemd/system/tl-t3-upstream-check.service", Mode: 0o644},
+		{Src: "devvm/tl-t3-upstream-check.timer", Dest: "/etc/systemd/system/tl-t3-upstream-check.timer", Mode: 0o644},
 
 		// The grant every attach depends on. visudo -cf gates it, because a
 		// malformed grant locks every user out of every session.
@@ -582,6 +591,14 @@ var Package = Manifest{
 		{Name: "tl-t3-view", Files: []string{
 			"/usr/lib/terminal-lobby/tl-t3-view/tl-t3-view.mjs",
 			"/etc/systemd/system/tl-t3-view.service",
+		}},
+		// Like clipboard-cleanup.timer: a restart re-arms the timer, and the
+		// service it starts runs the binary and reads the pin fresh each day.
+		{Name: "tl-t3-upstream-check.timer", Files: []string{
+			"/usr/local/bin/tl-t3-upstream-check",
+			"/etc/systemd/system/tl-t3-upstream-check.service",
+			"/etc/systemd/system/tl-t3-upstream-check.timer",
+			"/usr/lib/terminal-lobby/tl-t3-view/T3_PIN",
 		}},
 	},
 }

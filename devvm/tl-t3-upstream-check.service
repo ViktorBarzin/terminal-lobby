@@ -1,0 +1,41 @@
+# tl-t3-upstream-check: is the T3 view on the latest stable T3 Code release?
+#
+# The T3 view follows upstream's stable releases (ADR-0045): a daily CI job
+# rebuilds against a new release and lands the new pin when its build and
+# tests pass. A release that fails is held, and this unit is how a hold gets
+# noticed. Once a day it compares GitHub's latest stable release with the pin
+# the installed package was built from and writes
+# tl_t3_upstream_unadopted_since_seconds for node_exporter's textfile
+# collector. The infra alerts T3StableHeld and T3UpstreamCheckStale read it.
+# A failed fetch writes nothing, so a check that keeps failing shows up as a
+# file that stops getting newer.
+[Unit]
+Description=terminal-lobby: compare the T3 view's pin with T3 Code's latest stable release
+Documentation=https://github.com/ViktorBarzin/terminal-lobby
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tl-t3-upstream-check
+SyslogIdentifier=tl-t3-upstream-check
+
+# Root, as tl-session-watch is, for one reason: the textfile directory is
+# root:root 0755 and every metric in it is written by root. Root here holds no
+# capabilities at all (CapabilityBoundingSet= is empty), so it writes that one
+# directory as its owner and can do nothing a capability would allow. The rest
+# of the filesystem is read-only and home directories are hidden.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/node_exporter/textfile
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=2min

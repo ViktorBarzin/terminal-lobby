@@ -151,3 +151,114 @@ func TestTheBuildStagesTheT3View(t *testing.T) {
 		}
 	}
 }
+
+// The hold alert's input (ADR-0045). The T3 view follows upstream's stable
+// releases through a daily CI job, and a release that fails there is held: its
+// pin never lands. tl-t3-upstream-check is how the box says so. Once a day it
+// compares GitHub's latest stable release with the pin this package was built
+// from, and writes the answer where node_exporter reads it.
+
+const (
+	t3UpstreamBin      = "/usr/local/bin/tl-t3-upstream-check"
+	t3UpstreamService  = "/etc/systemd/system/tl-t3-upstream-check.service"
+	t3UpstreamTimer    = "/etc/systemd/system/tl-t3-upstream-check.timer"
+	t3UpstreamUnit     = "tl-t3-upstream-check.timer"
+	t3InstalledPin     = t3ViewDir + "/T3_PIN"
+	t3UpstreamTextfile = "/var/lib/node_exporter/textfile/tl-t3-upstream.prom"
+)
+
+// The pin travels with the package, so the check compares against what is
+// installed rather than what master says.
+func TestThePackageShipsThePinItWasBuiltFrom(t *testing.T) {
+	f := shippedFile(t, t3InstalledPin)
+	if f.Src != "t3-view/T3_PIN" {
+		t.Errorf("%s installs from %q, want t3-view/T3_PIN", t3InstalledPin, f.Src)
+	}
+	if f.Mode != 0o644 {
+		t.Errorf("%s has mode %v, want 0644", t3InstalledPin, f.Mode)
+	}
+}
+
+func TestTheUpstreamCheckShipsAsAnEnabledTimer(t *testing.T) {
+	if f := shippedFile(t, t3UpstreamBin); f.Src != "bin/tl-t3-upstream-check" {
+		t.Errorf("%s installs from %q, want bin/tl-t3-upstream-check", t3UpstreamBin, f.Src)
+	}
+	shippedFile(t, t3UpstreamService)
+	shippedFile(t, t3UpstreamTimer)
+	var unit *Unit
+	for i := range Package.Units {
+		if Package.Units[i].Name == t3UpstreamUnit {
+			unit = &Package.Units[i]
+		}
+	}
+	if unit == nil {
+		t.Fatalf("no %s unit, so a new check or a new pin restarts nothing", t3UpstreamUnit)
+	}
+	watched := strings.Join(unit.Files, " ")
+	for _, want := range []string{t3UpstreamBin, t3UpstreamService, t3UpstreamTimer, t3InstalledPin} {
+		if !strings.Contains(watched, want) {
+			t.Errorf("%s does not watch %s", t3UpstreamUnit, want)
+		}
+	}
+	var enabled bool
+	for _, u := range Package.Enable {
+		if u == t3UpstreamUnit {
+			enabled = true
+		}
+	}
+	if !enabled {
+		t.Errorf("%s is not enabled, so the check never runs and the staleness alert is all anyone sees", t3UpstreamUnit)
+	}
+}
+
+// The binary's compiled-in defaults are where the package puts the pin and
+// where node_exporter reads, since the unit passes no flags.
+func TestTheUpstreamCheckReadsWhereThePackageInstalls(t *testing.T) {
+	main := repoFile(t, "tl-t3-upstream-check", "main.go")
+	for _, want := range []string{`"` + t3InstalledPin + `"`, `"` + t3UpstreamTextfile + `"`} {
+		if !strings.Contains(main, want) {
+			t.Errorf("tl-t3-upstream-check/main.go has no default %s", want)
+		}
+	}
+	unit := repoFile(t, "devvm", "tl-t3-upstream-check.service")
+	if !regexp.MustCompile(`(?m)^ExecStart=` + regexp.QuoteMeta(t3UpstreamBin) + `$`).MatchString(unit) {
+		t.Errorf("devvm/tl-t3-upstream-check.service does not run %s with its defaults", t3UpstreamBin)
+	}
+}
+
+// The textfile directory is root:root 0755, so the check runs as root, as
+// tl-session-watch does. It gets the one directory it writes and no
+// capabilities, so being root buys it ownership of that directory and nothing
+// else.
+func TestTheUpstreamCheckIsSandboxed(t *testing.T) {
+	unit := repoFile(t, "devvm", "tl-t3-upstream-check.service")
+	for _, want := range []string{
+		"Type=oneshot",
+		"NoNewPrivileges=yes",
+		"CapabilityBoundingSet=",
+		"ProtectSystem=strict",
+		"ProtectHome=yes",
+		"ReadWritePaths=/var/lib/node_exporter/textfile",
+		"PrivateTmp=yes",
+	} {
+		if !regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(want) + `$`).MatchString(unit) {
+			t.Errorf("devvm/tl-t3-upstream-check.service does not carry %s", want)
+		}
+	}
+	if regexp.MustCompile(`(?m)^User=`).MatchString(unit) {
+		t.Error("devvm/tl-t3-upstream-check.service sets User=; the textfile directory is writable by root only")
+	}
+}
+
+// Daily, catching up after downtime, and not on the hour.
+func TestTheUpstreamCheckTimerIsDailyAndPersistent(t *testing.T) {
+	timer := repoFile(t, "devvm", "tl-t3-upstream-check.timer")
+	for _, want := range []string{"OnCalendar=daily", "Persistent=true", "WantedBy=timers.target"} {
+		if !regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(want) + `$`).MatchString(timer) {
+			t.Errorf("devvm/tl-t3-upstream-check.timer does not carry %s", want)
+		}
+	}
+	if !regexp.MustCompile(`(?m)^RandomizedDelaySec=\S+$`).MatchString(timer) {
+		t.Error("devvm/tl-t3-upstream-check.timer sets no RandomizedDelaySec")
+	}
+}

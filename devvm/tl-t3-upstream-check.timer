@@ -1,0 +1,13 @@
+# Once a day, with a random delay so the request to GitHub is not on the hour.
+# Persistent: a box that was off at the scheduled time runs the check when it
+# comes back, rather than leaving the file to age into the staleness alert.
+[Unit]
+Description=Daily check of the T3 view's pin against T3 Code's latest stable release
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

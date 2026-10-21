@@ -5,6 +5,7 @@ file-api/file-api
 skills-api/skills-api
 agent-api/agent-api
 tl-session-watch/tl-session-watch
+tl-t3-upstream-check/tl-t3-upstream-check
 /out/
 /tmp-build/
 

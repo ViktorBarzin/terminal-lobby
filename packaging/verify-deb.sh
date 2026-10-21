@@ -143,6 +143,16 @@ check "the T3 web client carries the embed patch" \
   "$(grep -lq 'tl-bindings' "$t3x"/usr/lib/terminal-lobby/tl-t3-view/web/assets/*.js 2>/dev/null && echo yes || echo no)" yes
 rm -rf "$t3x"
 
+# The hold alert's input (ADR-0045): a daily timer compares the pin the package
+# was built from with T3 Code's latest stable release. Without the pin the
+# check fails every day; without the timer it never runs.
+check "the T3 pin ships beside the sidecar" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-t3-view/T3_PIN$' || true)" 1
+check "the T3 upstream check ships, executable" \
+  "$(printf '%s' "$contents" | grep -c '^-rwxr-xr-x.*usr/local/bin/tl-t3-upstream-check$' || true)" 1
+check "the T3 upstream check's service and timer ship" \
+  "$(printf '%s' "$contents" | grep -cE '^-.*etc/systemd/system/tl-t3-upstream-check\.(service|timer)$' || true)" 2
+
 check "the package's own tooling ships" \
   "$(printf '%s' "$contents" | grep -c 'usr/lib/terminal-lobby/tl-apply' || true)" 1
 

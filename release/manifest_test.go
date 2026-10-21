@@ -348,8 +348,11 @@ func TestEveryStagedSourceDirectoryIsCopiedIntoTheStage(t *testing.T) {
 		if built {
 			continue
 		}
-		var staged bool
-		for dir := filepath.Dir(f.Src); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+		// One file copied at its own path also counts, for a file whose
+		// directory holds far more than the package should take: t3-view/T3_PIN
+		// sits beside the T3 view's sources and its generated node_modules.
+		staged := strings.Contains(build, `cp `+f.Src+` "$STAGE/`+f.Src+`"`)
+		for dir := filepath.Dir(f.Src); !staged && dir != "." && dir != "/"; dir = filepath.Dir(dir) {
 			if strings.Contains(build, `cp -a `+dir+`/. "$STAGE/`+dir+`/"`) {
 				staged = true
 				break
