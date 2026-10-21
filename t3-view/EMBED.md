@@ -22,8 +22,10 @@ The lobby loads one of two URLs:
 | The lobby has seen this origin's environment id before | `{origin}/{environmentId}/{threadId}?embed` |
 | First load from this origin | `{origin}/?embed` |
 
-- `origin` is `https://t3view.<the lobby's domain>` in production
-  (`https://t3view.viktorbarzin.me` for `terminal.viktorbarzin.me`). For a local
+- `origin` is `https://t3.<the lobby's domain>` in production
+  (`https://t3.viktorbarzin.me` for `terminal.viktorbarzin.me`), the same host
+  T3's own apps pair with (ADR-0045). `t3view.<domain>` serves the same sidecar
+  as a fallback, and the frame works there too. For a local
   check the lobby takes `?t3view=<origin>`, limited to http on loopback. The
   lobby grants the frame clipboard access only on the production origin.
 - `environmentId` is the one the sidecar's descriptor carries
@@ -63,7 +65,7 @@ that frames it cannot choose it:
 
 The frame then accepts that origin only when it is the lobby itself:
 exactly `https://terminal.<the frame's domain>` (`https://terminal.viktorbarzin.me`
-for `t3view.viktorbarzin.me`), or `http` on loopback with the frame on loopback
+for `t3.viktorbarzin.me`), or `http` on loopback with the frame on loopback
 too. Any other parent, a sibling page on the same site included, gets a frame
 that behaves as upstream and posts nothing. The parent the frame accepts sees
 every chord it forwards, so this is a single origin rather than a domain.

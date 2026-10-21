@@ -16,8 +16,13 @@ import type { SessionTool } from "../types/lobby";
 
 // ---- where the frame is served -------------------------------------------
 
-/** The T3 view's host name, beside the lobby's own. */
-const T3_LABEL = "t3view";
+/**
+ * T3's host name, beside the lobby's own: where the lobby frames the T3 view
+ * and where T3's own apps pair (ADR-0045 decision 6). `t3view` serves the same
+ * sidecar as a fallback, so rolling the frame back is this one constant, and
+ * it moves pairing links along with it.
+ */
+const T3_LABEL = "t3";
 
 const isLoopback = (host: string): boolean =>
   host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
@@ -40,26 +45,15 @@ function sharedDomain(hostname: string): string | null {
 }
 
 /**
- * Where the T3 view lives in production: `t3view.` on the lobby's own domain,
- * so a deploy on another domain needs no rebuild. Null where the lobby runs on
- * loopback (a dev server), which offers no T3 view unless `?t3view=` names one.
+ * Where T3 lives in production: `t3.` on the lobby's own domain, so a deploy
+ * on another domain needs no rebuild. The T3 view frames it, and Settings →
+ * T3 apps points pairing links at it. Null where the lobby runs on loopback
+ * (a dev server), which offers no T3 view unless `?t3view=` names one, and
+ * shows a pairing code without a link.
  */
 export function defaultT3Origin(lobbyHostname: string): string | null {
   const d = sharedDomain(lobbyHostname);
   return d ? `https://${T3_LABEL}.${d}` : null;
-}
-
-/** The host name T3's own apps connect to, beside the lobby's (ADR-0045 decision 6). */
-const T3_APP_LABEL = "t3";
-
-/**
- * Where T3's web, desktop and phone apps reach the lobby's sessions, and so
- * where a pairing link points: `t3.` on the lobby's own domain. Null on a dev
- * server with no domain, where Settings shows the code without a link.
- */
-export function t3AppOrigin(lobbyHostname: string): string | null {
-  const d = sharedDomain(lobbyHostname);
-  return d ? `https://${T3_APP_LABEL}.${d}` : null;
 }
 
 /**

@@ -61,7 +61,7 @@ the mod (ADR-0036).
 
 ```mermaid
 flowchart TD
-  B["Lobby SPA (Solid)<br/>switcher: Terminal · Text · T3"] -->|"one iframe<br/>/env/thread?embed"| W["T3 web build<br/>pinned tag + embed patch<br/>t3view.viktorbarzin.me"]
+  B["Lobby SPA (Solid)<br/>switcher: Terminal · Text · T3"] -->|"one iframe<br/>/env/thread?embed"| W["T3 web build<br/>pinned tag + embed patch<br/>t3.viktorbarzin.me"]
   W <-->|"postMessage v1<br/>tl-ready, tl-key, tl-route,<br/>tl-bindings, tl-open"| B
   W -->|"Effect RPC on /ws<br/>+ /api, protocol v2"| S["tl-t3-view :7690<br/>Node/TS sidecar<br/>imports T3 contracts"]
   S -->|"/whoami: admin + secret check"| TA["tmux-api :7684"]
@@ -90,7 +90,7 @@ Three other shapes were considered:
 | 5 | Protocol version | v2. Pinned to `v0.0.46-nightly.20261011.2994` (commit `d07a07f3`) until the first v2 stable, then stable releases |
 | 6 | Bumps | Manual, when Viktor asks. A bump rebuilds the web, fixes compile breaks in the sidecar, re-applies the patch and re-runs the tests over the recorded lobby captures |
 | 7 | Adapter | `tl-t3-view`, a Node/TS sidecar that imports `packages/contracts` from the pinned checkout and serves `WsRpcGroup` with Effect's `RpcServer`, so a contract change fails the build |
-| 8 | Hostname | `t3view.viktorbarzin.me`, because T3 needs the root of its origin (`/assets`, `/api`, `/ws`, its own routes) and the lobby already uses those paths. `t3.viktorbarzin.me` and `t3-dispatch` stay as they are and are retired separately |
+| 8 | Hostname | `t3view.viktorbarzin.me`, because T3 needs the root of its origin (`/assets`, `/api`, `/ws`, its own routes) and the lobby already uses those paths. `t3.viktorbarzin.me` and `t3-dispatch` stay as they are and are retired separately. Since ADR-0045 the lobby frames `t3.viktorbarzin.me`, which now serves this sidecar, and `t3view` serves it as a fallback |
 | 9 | Patches | One, `patches/embed.patch`. Under `?embed`, inside a frame, it hides T3's sidebar, header, terminal toggle and git and preview controls, forwards the lobby's key bindings, reports route changes, and turns on T3's plan toggle. Contract: [`t3-view/EMBED.md`](../../t3-view/EMBED.md) |
 | 10 | Placement | T3 renders one thread in the session pane, in the Text view's slot. The lobby keeps its sidebar, tiles and session bar |
 | 11 | Switcher | Terminal · Text · T3, remembered per session as `viewmode.ts` does today. Both text renderers stay live against the same session |
@@ -268,7 +268,7 @@ can reach the sidecar's port, and the identity header alone proves nothing.
   and a write whose `Sec-Fetch-Site` names another origin is refused, because
   the Authentik cookie covers the whole `viktorbarzin.me` site.
 - Framing is narrowed to the lobby alone. Traefik's global CSP allows
-  `frame-ancestors *.viktorbarzin.me`; the `t3view` route and the sidecar's
+  `frame-ancestors *.viktorbarzin.me`; the `t3` and `t3view` routes and the sidecar's
   own pages both send `frame-ancestors https://terminal.viktorbarzin.me`, so
   pages on sibling hosts, such as `pages.viktorbarzin.me`, cannot frame an
   admin's T3 client.

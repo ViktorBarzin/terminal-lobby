@@ -2,7 +2,8 @@
 #
 # A Node sidecar that speaks T3's orchestration protocol v2 to the pinned T3
 # web build and translates to tmux-api and session-events. The lobby frames it
-# from t3view.<domain> as the T3 view, admin only. Nobody's session runs
+# from t3.<domain> as the T3 view (t3view.<domain> still serves it as a
+# fallback), and T3's own apps pair with it there. Nobody's session runs
 # through it, so its release checks are advisory (release/manifest.go).
 #
 # Design: docs/plans/2026-10-12-t3-view-design.md, t3-view/README.md.

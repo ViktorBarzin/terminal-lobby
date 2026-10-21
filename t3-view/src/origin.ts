@@ -47,7 +47,7 @@ export function isCrossSiteWrite(method: string, headers: RequestHeaders): boole
   return site !== undefined && !OWN_CONTEXTS.has(site.toLowerCase());
 }
 
-/** The lobby's host name, beside the sidecar's own (t3view.example.org -> terminal.example.org). */
+/** The lobby's host name, beside the sidecar's own (t3.example.org -> terminal.example.org). */
 const LOBBY_LABEL = "terminal";
 
 // CSP host sources cannot name an IPv6 literal (Chrome logs "does not support

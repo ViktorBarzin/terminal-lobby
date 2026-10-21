@@ -1151,8 +1151,8 @@ src/
   t3/
     embed.logic.ts       PURE the T3 view's embed contract: its origin and the
                          `?t3view=` override, the thread id, message parsing,
-                         the chords the frame hands back, who is offered it,
-                         and the origin T3's apps pair with
+                         the chords the frame hands back and who is offered
+                         it. T3's apps pair with the same origin
     pairing.logic.ts     PURE Settings → T3 apps: the pairing card's states,
                          the link and grouped code, the countdown, a device
                          row's words, and the QR code's SVG path

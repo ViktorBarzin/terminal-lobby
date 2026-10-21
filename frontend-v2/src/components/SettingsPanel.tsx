@@ -31,7 +31,7 @@ import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
 import { LinksPage } from "./settings/pages/LinksPage";
 import { T3AppsPage } from "./settings/pages/T3AppsPage";
-import { t3AppOrigin } from "../t3/embed.logic";
+import { defaultT3Origin } from "../t3/embed.logic";
 import { lsGet, lsSet } from "../lib/storage";
 import { dismissOnPress } from "./overlay";
 
@@ -319,7 +319,7 @@ export const SettingsPanel: Component<{
               </Match>
               <Match when={current() === "t3apps"}>
                 <T3AppsPage
-                  origin={t3AppOrigin(window.location.hostname)}
+                  origin={defaultT3Origin(window.location.hostname)}
                   confirm={props.confirm}
                 />
               </Match>

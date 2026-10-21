@@ -12,7 +12,6 @@ import {
   t3FrameAllow,
   t3FrameUrl,
   t3Offered,
-  t3AppOrigin,
   t3ThreadId,
   t3ViewOrigin,
 } from "../src/t3/embed.logic";
@@ -20,14 +19,17 @@ import { parseChord } from "../src/keybindings/chords.logic";
 import type { ResolvedBinding } from "../src/keybindings/bindings.logic";
 
 describe("where the T3 view is served", () => {
-  it("defaults to t3view beside the lobby's own host", () => {
-    expect(defaultT3Origin("terminal.viktorbarzin.me")).toBe("https://t3view.viktorbarzin.me");
-    expect(defaultT3Origin("terminal-dev.viktorbarzin.me")).toBe("https://t3view.viktorbarzin.me");
-    expect(defaultT3Origin("example.com")).toBe("https://t3view.example.com");
+  // One host for the frame and for T3's own apps (ADR-0045 decision 6), so
+  // Settings → T3 apps builds its pairing links from the same origin.
+  it("defaults to t3 beside the lobby's own host", () => {
+    expect(defaultT3Origin("terminal.viktorbarzin.me")).toBe("https://t3.viktorbarzin.me");
+    expect(defaultT3Origin("terminal-dev.viktorbarzin.me")).toBe("https://t3.viktorbarzin.me");
+    expect(defaultT3Origin("Terminal.Example.COM")).toBe("https://t3.example.com");
+    expect(defaultT3Origin("example.com")).toBe("https://t3.example.com");
   });
 
   it("has no default on a loopback or bare host, where there is no sibling to name", () => {
-    for (const h of ["127.0.0.1", "localhost", "[::1]", "10.0.10.10", "devvm"]) {
+    for (const h of ["127.0.0.1", "localhost", "[::1]", "10.0.10.10", "devvm", ""]) {
       expect(defaultT3Origin(h), h).toBeNull();
     }
   });
@@ -44,16 +46,16 @@ describe("where the T3 view is served", () => {
   it("refuses an override anywhere else", () => {
     for (const o of [
       "https://pages.viktorbarzin.me",
-      "https://t3view-dev.viktorbarzin.me",
-      "https://t3view.viktorbarzin.me",
+      "https://t3-dev.viktorbarzin.me",
+      "https://t3.viktorbarzin.me",
       "https://viktorbarzin.me",
       "https://localhost:17691",
       "https://evil.example",
       "https://viktorbarzin.me.evil.example",
       "https://evilviktorbarzin.me",
-      "http://t3view.viktorbarzin.me",
+      "http://t3.viktorbarzin.me",
       "javascript:alert(1)",
-      "https://t3view.viktorbarzin.me/path?x",
+      "https://t3.viktorbarzin.me/path?x",
       "http://192.168.1.4:17691",
       "not a url",
       "",
@@ -74,21 +76,22 @@ describe("where the T3 view is served", () => {
         hostname: "terminal.viktorbarzin.me",
         search: "?t3view=https://evil.example",
       }),
-    ).toBe("https://t3view.viktorbarzin.me");
+    ).toBe("https://t3.viktorbarzin.me");
     expect(
       t3ViewOrigin({
         hostname: "terminal.viktorbarzin.me",
         search: "?t3view=https://pages.viktorbarzin.me",
       }),
-    ).toBe("https://t3view.viktorbarzin.me");
+    ).toBe("https://t3.viktorbarzin.me");
     expect(t3ViewOrigin({ hostname: "127.0.0.1", search: "" })).toBeNull();
   });
 
   it("delegates the clipboard only to the T3 view beside the lobby", () => {
     const lobby = "terminal.viktorbarzin.me";
-    expect(t3FrameAllow("https://t3view.viktorbarzin.me", lobby)).toBe(
+    expect(t3FrameAllow("https://t3.viktorbarzin.me", lobby)).toBe(
       "clipboard-read; clipboard-write",
     );
+    expect(t3FrameAllow("https://t3view.viktorbarzin.me", lobby)).toBeUndefined();
     expect(t3FrameAllow("http://127.0.0.1:17691", lobby)).toBeUndefined();
     expect(t3FrameAllow("http://127.0.0.1:17691", "127.0.0.1")).toBeUndefined();
   });
@@ -146,11 +149,11 @@ describe("which thread the frame shows", () => {
   it("builds T3's own thread route with the embed flag", () => {
     expect(
       t3FrameUrl({
-        origin: "https://t3view.viktorbarzin.me",
+        origin: "https://t3.viktorbarzin.me",
         environmentId: "3f2a-env",
         threadId: "824smya2cmz5",
       }),
-    ).toBe("https://t3view.viktorbarzin.me/3f2a-env/824smya2cmz5?embed");
+    ).toBe("https://t3.viktorbarzin.me/3f2a-env/824smya2cmz5?embed");
   });
 
   it("escapes a hand-typed session name in the path", () => {
@@ -166,21 +169,21 @@ describe("which thread the frame shows", () => {
   it("opens the root while the environment id is not known yet", () => {
     expect(
       t3FrameUrl({
-        origin: "https://t3view.viktorbarzin.me",
+        origin: "https://t3.viktorbarzin.me",
         environmentId: null,
         threadId: "auth",
       }),
-    ).toBe("https://t3view.viktorbarzin.me/?embed");
+    ).toBe("https://t3.viktorbarzin.me/?embed");
   });
 
   it("opens the root for a preload, which shows no thread yet", () => {
     expect(
       t3FrameUrl({
-        origin: "https://t3view.viktorbarzin.me",
+        origin: "https://t3.viktorbarzin.me",
         environmentId: "3f2a-env",
         threadId: null,
       }),
-    ).toBe("https://t3view.viktorbarzin.me/?embed");
+    ).toBe("https://t3.viktorbarzin.me/?embed");
   });
 });
 
@@ -188,9 +191,9 @@ describe("the environment id cache", () => {
   beforeEach(() => localStorage.clear());
 
   it("remembers the id per T3 origin", () => {
-    expect(loadEnvironmentId("https://t3view.viktorbarzin.me")).toBeNull();
-    saveEnvironmentId("https://t3view.viktorbarzin.me", "env-1");
-    expect(loadEnvironmentId("https://t3view.viktorbarzin.me")).toBe("env-1");
+    expect(loadEnvironmentId("https://t3.viktorbarzin.me")).toBeNull();
+    saveEnvironmentId("https://t3.viktorbarzin.me", "env-1");
+    expect(loadEnvironmentId("https://t3.viktorbarzin.me")).toBe("env-1");
     expect(loadEnvironmentId("http://127.0.0.1:17691")).toBeNull();
   });
 });
@@ -508,20 +511,6 @@ describe("who is offered the T3 view", () => {
   });
 });
 
-describe("where T3's apps pair", () => {
-  it("is t3 beside the lobby's own host", () => {
-    expect(t3AppOrigin("terminal.viktorbarzin.me")).toBe("https://t3.viktorbarzin.me");
-    expect(t3AppOrigin("terminal-dev.viktorbarzin.me")).toBe("https://t3.viktorbarzin.me");
-    expect(t3AppOrigin("Terminal.Example.COM")).toBe("https://t3.example.com");
-    expect(t3AppOrigin("example.com")).toBe("https://t3.example.com");
-  });
-
-  it("has none on a dev server without a domain", () => {
-    for (const h of ["127.0.0.1", "localhost", "[::1]", "10.0.10.10", "devvm", ""]) {
-      expect(t3AppOrigin(h), h).toBeNull();
-    }
-  });
-});
 
 describe("which lobby session a route in the frame names", () => {
   const sessions = [

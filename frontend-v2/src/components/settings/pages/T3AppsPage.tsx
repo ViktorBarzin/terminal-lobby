@@ -79,7 +79,7 @@ const PairQr: Component<{ link: string }> = (props) => {
  * "Pair a device" asks tmux-api for a code good for five minutes and one use,
  * shown as a link, a QR code of the link, and the code itself. When it lapses
  * the card offers a new one. `origin` is where T3's apps connect
- * (`t3AppOrigin`); null on a dev server, which shows the code alone.
+ * (`defaultT3Origin`); null on a dev server, which shows the code alone.
  *
  * App leaves the page out of a lens tab: tmux-api refuses to pair or revoke
  * under act-as.
