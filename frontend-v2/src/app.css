@@ -7793,20 +7793,6 @@ body.tl-kb-up {
   white-space: nowrap;
   border: 0;
 }
-/* Where a phone's Send puts the focus for a moment (PromptField
-   settleCorrection). 16px, because iOS zooms the page to a smaller field. */
-.tl-correction-hop {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  border: 0;
-  font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
-  opacity: 0;
-}
 .tl-skill-table input[type="checkbox"] {
   accent-color: var(--accent);
   display: block;
