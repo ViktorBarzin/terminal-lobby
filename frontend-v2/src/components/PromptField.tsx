@@ -55,8 +55,8 @@ import { ColumnGrip } from "./ColumnGrip";
  * composer writes the prompt a session will be CREATED with and puts a
  * project, a command and a model above it. Everything about the act of
  * writing lives here — multi-line with Enter to send and Shift+Enter for a
- * newline on a desktop (a phone's return key adds a line and the round button
- * sends), `/` and `@` completion, attachments, the unsent draft, ↑ history,
+ * newline (a phone's return key sends too, after its autocorrect), `/` and `@`
+ * completion, attachments, the unsent draft, ↑ history,
  * and the mobile input attributes (autocapitalize off, autocorrect and
  * spellcheck on) that restore QuickType and swipe typing.
  *
@@ -335,7 +335,7 @@ export const PromptField: Component<{
       item.getBoundingClientRect().top - menu.getBoundingClientRect().top + menu.scrollTop;
     menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
   });
-  /** A touch keyboard, whose return key adds a line rather than sending. */
+  /** A touch keyboard, whose return key sends from `beforeinput` alone. */
   const coarse = createCoarsePointer();
   /**
    * Where ↑ has walked to in history; -1 is "not browsing".
@@ -1121,9 +1121,10 @@ export const PromptField: Component<{
       allowLineBreak = true;
       return;
     }
-    // A phone's return key adds a line and the round button sends (Viktor,
-    // 2026-09-28, as in T3 Code, ChatGPT and Claude on an iPhone). Ctrl or
-    // Cmd+Enter from a hardware keyboard on the same device still sends.
+    // A phone's return key sends from onBeforeInput, which comes after the
+    // keyboard has applied the last word's autocorrect; this keydown may come
+    // before it. Ctrl or Cmd+Enter from a hardware keyboard on the same device
+    // sends here.
     if (e.key === "Enter" && coarse() && !e.metaKey && !e.ctrlKey) return;
     if (e.key === "Enter" && !e.isComposing) {
       e.preventDefault();
@@ -1132,8 +1133,16 @@ export const PromptField: Component<{
   };
 
   /**
-   * The keyboard's Enter as `beforeinput` sees it, on a desktop. A phone's
-   * return key adds a line instead (see onKeyDown).
+   * The keyboard's Enter as `beforeinput` sees it.
+   *
+   * On a phone this is the only place the return key sends (Viktor,
+   * 2026-10-21). iOS holds the autocorrect for the word being typed until one
+   * of its own keys: measured on an iPhone (iOS 18.7, Safari 27.0.1), return
+   * delivers insertReplacementText with the correction and then
+   * insertLineBreak, while every way a page can send from the round button
+   * (keeping focus, blurring, a focus hop, a typed space, a caret move) left
+   * the word as typed. So the field read here holds the corrected word. From
+   * 2026-09-28 to then, return added a line on a phone.
    *
    * Enter on a textarea is a line break, and which events a mobile keyboard
    * fires for that key varies — with an IME or autocorrect committing a
@@ -1149,8 +1158,6 @@ export const PromptField: Component<{
   const onBeforeInput = (e: InputEvent) => {
     if (e.inputType === "insertReplacementText") props.onAutocorrect?.();
     if (e.inputType !== "insertLineBreak") return;
-    // On a phone the key is return: the line goes in (see onKeyDown).
-    if (coarse()) return;
     if (allowLineBreak) {
       allowLineBreak = false;
       return;
@@ -1564,7 +1571,7 @@ export const PromptField: Component<{
               autocapitalize="off"
               autocorrect="on"
               spellcheck={true}
-              enterkeyhint={coarse() ? "enter" : "send"}
+              enterkeyhint="send"
               // Safari's AutoFill decides what a field is from its words: the
               // placeholder, title and labels, and when it has no label, the
               // text before it. A "code" there made this box a one-time-code
