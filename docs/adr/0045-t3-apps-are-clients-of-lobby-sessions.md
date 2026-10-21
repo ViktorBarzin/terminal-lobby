@@ -1,6 +1,6 @@
 # T3's apps are clients of lobby sessions
 
-Status: accepted 2026-10-21. Stages 1 to 3 shipped the same day in terminal-lobby 0.128.0 and 0.129.0; the iPhone check and the retirement of `t3-serve` are still to come.
+Status: accepted 2026-10-21. Stages 1 to 3 shipped the same day in terminal-lobby 0.128.0 to 0.131.0, and the lobby follows T3 v0.1.1; the iPhone check and the retirement of `t3-serve` are still to come.
 
 Viktor, 2026-10-20: *"let's try the t3 interoperability again. i think tmux
 sessions are not needed anymore. it would be good to be able to see t3 sessions

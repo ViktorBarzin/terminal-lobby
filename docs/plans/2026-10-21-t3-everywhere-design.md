@@ -123,11 +123,11 @@ appears live on the other.
 | 3. Switch `t3.viktorbarzin.me` | Done | The descriptor, the desktop preflight (204) and the bearer route answer from the sidecar; browsers still go through Authentik; `/probe` still reaches `t3-dispatch`. The lobby frames `t3.` from 0.129.0 |
 | 3. Desktop | Done | T3 Code 0.1.0 AppImage under Xvfb paired, listed sessions, ran a new thread, showed a tmux-typed turn live, and dropped the connection on revoke. The headless box has no keyring, so pairing needed a test-only workaround for Electron's secure storage |
 | 3. Android | Done | Nightly `t3code-android-internal-2.0.0-93.apk` on the shared emulator: paired, listed sessions, new thread, tmux-typed turn live within about 3 s, revoke shown as "The environment credential is invalid." |
-| 3. Lobby's own T3 view framed from `t3.` | Not yet seen | Needs a browser signed in to Authentik |
+| 3. Lobby's own T3 view framed from `t3.` | Done | Driven in Viktor's own Chrome through the browser bridge on 0.131.0: a live session's T3 view loaded `https://t3.viktorbarzin.me/?embed` through Authentik, showed the session's transcript and T3's composer, and hid T3's own chrome. T3 lists the server as "Terminal Lobby" from 0.130.0 |
 | 4. iPhone | Waiting for the rig | |
 | 5. Retire `t3-serve` | After stage 4 | |
 
-The first daily stable run found T3 v0.1.1, published at 02:29 UTC the same day, and held it: the embed patch no longer applies to `AppSidebarLayout.tsx`. `tl_t3_upstream_unadopted_since_seconds` reports it, and `T3StableHeld` fires if it is still held after 36 hours.
+The first daily stable run found T3 v0.1.1, published at 02:29 UTC the same day, and held it: the embed patch no longer applied to `AppSidebarLayout.tsx`, where upstream had dropped one import. The re-cut patch then showed a second problem. The T3 web build ran out of memory on a GitHub runner, because `build-web.sh` extracts T3 with `git archive`, and Tailwind applies `.gitignore` only inside a git repository, so its source scan walked every `node_modules`. `build-web.sh` now runs `git init` in the extracted tree. v0.1.1 builds on a runner in 15 s at about 2.5 GB, and 0.131.0 ships it; `tl_t3_upstream_unadopted_since_seconds` reads 0. The descriptor test also wrote out the server version, which would have held every later release, and now reads it from `T3_PIN`.
 
 ## What we did not do
 
