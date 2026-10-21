@@ -55,8 +55,8 @@ import { ColumnGrip } from "./ColumnGrip";
  * composer writes the prompt a session will be CREATED with and puts a
  * project, a command and a model above it. Everything about the act of
  * writing lives here — multi-line with Enter to send and Shift+Enter for a
- * newline on a desktop (a phone's return key adds a line and the round button
- * sends), `/` and `@` completion, attachments, the unsent draft, ↑ history,
+ * newline (a phone's return key sends too, after its autocorrect), `/` and `@`
+ * completion, attachments, the unsent draft, ↑ history,
  * and the mobile input attributes (autocapitalize off, autocorrect and
  * spellcheck on) that restore QuickType and swipe typing.
  *
@@ -105,11 +105,6 @@ export interface PromptFieldSinks {
 /** The least a phone keyboard shrinks the visual viewport by: 150px, where
  *  the URL bar folding away moves it by about 56px. */
 const KEYBOARD_MIN_PX = 150;
-
-/** How long a phone's Send waits for the keyboard's last correction. The
- *  correction is one round trip from the keyboard to the page, so this only
- *  bounds the wait when there is none to apply. */
-const CORRECTION_WAIT_MS = 120;
 
 /**
  * The words the watching pill shows: who is being watched, from the session
@@ -340,7 +335,7 @@ export const PromptField: Component<{
       item.getBoundingClientRect().top - menu.getBoundingClientRect().top + menu.scrollTop;
     menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
   });
-  /** A touch keyboard, whose return key adds a line rather than sending. */
+  /** A touch keyboard, whose return key sends from `beforeinput` alone. */
   const coarse = createCoarsePointer();
   /**
    * Where ↑ has walked to in history; -1 is "not browsing".
@@ -1126,9 +1121,10 @@ export const PromptField: Component<{
       allowLineBreak = true;
       return;
     }
-    // A phone's return key adds a line and the round button sends (Viktor,
-    // 2026-09-28, as in T3 Code, ChatGPT and Claude on an iPhone). Ctrl or
-    // Cmd+Enter from a hardware keyboard on the same device still sends.
+    // A phone's return key sends from onBeforeInput, which comes after the
+    // keyboard has applied the last word's autocorrect; this keydown may come
+    // before it. Ctrl or Cmd+Enter from a hardware keyboard on the same device
+    // sends here.
     if (e.key === "Enter" && coarse() && !e.metaKey && !e.ctrlKey) return;
     if (e.key === "Enter" && !e.isComposing) {
       e.preventDefault();
@@ -1137,8 +1133,16 @@ export const PromptField: Component<{
   };
 
   /**
-   * The keyboard's Enter as `beforeinput` sees it, on a desktop. A phone's
-   * return key adds a line instead (see onKeyDown).
+   * The keyboard's Enter as `beforeinput` sees it.
+   *
+   * On a phone this is the only place the return key sends (Viktor,
+   * 2026-10-21). iOS holds the autocorrect for the word being typed until one
+   * of its own keys: measured on an iPhone (iOS 18.7, Safari 27.0.1), return
+   * delivers insertReplacementText with the correction and then
+   * insertLineBreak, while every way a page can send from the round button
+   * (keeping focus, blurring, a focus hop, a typed space, a caret move) left
+   * the word as typed. So the field read here holds the corrected word. From
+   * 2026-09-28 to then, return added a line on a phone.
    *
    * Enter on a textarea is a line break, and which events a mobile keyboard
    * fires for that key varies — with an IME or autocorrect committing a
@@ -1154,8 +1158,6 @@ export const PromptField: Component<{
   const onBeforeInput = (e: InputEvent) => {
     if (e.inputType === "insertReplacementText") props.onAutocorrect?.();
     if (e.inputType !== "insertLineBreak") return;
-    // On a phone the key is return: the line goes in (see onKeyDown).
-    if (coarse()) return;
     if (allowLineBreak) {
       allowLineBreak = false;
       return;
@@ -1335,42 +1337,6 @@ export const PromptField: Component<{
       return stopping() ? "Stopping: waiting for the turn to end" : "Stop: interrupts this turn";
     return sendTitle();
   };
-  /** Where a phone's Send puts the focus for a moment (settleCorrection). */
-  let hopEl: HTMLInputElement | undefined;
-  /** A phone's Send is waiting on the keyboard's last correction. */
-  let settling = false;
-  /**
-   * Let the keyboard apply the correction it holds for the last word.
-   *
-   * iOS keeps the correction for the word being typed until a space or a
-   * return, and a finger's press on Send leaves the field focused
-   * (keepFocusOnSend), so the field was read and cleared with the word as
-   * typed (Viktor, 2026-10-17). UIKit applies a pending correction when a
-   * field gives up the focus, so the focus goes to `hopEl` and straight back,
-   * which keeps the keyboard up, and the send waits for the correction's
-   * `input` or CORRECTION_WAIT_MS, whichever is first.
-   *
-   * Not yet seen on an iPhone. The same hop is the workaround on WebKit bug
-   * 236937 for the keyboard keeping a cleared field's old text. On the
-   * Android emulator (Gboard, 2026-10-17) the keyboard stays up across the
-   * hop and the word goes as typed: Gboard corrects only on a separator.
-   */
-  const settleCorrection = (): Promise<void> =>
-    new Promise((resolve) => {
-      const field = ta;
-      const hop = hopEl;
-      if (!field || !hop) return resolve();
-      const done = (): void => {
-        clearTimeout(timer);
-        field.removeEventListener("input", done);
-        hop.value = "";
-        resolve();
-      };
-      field.addEventListener("input", done);
-      hop.focus({ preventScroll: true });
-      field.focus({ preventScroll: true });
-      const timer = setTimeout(done, CORRECTION_WAIT_MS);
-    });
   /**
    * The press. Enter never reaches here with an empty field: it goes straight
    * to `submit`, which refuses an empty send, so Enter never stops Claude.
@@ -1381,15 +1347,6 @@ export const PromptField: Component<{
       // The caller gives the field the focus back once whatever the Stop
       // hands back has landed in it (TextView stopHandingBack).
       props.onStop?.();
-      return;
-    }
-    if (coarse() && ta && document.activeElement === ta) {
-      if (settling) return;
-      settling = true;
-      void settleCorrection().then(() => {
-        settling = false;
-        submit();
-      });
       return;
     }
     submit();
@@ -1614,7 +1571,7 @@ export const PromptField: Component<{
               autocapitalize="off"
               autocorrect="on"
               spellcheck={true}
-              enterkeyhint={coarse() ? "enter" : "send"}
+              enterkeyhint="send"
               // Safari's AutoFill decides what a field is from its words: the
               // placeholder, title and labels, and when it has no label, the
               // text before it. A "code" there made this box a one-time-code
@@ -1645,13 +1602,6 @@ export const PromptField: Component<{
             <span id={labelId} class="tl-sr-only">
               {props.label}
             </span>
-            <input
-              ref={hopEl}
-              class="tl-correction-hop"
-              type="text"
-              tabindex={-1}
-              aria-hidden="true"
-            />
           </div>
           {/* The round button is the surface's last control, always, in one
               of three states (Composer.queue.test.tsx).

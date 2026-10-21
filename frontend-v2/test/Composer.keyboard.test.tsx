@@ -183,11 +183,10 @@ describe("the composer's affordances", () => {
  *
  * The key's `beforeinput` (inputType "insertLineBreak") is handled as well as
  * its keydown, because an input method committing a candidate can deliver the
- * keydown as a composition keystroke, which is correctly skipped. These tests
- * pinned the phone's send key until 2026-09-28, when Viktor chose the T3 and
- * ChatGPT rule for a phone: its return key adds a line and the round button
- * sends (see "the phone keyboard's return key" below). jsdom has no
- * matchMedia, so these mount as a fine pointer, which is the desktop.
+ * keydown as a composition keystroke, which is correctly skipped. A phone's
+ * return key sends too, from the `beforeinput` only (see "the phone keyboard's
+ * return key" below). jsdom has no matchMedia, so these mount as a fine
+ * pointer, which is the desktop.
  */
 describe("a desktop keyboard's Enter", () => {
   const type = (ta: HTMLTextAreaElement, value: string) =>
@@ -267,11 +266,15 @@ describe("a desktop keyboard's Enter", () => {
 });
 
 /**
- * The phone keyboard's return key adds a line (Viktor, 2026-09-28), as it does
- * in T3 Code, ChatGPT and Claude on an iPhone; the round button sends. It
- * reversed the rule from 2026-08-17 where the phone's send key sent through
- * `beforeinput` insertLineBreak. "Phone" is a coarse pointer, the same test the
- * rest of the touch ergonomics use.
+ * The phone keyboard's return key sends (Viktor, 2026-10-21), through
+ * `beforeinput` insertLineBreak. From 2026-09-28 it added a line, as in T3 Code
+ * and ChatGPT, but then the last word before the round button went out without
+ * its autocorrect: on an iPhone (iOS 18.7) a probe of six Send variants showed
+ * iOS applies the pending correction only on its own keys, as an
+ * insertReplacementText just before the return's insertLineBreak. The keydown
+ * does not send on a phone because it may come before that correction.
+ * "Phone" is a coarse pointer, the same test the rest of the touch ergonomics
+ * use.
  */
 describe("the phone keyboard's return key", () => {
   const original = window.matchMedia;
@@ -303,25 +306,40 @@ describe("the phone keyboard's return key", () => {
       }),
     );
 
-  it("adds a newline and sends nothing", () => {
+  it("sends the corrected word, and inserts no newline", () => {
+    const onSend = vi.fn(async () => true);
+    const { container } = render(() => (
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+    ));
+    const ta = field(container);
+    type(ta, "fix teh");
+    // The order an iPhone delivers: the key, then the correction, then the line.
+    const keyNotPrevented = fireEvent.keyDown(ta, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(keyNotPrevented).toBe(true);
+    type(ta, "fix the");
+    const inputNotPrevented = lineBreak(ta);
+    expect(onSend).toHaveBeenCalledWith("fix the", []);
+    expect(inputNotPrevented).toBe(false);
+  });
+
+  it("labels the key send", () => {
+    const { container } = render(() => (
+      <Composer pending={[]} onSend={async () => true} onStop={() => {}} onResolve={() => {}} />
+    ));
+    expect(field(container).getAttribute("enterkeyhint")).toBe("send");
+  });
+
+  it("still adds a line on Shift+Enter from a hardware keyboard", () => {
     const onSend = vi.fn(async () => true);
     const { container } = render(() => (
       <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
     ));
     const ta = field(container);
     type(ta, "first line");
-    const keyNotPrevented = fireEvent.keyDown(ta, { key: "Enter" });
-    const inputNotPrevented = lineBreak(ta);
+    fireEvent.keyDown(ta, { key: "Enter", shiftKey: true });
+    expect(lineBreak(ta)).toBe(true);
     expect(onSend).not.toHaveBeenCalled();
-    expect(keyNotPrevented).toBe(true);
-    expect(inputNotPrevented).toBe(true); // the field keeps the newline
-  });
-
-  it("labels the key return, not send", () => {
-    const { container } = render(() => (
-      <Composer pending={[]} onSend={async () => true} onStop={() => {}} onResolve={() => {}} />
-    ));
-    expect(field(container).getAttribute("enterkeyhint")).toBe("enter");
   });
 
   it("leaves sending to the round button, with every line intact", async () => {
