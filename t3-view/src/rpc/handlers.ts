@@ -5,7 +5,8 @@
  * probe, and the RPCs the stage 1 trace saw the client call unprompted, each
  * answered with an honest empty value), the read path (the shell and
  * threads, from the hub) and the commands (commands/dispatch.ts). Everything
- * else falls through to STUB_HANDLERS.
+ * else falls through to STUB_HANDLERS, which scripts/gen-stubs.sh writes as
+ * every RPC of the pinned WsRpcGroup that servedHandlers does not answer.
  *
  * Every lobby call made for this connection relays `identity` (auth.ts), and
  * every cache it reads is keyed by `identity.osUser` (hub.ts).
@@ -24,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
 import type { Identity } from "../auth.ts";
@@ -37,7 +39,8 @@ import {
   serverConfig,
 } from "../serverConfig.ts";
 import { SHELL_SCHEMA_VERSION } from "../shell.ts";
-import { STUB_HANDLERS, unavailable } from "./stubs.ts";
+import { unavailable } from "./fallback.ts";
+import { STUB_HANDLERS } from "./stubs.ts";
 
 export interface ConnectionContext {
   readonly identity: Identity;
@@ -95,14 +98,19 @@ const NO_REPO = {
   workingTree: { files: [], insertions: 0, deletions: 0 },
 } as const;
 
-export function makeHandlers(context: ConnectionContext) {
+type WsHandlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof WsRpcGroup>>;
+
+/**
+ * The RPCs the sidecar answers itself. Building this object must not read
+ * `context`: each handler reads it only when called, which is what lets
+ * scripts/gen-stubs.ts list the served tags without a connection.
+ */
+export function servedHandlers(context: ConnectionContext) {
   const liveModels = () => context.hub.user(context.identity).liveModels;
   const config = () => serverConfig(context.config, liveModels());
   const provider = () => claudeProvider(context.config.startedAt, liveModels());
 
-  return WsRpcGroup.of({
-    ...STUB_HANDLERS,
-
+  return {
     [WS_METHODS.serverProbe]: () => Effect.succeed({}),
     [WS_METHODS.serverGetConfig]: () => Effect.sync(config),
     [WS_METHODS.serverRefreshProviders]: () => Effect.sync(() => ({ providers: [provider()] })),
@@ -270,5 +278,9 @@ export function makeHandlers(context: ConnectionContext) {
         : unavailable(input, options),
     [WS_METHODS.agentSessionsScan]: () =>
       Effect.sync(() => ({ candidates: [], scannedAt: new Date().toISOString() })),
-  });
+  } satisfies Partial<WsHandlers>;
+}
+
+export function makeHandlers(context: ConnectionContext) {
+  return WsRpcGroup.of({ ...STUB_HANDLERS, ...servedHandlers(context) });
 }

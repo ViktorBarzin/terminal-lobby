@@ -31,8 +31,18 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/** Reported as serverVersion: the T3 release the contracts come from. */
-export const T3_SERVER_VERSION = "0.0.46";
+// The tag= line of T3_PIN, set at build time: build-sidecar.sh and
+// gen-stubs.sh pass it to esbuild as a define, vitest.config.ts as one too.
+declare const __T3_PIN_TAG__: string | undefined;
+
+/** A T3 release tag as T3 reports its own version: v0.1.0 -> 0.1.0. */
+export function serverVersionOf(tag: string): string {
+  return tag.replace(/^v/, "");
+}
+
+/** Reported as serverVersion: the T3 release the contracts come from (T3_PIN). */
+export const T3_SERVER_VERSION =
+  typeof __T3_PIN_TAG__ === "string" ? serverVersionOf(__T3_PIN_TAG__) : "0.0.0-unpinned";
 
 export const GRANTED_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
   AuthOrchestrationReadScope,

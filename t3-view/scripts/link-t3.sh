@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Points t3-view/node_modules at a pinned T3 checkout prepared by
 # build-web.sh, so the sidecar compiles, tests and bundles against T3's own
-# contracts and the exact effect build T3's lockfile resolves (4.0.2 with T3's
-# patch). There is no second lockfile: every package here comes from T3's.
+# contracts and the exact effect build T3's lockfile resolves (4.0.4 at
+# v0.1.0, which T3 no longer patches). There is no second lockfile: every
+# package here comes from T3's.
 #
 #   link-t3.sh <work-dir>     (the same <work-dir> given to build-web.sh)
 #

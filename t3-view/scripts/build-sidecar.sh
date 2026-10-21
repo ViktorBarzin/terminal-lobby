@@ -9,6 +9,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# descriptor.ts reports the pinned tag as serverVersion.
+pin_tag="$(sed -n 's/^tag=//p' "$here/T3_PIN" | head -n1)"
 if [[ "${1:-}" == "-o" ]]; then
 	outfile="${2:?usage: build-sidecar.sh -o <file>}"
 else
@@ -28,6 +30,7 @@ node "$here/node_modules/esbuild/bin/esbuild" "$here/src/main.ts" \
 	--external:bufferutil \
 	--external:utf-8-validate \
 	--banner:js='import { createRequire as __tlCreateRequire } from "node:module"; const require = __tlCreateRequire(import.meta.url);' \
+	--define:__T3_PIN_TAG__="\"$pin_tag\"" \
 	--log-level=warning \
 	--outfile="$outfile"
 echo "build-sidecar: $outfile"
