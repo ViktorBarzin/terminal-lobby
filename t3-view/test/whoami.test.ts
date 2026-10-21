@@ -44,6 +44,19 @@ describe("tmuxApiWhoami", () => {
     expect(seen?.headers["x-tl-proxy-secret"]).toBe("s3cret");
   });
 
+  it("relays a paired app's bearer alone: no identity header, no secret", async () => {
+    let seen: IncomingHttpHeaders | undefined;
+    const base = await serve((headers) => {
+      seen = headers;
+      return [200, JSON.stringify({ authentik: "viktor", osUser: "wizard", admin: false })];
+    });
+    const result = await tmuxApiWhoami(base)({ bearer: "tld1_abc" });
+    expect(result.status).toBe(200);
+    expect(seen?.authorization).toBe("Bearer tld1_abc");
+    expect(seen?.["x-authentik-username"]).toBeUndefined();
+    expect(seen?.["x-tl-proxy-secret"]).toBeUndefined();
+  });
+
   it("returns the status and no body for a refusal", async () => {
     const base = await serve(() => [401, "missing or incorrect proxy secret"]);
     const result = await tmuxApiWhoami(base)({ header: "X-A", identity: "v", secret: "x" });

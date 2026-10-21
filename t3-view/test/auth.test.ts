@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BearerAuthGate,
   ProxyAuthGate,
   type RelayCredentials,
+  relayHeaders,
+  relayKey,
   type WhoamiFetch,
   type WhoamiResult,
 } from "../src/auth.ts";
@@ -78,14 +81,14 @@ describe("ProxyAuthGate", () => {
     });
   });
 
-  it("refuses a user tmux-api does not call an admin with 403", async () => {
+  it("admits a user who is not an admin: the T3 view is for every lobby user", async () => {
     const { whoami } = fakeWhoami(() => ({
       status: 200,
       body: { authentik: "anca", osUser: "anca", admin: false },
     }));
     expect(await makeGate(whoami).check(headers("anca", "s3cret"))).toMatchObject({
-      ok: false,
-      status: 403,
+      ok: true,
+      identity: { osUser: "anca", authentik: "anca" },
     });
   });
 
@@ -158,14 +161,13 @@ describe("ProxyAuthGate", () => {
   });
 
   it("never remembers a refusal", async () => {
-    let admin = false;
-    const { whoami, calls } = fakeWhoami(() => ({
-      status: 200,
-      body: { authentik: "viktor", osUser: "wizard", admin },
-    }));
+    let status = 401;
+    const { whoami, calls } = fakeWhoami(() =>
+      status === 200 ? ADMIN : { status, body: undefined },
+    );
     const gate = makeGate(whoami);
     expect((await gate.check(headers("viktor", "s3cret"))).ok).toBe(false);
-    admin = true;
+    status = 200;
     expect((await gate.check(headers("viktor", "s3cret"))).ok).toBe(true);
     expect(calls).toHaveLength(2);
   });
@@ -192,5 +194,131 @@ describe("ProxyAuthGate", () => {
     const gate = makeGate(whoami);
     await gate.check(headers("viktor", "s3cret-value"));
     expect(JSON.stringify(gate.cacheSnapshot())).not.toContain("s3cret-value");
+  });
+});
+
+const DEVICE = "tld1_device-token-value";
+const DEVICE_WHOAMI: WhoamiResult = {
+  status: 200,
+  body: { authentik: "viktor", osUser: "wizard", admin: false, multiUser: true },
+};
+
+function makeBearerGate(whoami: WhoamiFetch, clock = { now: 1_000 }) {
+  return new BearerAuthGate({ whoami, now: () => clock.now, ttlMs: 30_000 });
+}
+
+describe("BearerAuthGate", () => {
+  it("asks tmux-api with the bearer alone and admits the user it names", async () => {
+    const { whoami, calls } = fakeWhoami(() => DEVICE_WHOAMI);
+    const decision = await makeBearerGate(whoami).check(DEVICE);
+    expect(calls).toEqual([{ bearer: DEVICE }]);
+    expect(decision).toEqual({
+      ok: true,
+      identity: { osUser: "wizard", authentik: "viktor", relay: { bearer: DEVICE } },
+    });
+  });
+
+  it("refuses a bearer tmux-api refuses, as 401, and never remembers it", async () => {
+    let status = 401;
+    const { whoami, calls } = fakeWhoami(() =>
+      status === 200 ? DEVICE_WHOAMI : { status, body: undefined },
+    );
+    const gate = makeBearerGate(whoami);
+    expect(await gate.check(DEVICE)).toMatchObject({ ok: false, status: 401 });
+    status = 403;
+    expect(await gate.check(DEVICE)).toMatchObject({ ok: false, status: 401 });
+    status = 200;
+    expect((await gate.check(DEVICE)).ok).toBe(true);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("answers 502 when tmux-api cannot be reached", async () => {
+    const gate = makeBearerGate(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    expect(await gate.check(DEVICE)).toMatchObject({ ok: false, status: 502 });
+  });
+
+  it("remembers an admitted bearer for the TTL, keyed by its digest", async () => {
+    const clock = { now: 1_000 };
+    const { whoami, calls } = fakeWhoami(() => DEVICE_WHOAMI);
+    const gate = makeBearerGate(whoami, clock);
+    await gate.check(DEVICE);
+    clock.now += 29_999;
+    expect((await gate.check(DEVICE)).ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    clock.now += 2;
+    expect((await gate.check(DEVICE)).ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(gate.cacheSnapshot())).not.toContain(DEVICE);
+  });
+
+  it("asks once for a burst of concurrent requests", async () => {
+    let release: (() => void) | undefined;
+    const open = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { whoami, calls } = fakeWhoami(async () => {
+      await open;
+      return DEVICE_WHOAMI;
+    });
+    const gate = makeBearerGate(whoami);
+    const burst = Array.from({ length: 10 }, () => gate.check(DEVICE));
+    release?.();
+    expect((await Promise.all(burst)).every((d) => d.ok)).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("recheck asks tmux-api past the cache and forgets a bearer it now refuses", async () => {
+    let status = 200;
+    const { whoami, calls } = fakeWhoami(() =>
+      status === 200 ? DEVICE_WHOAMI : { status, body: undefined },
+    );
+    const gate = makeBearerGate(whoami);
+    expect((await gate.check(DEVICE)).ok).toBe(true);
+    status = 401;
+    expect(await gate.recheck(DEVICE)).toMatchObject({ ok: false, status: 401 });
+    expect(calls).toHaveLength(2);
+    expect(await gate.check(DEVICE)).toMatchObject({ ok: false, status: 401 });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("keeps an admitted bearer through a recheck tmux-api cannot answer", async () => {
+    let up = true;
+    const gate = makeBearerGate(async () => {
+      if (!up) throw new Error("ECONNREFUSED");
+      return DEVICE_WHOAMI;
+    });
+    expect((await gate.check(DEVICE)).ok).toBe(true);
+    up = false;
+    expect(await gate.recheck(DEVICE)).toMatchObject({ ok: false, status: 502 });
+    expect((await gate.check(DEVICE)).ok).toBe(true);
+  });
+
+  it("refuses an answer that is acting as someone else", async () => {
+    const { whoami } = fakeWhoami(() => ({
+      status: 200,
+      body: { authentik: "viktor", osUser: "anca", admin: true, realUser: "wizard" },
+    }));
+    expect(await makeBearerGate(whoami).check(DEVICE)).toMatchObject({ ok: false });
+  });
+});
+
+describe("relay credentials", () => {
+  it("relays a browser's identity header and secret, and a device's bearer alone", () => {
+    expect(relayHeaders({ header: "X-Authentik-Username", identity: "viktor", secret: "s" })).toEqual(
+      { "X-Authentik-Username": "viktor", "X-TL-Proxy-Secret": "s" },
+    );
+    expect(relayHeaders({ bearer: DEVICE })).toEqual({ authorization: `Bearer ${DEVICE}` });
+  });
+
+  it("keys a credential without containing it, one key per credential", () => {
+    const browser = relayKey({ header: "X-Authentik-Username", identity: "viktor", secret: "s3cret" });
+    const device = relayKey({ bearer: DEVICE });
+    expect(browser).not.toContain("s3cret");
+    expect(device).not.toContain(DEVICE);
+    expect(device).not.toBe(relayKey({ bearer: `${DEVICE}x` }));
+    expect(browser).not.toBe(device);
+    expect(relayKey({ bearer: DEVICE })).toBe(device);
   });
 });

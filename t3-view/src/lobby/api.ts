@@ -6,8 +6,12 @@
  * session-events then apply the lobby's own access rules, so the sidecar sees
  * exactly what the lobby would show that user, and a foreign session is
  * addressed with ?owner= the way the Text view addresses one (ADR-0043).
+ *
+ * Every 401 an answer carries is reported to `onUnauthorized` with the
+ * credentials the call went out with: for a paired app that is the signal to
+ * re-check its bearer at once (revocation.ts) rather than at the next round.
  */
-import { PROXY_SECRET_HEADER, type RelayCredentials } from "../auth.ts";
+import { type RelayCredentials, relayHeaders } from "../auth.ts";
 
 export interface LobbySession {
   readonly id?: string;
@@ -151,15 +155,29 @@ export class LobbyApi {
   readonly #tmuxApi: string;
   readonly #sessionEvents: string;
   readonly #fetch: typeof fetch;
+  readonly #onUnauthorized: ((relay: RelayCredentials) => void) | undefined;
 
-  constructor(options: { tmuxApiUrl: string; sessionEventsUrl: string; fetch?: typeof fetch }) {
+  constructor(options: {
+    tmuxApiUrl: string;
+    sessionEventsUrl: string;
+    fetch?: typeof fetch;
+    onUnauthorized?: (relay: RelayCredentials) => void;
+  }) {
     this.#tmuxApi = options.tmuxApiUrl;
     this.#sessionEvents = options.sessionEventsUrl;
     this.#fetch = options.fetch ?? fetch;
+    this.#onUnauthorized = options.onUnauthorized;
+  }
+
+  #call(relay: RelayCredentials, url: string, init: RequestInit): Promise<Response> {
+    return this.#fetch(url, init).then((response) => {
+      if (response.status === 401) this.#onUnauthorized?.(relay);
+      return response;
+    });
   }
 
   headers(relay: RelayCredentials, extra: Record<string, string> = {}): Record<string, string> {
-    return { [relay.header]: relay.identity, [PROXY_SECRET_HEADER]: relay.secret, ...extra };
+    return { ...relayHeaders(relay), ...extra };
   }
 
   /** session-events' URL for a session route, with ?owner= for someone else's session. */
@@ -196,7 +214,7 @@ export class LobbyApi {
       query.set("lastEventId", String(resume.lastEventId));
       if (resume.epoch !== undefined) query.set("epoch", resume.epoch);
     }
-    return this.#fetch(this.sessionUrl("/events", session, owner, { query: query.toString() }), {
+    return this.#call(relay, this.sessionUrl("/events", session, owner, { query: query.toString() }), {
       headers: this.headers(relay, { accept: "text/event-stream" }),
       signal,
     });
@@ -210,7 +228,7 @@ export class LobbyApi {
     timeoutMs = PANE_TIMEOUT_MS,
   ): Promise<string | undefined> {
     try {
-      const response = await this.#fetch(this.sessionUrl("/pane", session, owner), {
+      const response = await this.#call(relay, this.sessionUrl("/pane", session, owner), {
         headers: this.headers(relay),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -365,7 +383,7 @@ export class LobbyApi {
   }
 
   async #json(relay: RelayCredentials, url: string, method: string): Promise<unknown> {
-    const response = await this.#fetch(url, {
+    const response = await this.#call(relay, url, {
       method,
       headers: this.headers(relay),
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -381,7 +399,7 @@ export class LobbyApi {
     body: unknown,
     timeoutMs = TIMEOUT_MS,
   ): Promise<string> {
-    const response = await this.#fetch(url, {
+    const response = await this.#call(relay, url, {
       method: "POST",
       headers: this.headers(relay, { "content-type": "application/json" }),
       body: JSON.stringify(body),

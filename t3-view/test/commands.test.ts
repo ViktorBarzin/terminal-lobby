@@ -80,6 +80,7 @@ function setup(
     clock: new SequenceClock(1_791_794_000_000),
     pending,
     locate: async () => undefined,
+    credential: () => undefined,
     now: () => 1_791_794_200_000,
   });
   for (const name of options.frames ?? ["01-open-first-turn.sse"]) {

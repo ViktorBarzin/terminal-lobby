@@ -38,9 +38,10 @@ async function open(pane: string | undefined, held?: HeldPrompts): Promise<LiveT
     clock: new SequenceClock(1_791_794_000_000),
     pending: new PendingDispatches({ now: () => 1_791_794_200_000 }),
     locate: async () => ({ name: SESSION_NAME }),
+    credential: () => ({ key: "browser", relay }),
     ...(held === undefined ? {} : { held }),
   });
-  live.attach(relay);
+  live.attach();
   await live.ready(5_000);
   return live;
 }

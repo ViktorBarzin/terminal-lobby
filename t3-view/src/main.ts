@@ -10,18 +10,21 @@ import * as Layer from "effect/Layer";
 
 import { join } from "node:path";
 
-import { ProxyAuthGate } from "./auth.ts";
+import { BearerAuthGate, isBearerRelay, ProxyAuthGate } from "./auth.ts";
 import { Commands } from "./commands/dispatch.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { environmentDescriptor, environmentIdFor } from "./descriptor.ts";
 import { Hub } from "./hub.ts";
 import { LobbyApi } from "./lobby/api.ts";
 import { LOBBY_CLAUDE_SLUGS } from "./models.ts";
+import { tmuxApiExchange } from "./pairing.ts";
+import { BearerWatch } from "./revocation.ts";
 import { SequenceClock } from "./sequence.ts";
 import { sidecarLayer } from "./server.ts";
 import { ThreadAliases } from "./shell/aliases.ts";
 import { HeldPrompts } from "./threads/held.ts";
 import { PendingDispatches } from "./threads/pending.ts";
+import { WsTickets } from "./tickets.ts";
 import { tmuxApiWhoami } from "./whoami.ts";
 
 function start(): void {
@@ -43,17 +46,23 @@ function start(): void {
     environmentId: environmentIdFor(hostname()),
     label: config.environmentLabel,
   });
-  const gate = new ProxyAuthGate({
-    authHeader: config.authHeader,
-    whoami: tmuxApiWhoami(config.tmuxApiUrl),
-  });
+  const whoami = tmuxApiWhoami(config.tmuxApiUrl);
+  const gate = new ProxyAuthGate({ authHeader: config.authHeader, whoami });
+  const bearer = new BearerAuthGate({ whoami });
 
   const log = (message: string) => process.stderr.write(`tl-t3-view: ${message}\n`);
   const state = (name: string) =>
     config.stateDir === undefined ? undefined : join(config.stateDir, name);
+  // A revoked device's sockets close, and the hub moves the streams they
+  // shared to another client's credential (revocation.ts, hub.ts).
+  const watch = new BearerWatch({ gate: bearer, onRevoked: (key) => hub.revoke(key), log });
   const api = new LobbyApi({
     tmuxApiUrl: config.tmuxApiUrl,
     sessionEventsUrl: config.sessionEventsUrl,
+    // A 401 on a call made with a device's bearer: check that device now.
+    onUnauthorized: (relay) => {
+      if (isBearerRelay(relay)) void watch.suspect(relay.bearer);
+    },
   });
   const pendingFile = state("pending.json");
   const pending = new PendingDispatches(pendingFile === undefined ? {} : { file: pendingFile });
@@ -91,6 +100,10 @@ function start(): void {
       sidecarLayer(
         {
           gate,
+          bearer,
+          tickets: new WsTickets(),
+          watch,
+          exchange: tmuxApiExchange(config.tmuxApiUrl),
           webDir: config.webDir,
           config: { descriptor, cwd: "/", startedAt },
           clock,

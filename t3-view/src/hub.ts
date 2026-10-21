@@ -9,6 +9,18 @@
  * subscription; a live thread's changes rebuild the rows without a fetch.
  * Each change goes out as T3's shell stream items with sequences from the
  * shared clock.
+ *
+ * Credentials. A live thread's upstream stream is shared by every client of
+ * that (OS user, session), so it goes out under one client's credential. Each
+ * WebSocket holds its credential with the user's hub for as long as it is
+ * open (hold); an HTTP request only marks its credential as the most recent
+ * (use). A stream opens under the newest held credential, or the most recent
+ * one when no socket is open. Whenever the held set changes, a stream whose
+ * credential no live socket holds any more is moved to one that is held, so
+ * one device closing its app never ends another client's view, and a stream
+ * is never left running on a credential nobody is checking. Revoking a
+ * credential (revoke) forgets it everywhere and moves its streams the same
+ * way; with nothing left to move to, they stay closed until a client arrives.
  */
 import {
   type OrchestrationProjectShell,
@@ -22,7 +34,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import type { Identity, RelayCredentials } from "./auth.ts";
+import { type Identity, type RelayCredentials, relayKey } from "./auth.ts";
 import type { LobbyApi } from "./lobby/api.ts";
 import { EventLog, type SequenceClock } from "./sequence.ts";
 import type { ThreadAliases } from "./shell/aliases.ts";
@@ -31,7 +43,7 @@ import { appThreadOf, threadShellOf, titleOf } from "./shell/threadShell.ts";
 import { SHELL_SCHEMA_VERSION } from "./shell.ts";
 import type { HeldPrompts } from "./threads/held.ts";
 import { LOBBY_CLAUDE_SLUGS } from "./models.ts";
-import { LiveThread } from "./threads/live.ts";
+import { LiveThread, type StreamCredential } from "./threads/live.ts";
 import type { PendingDispatches } from "./threads/pending.ts";
 
 export interface HubOptions {
@@ -87,7 +99,11 @@ export class UserHub {
     ProjectId,
     { readonly encoded: string; readonly row: OrchestrationProjectShell }
   >();
-  #relay: RelayCredentials | undefined;
+  /** The credential of the most recent request, socket or not. */
+  #recent: StreamCredential | undefined;
+  /** The credentials open sockets hold, oldest first. */
+  readonly #holders = new Map<number, StreamCredential>();
+  #nextHolder = 0;
   #refreshedAt = 0;
   #refreshing: Promise<void> | undefined;
   #poll: ReturnType<typeof setInterval> | undefined;
@@ -106,8 +122,56 @@ export class UserHub {
     this.#shellLog = new EventLog(options.clock, 2000, options.clock.next());
   }
 
+  /** Marks `relay` as the most recent credential (an HTTP request, or any call). */
   use(relay: RelayCredentials): void {
-    this.#relay = relay;
+    this.#recent = { key: relayKey(relay), relay };
+  }
+
+  /**
+   * Holds `relay` until the returned release is called: a WebSocket's
+   * credential, for the socket's lifetime.
+   */
+  hold(relay: RelayCredentials): () => void {
+    const id = ++this.#nextHolder;
+    this.#holders.set(id, { key: relayKey(relay), relay });
+    this.#rebalance();
+    return () => {
+      if (this.#holders.delete(id)) this.#rebalance();
+    };
+  }
+
+  /** The credential shared upstream calls go out with: the newest held, else the most recent. */
+  credential(): StreamCredential | undefined {
+    let newest: StreamCredential | undefined;
+    for (const held of this.#holders.values()) newest = held;
+    return newest ?? this.#recent;
+  }
+
+  /** Forgets a credential (a revoked device) and moves every stream opened under it. */
+  revoke(key: string): void {
+    for (const [id, held] of this.#holders) {
+      if (held.key === key) this.#holders.delete(id);
+    }
+    if (this.#recent?.key === key) this.#recent = undefined;
+    for (const live of this.#threads.values()) live.dropCredential(key);
+    this.#rebalance();
+  }
+
+  /** The keys of the credentials open sockets hold. */
+  heldKeys(): ReadonlySet<string> {
+    return new Set([...this.#holders.values()].map((h) => h.key));
+  }
+
+  // While any socket is open, every stream runs under a credential one of
+  // them holds. With none open, streams keep what they have: they have no
+  // subscriber and close at their idle timeout.
+  #rebalance(): void {
+    const held = this.heldKeys();
+    for (const live of this.#threads.values()) {
+      const key = live.streamKey;
+      if (held.size > 0 && key !== undefined && !held.has(key)) live.dropCredential(key);
+      live.wake();
+    }
   }
 
   /** Fetches the session list and layout unless they are fresher than a moment ago. */
@@ -116,7 +180,7 @@ export class UserHub {
       return Promise.resolve();
     }
     if (this.#refreshing !== undefined) return this.#refreshing;
-    const relay = this.#relay;
+    const relay = this.credential()?.relay;
     if (relay === undefined) return Promise.resolve();
     this.#refreshing = (async () => {
       try {
@@ -204,6 +268,7 @@ export class UserHub {
         api: this.#o.api,
         clock: this.#o.clock,
         pending: this.#o.pending,
+        credential: () => this.credential(),
         ...(this.#o.held === undefined ? {} : { held: this.#o.held }),
         locate: async (stale) => {
           if (stale) await this.refresh(true);
@@ -226,7 +291,7 @@ export class UserHub {
       });
       this.#threads.set(id, live);
     }
-    live.attach(relay);
+    live.attach();
     return live;
   }
 
@@ -345,6 +410,11 @@ export class Hub {
     }
     hub.use(identity.relay);
     return hub;
+  }
+
+  /** Forgets a revoked credential in every user's hub (keys never collide across users). */
+  revoke(key: string): void {
+    for (const hub of this.#users.values()) hub.revoke(key);
   }
 
   dispose(): void {

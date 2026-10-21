@@ -10,6 +10,12 @@
  * on subscribe and every committed event after; after a rebuild they get one
  * fresh snapshot. With no subscriber for `idleMs` the thread closes its stream
  * and the hub forgets it.
+ *
+ * The stream goes out under whichever credential `credential` names when it
+ * opens, and remembers that credential's key. The hub drops the stream
+ * (dropCredential) when that key is revoked, or when no live client holds it
+ * any more; the loop then reopens under the credential `credential` names
+ * now, resuming where the dropped stream left off, or waits until one exists.
  */
 import type {
   OrchestrationV2AppThread,
@@ -19,6 +25,12 @@ import type {
 } from "@t3tools/contracts";
 
 import type { RelayCredentials } from "../auth.ts";
+
+/** A credential to open a stream with, and its key (auth.ts relayKey). */
+export interface StreamCredential {
+  readonly key: string;
+  readonly relay: RelayCredentials;
+}
 import type { LobbyApi } from "../lobby/api.ts";
 import { parseLobbyEvent, SseParser } from "../lobby/wire.ts";
 import type { SequenceClock } from "../sequence.ts";
@@ -40,6 +52,8 @@ export interface LiveThreadOptions {
   readonly api: LobbyApi;
   readonly clock: SequenceClock;
   readonly pending: PendingDispatches;
+  /** The credential to open the upstream stream with now; undefined while none is held. */
+  readonly credential: () => StreamCredential | undefined;
   /** Where the prompts a T3 Stop held are kept beyond this model (held.ts). */
   readonly held?: HeldPrompts;
   /** The session's current name, after refreshing the directory when `stale`. */
@@ -71,8 +85,10 @@ export class LiveThread {
   readonly #now: () => number;
   readonly #eventPrefix: string;
   #model: ThreadModel;
-  #relay: RelayCredentials | undefined;
   #abort: AbortController | undefined;
+  /** The key of the credential the open upstream stream was opened with. */
+  #streamKey: string | undefined;
+  #wake: (() => void) | undefined;
   #running = false;
   #disposed = false;
   #needsSnapshot = false;
@@ -102,9 +118,8 @@ export class LiveThread {
     return `${this.#o.osUser}\u0000${this.#o.threadId}`;
   }
 
-  /** Starts (or keeps) the upstream stream under these credentials. */
-  attach(relay: RelayCredentials): void {
-    this.#relay = relay;
+  /** Starts (or keeps) the upstream stream. */
+  attach(): void {
     this.#touch();
     if (!this.#running && !this.#disposed) {
       this.#running = true;
@@ -180,9 +195,33 @@ export class LiveThread {
     this.commit(this.#model.mapper.updateThread(patch));
   }
 
+  /** The key of the credential the upstream stream is open under, if one is open. */
+  get streamKey(): string | undefined {
+    return this.#streamKey;
+  }
+
+  /**
+   * Ends the upstream stream if it was opened under `key`. The loop reopens it
+   * at once under the current credential, or waits for one.
+   */
+  dropCredential(key: string): void {
+    if (this.#streamKey !== key) return;
+    this.#streamKey = undefined;
+    this.#abort?.abort();
+    this.wake();
+  }
+
+  /** Ends a wait for a credential or a backoff early, for when a credential appears. */
+  wake(): void {
+    const wake = this.#wake;
+    this.#wake = undefined;
+    wake?.();
+  }
+
   dispose(): void {
     this.#disposed = true;
     this.#abort?.abort();
+    this.wake();
     if (this.#idleTimer !== undefined) clearTimeout(this.#idleTimer);
     for (const waiter of this.#readyWaiters.splice(0)) waiter();
   }
@@ -244,31 +283,55 @@ export class LiveThread {
     let backoff = 500;
     let stale = false;
     while (!this.#disposed) {
-      const relay = this.#relay;
-      const where =
-        relay === undefined ? undefined : await this.#o.locate(stale).catch(() => undefined);
-      if (relay === undefined || where === undefined) {
+      const where = await this.#o.locate(stale).catch(() => undefined);
+      if (where === undefined) {
         backoff = Math.min(backoff * 2, 10_000);
-        await sleep(backoff);
+        await this.#sleep(backoff);
         stale = true;
         continue;
       }
       stale = false;
-      const outcome = await this.#readOnce(relay, where).catch((error: unknown) => {
+      // Read after the await above, so a credential revoked meanwhile is not used.
+      const credential = this.#o.credential();
+      if (credential === undefined) {
+        // Nobody holds a credential: wait until a client brings one.
+        await this.#sleep(10_000);
+        continue;
+      }
+      this.#streamKey = credential.key;
+      const outcome = await this.#readOnce(credential.relay, where).catch((error: unknown) => {
         if (!this.#disposed) this.#o.log?.(`thread ${this.#o.threadId}: ${String(error)}`);
         return "error" as const;
       });
+      const dropped = this.#streamKey === undefined;
+      this.#streamKey = undefined;
       if (this.#disposed) break;
       if (outcome === "synced") backoff = 500;
       if (outcome === "missing") stale = true;
-      if (outcome === "rebuild") {
+      if (outcome === "rebuild" || dropped) {
+        // A rebuild, or the hub ended the stream to move it to another
+        // credential: reopen at once.
         backoff = 500;
         continue;
       }
       backoff = Math.min(backoff * 2, 10_000);
-      await sleep(backoff);
+      await this.#sleep(backoff);
     }
     this.#running = false;
+  }
+
+  /** Sleeps `ms`, or less when woken. */
+  #sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = (): void => {
+        clearTimeout(timer);
+        if (this.#wake === done) this.#wake = undefined;
+        resolve();
+      };
+      timer = setTimeout(done, ms);
+      this.#wake = done;
+    });
   }
 
   /**

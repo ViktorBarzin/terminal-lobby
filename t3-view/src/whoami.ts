@@ -1,17 +1,17 @@
 /**
- * tmux-api's /whoami as the auth gate's verifier (auth.ts). The request
- * carries exactly what the browser's request carried: the identity header and
- * the proxy secret. tmux-api checks both and answers the OS user and whether
- * that user is an admin.
+ * tmux-api's /whoami as the auth gates' verifier (auth.ts). The request
+ * carries exactly what the client's request carried: the identity header and
+ * the proxy secret for a browser, or the bearer alone for a paired app.
+ * tmux-api checks them and answers the OS user.
  */
-import { PROXY_SECRET_HEADER, type WhoamiFetch } from "./auth.ts";
+import { relayHeaders, type WhoamiFetch } from "./auth.ts";
 
 const WHOAMI_TIMEOUT_MS = 5_000;
 
 export function tmuxApiWhoami(baseUrl: string): WhoamiFetch {
   return async (relay) => {
     const response = await fetch(`${baseUrl}/whoami`, {
-      headers: { [relay.header]: relay.identity, [PROXY_SECRET_HEADER]: relay.secret },
+      headers: relayHeaders(relay),
       signal: AbortSignal.timeout(WHOAMI_TIMEOUT_MS),
     });
     if (response.status !== 200) {
