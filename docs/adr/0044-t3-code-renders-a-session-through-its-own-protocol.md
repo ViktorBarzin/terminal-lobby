@@ -2,6 +2,13 @@
 
 Status: accepted; first cut released in terminal-lobby 0.125.2 (2026-10-12).
 
+> [!NOTE]
+> [ADR-0045](0045-t3-apps-are-clients-of-lobby-sessions.md) (2026-10-21)
+> extends this record to T3's own web, desktop and phone apps, and changes
+> three of its decisions once built: the T3 view is offered to every user, the
+> pin follows T3's latest stable through a daily CI check, and the sidecar is
+> served at `t3.viktorbarzin.me`.
+
 Viktor, 2026-10-12: *"I'm keen on reusing t3 code into my terminal lobby,
 especially the text mode. Theo is putting a lot of work into making t3 code and
 I'd like to build on top instead of reinventing the wheel."*

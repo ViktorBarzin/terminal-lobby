@@ -1048,8 +1048,25 @@ the view is the thing rendered)
 The third view the session bar switches between: T3 Code's own web client,
 iframed into the session pane and served by `tl-t3-view`, rendering the same
 Session as a T3 thread (ADR-0044). Shown to admins while it is compared with the
-**Text view**. Not T3's server and not a second Claude.
+**Text view**; ADR-0045 opens it to every user. Not T3's server and not a
+second Claude.
 _Avoid_: T3 mode, T3 bridge (the bridge was ADR-0009's, removed in ADR-0029)
+
+**T3 client** (ADR-0045, not yet built):
+Any of T3 Code's own apps, web at `t3.viktorbarzin.me`, desktop or phone,
+connected to `tl-t3-view` as its only server. It lists the person's Claude
+**Sessions** as threads and drives them; a thread it starts is a Session from
+its first prompt. The lobby is the only host, so a T3 client never runs a
+Claude of its own.
+_Avoid_: T3 server, t3-serve (T3's own server, retired by ADR-0045)
+
+**Paired device** (ADR-0045, not yet built):
+A **T3 client** that signed in with a pairing code the lobby showed, and holds
+a bearer token tmux-api issued for it. Listed by device label and revocable
+from the lobby. A browser at `t3.viktorbarzin.me` signs in through Authentik
+instead and is not a paired device.
+_Avoid_: environment (T3's word for the server a client connects to, of which
+there is one)
 
 **Blank** (Text view):
 A **Text view** that has been on screen for two seconds with no rows drawn. It
