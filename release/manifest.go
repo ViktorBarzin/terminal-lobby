@@ -366,13 +366,15 @@ var Package = Manifest{
 		// The public-link visitor page (ADR-0041), served to people who are not
 		// signed in. A broken /s/ is a broken link for everyone holding one.
 		{Unit: "clipboard-upload", Name: "clipboard-upload serves the link page", URL: "http://127.0.0.1:7683/s/", WantStatus: 200},
-		// The T3 view (ADR-0044): an admin-only third view beside the Text
-		// view, which stays the default, so nobody's session depends on it.
-		// Advisory for the reason agent-api's probes are: a failure means
-		// this one view is down, and a revert would hold every later deploy
-		// of the lobby. Every route of the sidecar is authed, so the probe is
-		// the refusal; it answers 401 before it asks tmux-api anything.
-		{Unit: "tl-t3-view", Name: "tl-t3-view refuses anonymous", URL: "http://127.0.0.1:7690/.well-known/t3/environment", WantStatus: 401, Advisory: true},
+		// The T3 view (ADR-0044): a third view beside the Text view, which
+		// stays the default, so nobody's session depends on it. Advisory for
+		// the reason agent-api's probes are: a failure means this one view is
+		// down, and a revert would hold every later deploy of the lobby. The
+		// probe is the refusal, on a route that needs a credential: the
+		// environment descriptor answers anyone, because T3's apps read it
+		// before pairing (ADR-0045). With no credential at all the sidecar
+		// answers 401 before it asks tmux-api anything.
+		{Unit: "tl-t3-view", Name: "tl-t3-view refuses anonymous", URL: "http://127.0.0.1:7690/api/orchestration/shell", WantStatus: 401, Advisory: true},
 	},
 	Files: []File{
 		{Src: "bin/tmux-api", Dest: "/usr/local/bin/tmux-api", Mode: 0o755},

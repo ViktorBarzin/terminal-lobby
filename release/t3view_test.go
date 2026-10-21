@@ -99,13 +99,18 @@ func TestTheT3ViewIsEnabled(t *testing.T) {
 	t.Error("tl-t3-view is not enabled; it would not come back after a reboot")
 }
 
-// The T3 view is an admin-only third view beside the Text view, which stays
-// the default. A failed probe here means "this one view is not answering",
-// and a revert would hold every later deploy of the lobby (Decide returns
-// RevertAndHold), so its checks are advisory. They still assert the refusal,
-// because a sidecar answering without credentials is worse than one that is
-// down.
+// The T3 view is a third view beside the Text view, which stays the default.
+// A failed probe here means "this one view is not answering", and a revert
+// would hold every later deploy of the lobby (Decide returns RevertAndHold),
+// so its checks are advisory. They still assert the refusal, because a
+// sidecar answering without credentials is worse than one that is down.
+//
+// The refusal has to be asked of a route that needs a credential. T3's apps
+// read the environment descriptor, the token exchange and the session state
+// before they have paired (ADR-0045), so those answer anyone and a 401 probe
+// on them would always fail.
 func TestTheT3ViewsChecksCannotDowngradeTheBox(t *testing.T) {
+	credentialless := []string{"/.well-known/t3/environment", "/oauth/token", "/api/auth/session"}
 	var seen, refusals int
 	for _, c := range Package.Checks {
 		if c.Unit != "tl-t3-view" {
@@ -117,6 +122,11 @@ func TestTheT3ViewsChecksCannotDowngradeTheBox(t *testing.T) {
 		}
 		if c.WantStatus == 401 {
 			refusals++
+			for _, path := range credentialless {
+				if strings.HasSuffix(c.URL, path) {
+					t.Errorf("check %q expects 401 from %s, which answers without a credential", c.Name, path)
+				}
+			}
 		}
 	}
 	if seen == 0 {
