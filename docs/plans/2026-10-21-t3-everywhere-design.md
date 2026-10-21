@@ -70,8 +70,8 @@ first prompt. A session started in the lobby shows in every T3 client's sidebar.
 | 10 | Environment id | One for all users, stable across restarts and upgrades |
 | 11 | Harnesses | Claude only |
 | 12 | T3 chrome | The patch gains a lobby-server mode that hides the controls `tl-t3-view` does not serve (terminal panel, git and worktree actions, provider settings, other providers), full-page and embedded |
-| 13 | Upstream | Latest stable. A daily lobby CI job compares npm `latest` with the pin, rebuilds the web client and sidecar, runs the typecheck and the recorded-session tests, and on success lands the new pin and releases |
-| 14 | A failing release | Held: the pin stays on the last release that passed, and Slack #alerts names the held version and the failing step |
+| 13 | Upstream | Latest stable. A daily lobby CI job compares T3's latest GitHub release with the pin (npm versions have not always had a matching git tag), rebuilds the web client and sidecar, runs the typecheck and the recorded-session tests, and on success lands the new pin and releases |
+| 14 | A failing release | Held: the pin stays on the last release that passed, and Slack #alerts names the held version and links the workflow run that shows the failing step |
 | 15 | Notifications | Desktop and web T3 raise their own from the stream; the sidecar keeps run status, pending requests and completion accurate. Phones keep lobby push. No T3 relay |
 | 16 | Retirement | `t3-serve@`, `t3-dispatch`, `t3-autoupdate`, `t3-watchdog`, `t3-migrate-idle`, `t3-provision-users`, `t3-cgroup-snap` and the `t3-backup-state` timer leave the devvm playbook. Each user's last `~/.t3` backup is kept. `t3-afk` is not touched |
 | 17 | Rollout | Staged (below) |
