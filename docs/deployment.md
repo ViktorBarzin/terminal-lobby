@@ -78,6 +78,47 @@ letter, so `1.7.7+02cbf4b` is below `1.7.7+c76b116` and four published builds sa
 behind that one unreachable. `dpkg --compare-versions A gt B` answers the
 question for any pair.
 
+## The T3 view follows T3 Code's stable releases
+
+The T3 view is built against the T3 Code release named in `t3-view/T3_PIN`,
+and that pin follows upstream's latest stable release (ADR-0045). Nobody moves
+it by hand in the normal course.
+
+`.github/workflows/t3-stable.yml` runs once a day. It asks GitHub's
+`releases/latest` for T3 Code's newest stable tag and stops there when the pin
+already names it. Otherwise it rebuilds against the new release: the full web
+build with the embed patch, the regenerated RPC stubs, the T3 view's tests and
+typecheck, and the release tests. When all of them pass, it commits the new pin
+and stubs to Forgejo master as `terminal-lobby CI`, the push mirrors to GitHub,
+and the ordinary release builds and ships the package. A rejected push retries
+once on top of the new master; it never forces.
+
+The build and the push run in separate jobs. The build runs T3's own code, so
+it gets no secret; only the push job holds `FORGEJO_GIT_TOKEN`, and it runs
+nothing from upstream. `release/releaseworkflow_test.go` checks that split.
+
+A release that fails any step is held. Nothing lands, the box stays on the last
+release that passed, and the next day's run tries again. The box reports the
+hold itself: `tl-t3-upstream-check.timer` runs once a day, compares GitHub's
+latest stable release with the pin the installed package was built from
+(`/usr/lib/terminal-lobby/tl-t3-view/T3_PIN`), and writes
+`tl_t3_upstream_unadopted_since_seconds` to
+`/var/lib/node_exporter/textfile/tl-t3-upstream.prom`. The value is the
+release's publish time while the box does not have it, and 0 once it does.
+The infra alert `T3StableHeld` fires when a release has waited more than 36
+hours, and `T3UpstreamCheckStale` fires when the file is more than two days
+old, which is what a check that keeps failing looks like: a failed fetch
+writes nothing, and `journalctl -u tl-t3-upstream-check` says why.
+
+To see why a release is held, open the failed `t3-stable` run on GitHub
+Actions. To run the follower now, start it from the Actions tab
+(`workflow_dispatch`). To run the box's check now:
+
+```sh
+sudo systemctl start tl-t3-upstream-check.service
+cat /var/lib/node_exporter/textfile/tl-t3-upstream.prom
+```
+
 ## The port systemd holds for session-events
 
 `session-events.socket` owns port 7685, and `session-events.service` takes the

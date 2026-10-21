@@ -21,7 +21,7 @@ images are the second cut.
 
 | Path | What it is |
 |---|---|
-| `T3_PIN` | The T3 tag, its commit, and the repo to fetch it from |
+| `T3_PIN` | The T3 tag, its commit, and the repo to fetch it from. Follows the latest stable release daily (below) |
 | `patches/*.patch` | Applied to the pinned checkout in name order (one today, `embed.patch`; its contract is [EMBED.md](EMBED.md)) |
 | `scripts/build-web.sh` | Extracts the pin, applies patches, installs T3's web closure from T3's lockfile, builds `apps/web`. CI runs the same script |
 | `scripts/link-t3.sh` | Points `node_modules/` at that checkout. Generated, gitignored |
@@ -63,6 +63,15 @@ read it from `T3_PIN` and hand it to the bundle as a define, so a pin bump
 changes it with nothing else to edit.
 
 ### Moving the pin
+
+The pin follows T3 Code's latest stable release on its own.
+`.github/workflows/t3-stable.yml` checks GitHub's `releases/latest` daily,
+runs the steps below in CI, and when they pass commits the new `T3_PIN` and
+`src/rpc/stubs.ts` to master. A release that fails any step is held on the
+last one that passed, and the box's `tl-t3-upstream-check` timer reports the
+hold to the infra alert `T3StableHeld`
+([deployment.md](../docs/deployment.md)). By hand, for a release the
+follower is holding or a tag that is not the latest:
 
 1. Set `tag=` and `commit=` in `T3_PIN` (the commit is
    `git rev-parse <tag>^{commit}` in a T3 clone).
