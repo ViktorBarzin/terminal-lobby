@@ -112,6 +112,15 @@ if [[ "$deps_only" == 1 ]]; then
 	exit 0
 fi
 
+# An empty repository at the checkout's root, so Tailwind's source scan reads
+# T3's .gitignore. Tailwind applies .gitignore only inside a git repository,
+# and this tree is a git archive extract: without one it scans every
+# node_modules, and T3 v0.1.1's build passed 15 GB in that scan, past what a
+# GitHub runner has. Upstream builds in a real checkout and never sees this.
+if [[ ! -e "$src/.git" ]]; then
+	git init -q "$src"
+fi
+
 # vp directly: `pnpm run build` first runs pnpm's dependency check, which wants
 # an unfiltered install and aborts without a TTY.
 echo "build-web: building apps/web"
