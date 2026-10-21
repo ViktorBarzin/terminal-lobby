@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,7 +28,7 @@ import {
   type WhoamiFetch,
 } from "../src/auth.ts";
 import { Commands } from "../src/commands/dispatch.ts";
-import { environmentDescriptor, environmentIdFor } from "../src/descriptor.ts";
+import { environmentDescriptor, environmentIdFor, serverVersionOf } from "../src/descriptor.ts";
 import { Hub } from "../src/hub.ts";
 import { LobbyApi } from "../src/lobby/api.ts";
 import { SequenceClock } from "../src/sequence.ts";
@@ -569,6 +569,10 @@ const tokenForm = (code: string, extra: Record<string, string> = {}) =>
 
 const FORM = { "content-type": "application/x-www-form-urlencoded" };
 
+// Read here rather than written out, so moving the pin (t3-stable.yml) does not
+// fail this test.
+const PINNED_TAG = /^tag=(.+)$/m.exec(readFileSync(new URL("../T3_PIN", import.meta.url), "utf8"))![1]!;
+
 describe("paired apps: credential-less routes", () => {
   it("answers the environment descriptor without credentials, readable cross-origin", async () => {
     const response = await get("/.well-known/t3/environment", { origin: "t3code://app" });
@@ -578,7 +582,7 @@ describe("paired apps: credential-less routes", () => {
     expect(await response.json()).toMatchObject({
       environmentId: environmentIdFor("test"),
       orchestrationProtocolVersion: 2,
-      serverVersion: "0.1.0",
+      serverVersion: serverVersionOf(PINNED_TAG),
     });
   });
 
