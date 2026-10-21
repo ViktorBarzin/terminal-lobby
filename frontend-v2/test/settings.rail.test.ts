@@ -8,12 +8,7 @@
  * strand the panel on an entry that is no longer in the rail.
  */
 import { describe, it, expect } from "vitest";
-import {
-  openerAction,
-  railFor,
-  resolvePage,
-  type PageId,
-} from "../src/components/settings/rail";
+import { openerAction, railFor, resolvePage, type PageId } from "../src/components/settings/rail";
 
 const ids = (admin: boolean): PageId[] => railFor({ admin }).map((e) => e.id);
 
@@ -74,8 +69,19 @@ describe("railFor", () => {
     expect(admin.find((e) => e.id === "links")?.label).toBe("Public links");
   });
 
+  it("puts T3 apps in the managed tier when offered, and nowhere when not", () => {
+    // A lens tab gets no entry: tmux-api refuses to pair under act-as.
+    expect(ids(false)).not.toContain("t3apps");
+    const all = railFor({ admin: true, links: true, t3apps: true });
+    expect(all.map((e) => e.id).slice(-4)).toEqual(["skills", "links", "t3apps", "actas"]);
+    expect(all.find((e) => e.id === "t3apps")?.label).toBe("T3 apps");
+    expect(all.find((e) => e.id === "t3apps")?.startsGroup).toBeFalsy();
+  });
+
   it("gives every entry a label", () => {
-    for (const e of railFor({ admin: true })) expect(e.label).toBeTruthy();
+    for (const e of railFor({ admin: true, links: true, t3apps: true })) {
+      expect(e.label).toBeTruthy();
+    }
   });
 });
 
@@ -97,11 +103,8 @@ describe("resolvePage", () => {
 });
 
 describe("openerAction", () => {
-  const press = (
-    isOpen: boolean,
-    showing: PageId | undefined,
-    pressed: PageId | undefined,
-  ) => openerAction({ isOpen, showing, pressed });
+  const press = (isOpen: boolean, showing: PageId | undefined, pressed: PageId | undefined) =>
+    openerAction({ isOpen, showing, pressed });
 
   it("opens on the asked-for page when nothing is open", () => {
     expect(press(false, undefined, "skills")).toEqual({ kind: "open", page: "skills" });

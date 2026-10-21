@@ -37,6 +37,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "highlight.js": "^11.11.1",
+    "lean-qr": "^2.7.4",
     "mermaid": "^11.4.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",

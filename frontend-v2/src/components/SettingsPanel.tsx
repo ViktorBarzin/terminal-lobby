@@ -30,6 +30,8 @@ import { AgentSpendPage } from "./settings/pages/AgentSpendPage";
 import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
 import { LinksPage } from "./settings/pages/LinksPage";
+import { T3AppsPage } from "./settings/pages/T3AppsPage";
+import { t3AppOrigin } from "../t3/embed.logic";
 import { lsGet, lsSet } from "../lib/storage";
 import { dismissOnPress } from "./overlay";
 
@@ -80,6 +82,9 @@ export const SettingsPanel: Component<{
   /** Offer the Public links page. App passes it for every tab but a lens,
    *  whose links would be somebody else's; absent, the rail has no entry. */
   publicLinks?: boolean;
+  /** Offer the T3 apps page (pairing and revoking T3's apps). App passes it
+   *  for every tab but a lens, where tmux-api refuses to pair. */
+  t3Apps?: boolean;
   /** the skills inventory behind the Skills page. */
   skills?: SkillsStore;
   /** the caller's live sessions, for the Skills page's Sessions tab. `tool`
@@ -97,7 +102,11 @@ export const SettingsPanel: Component<{
   let railEl: HTMLDivElement | undefined;
   let pageEl: HTMLDivElement | undefined;
 
-  const railOpts = () => ({ admin: !!props.actAs, links: !!props.publicLinks });
+  const railOpts = () => ({
+    admin: !!props.actAs,
+    links: !!props.publicLinks,
+    t3apps: !!props.t3Apps,
+  });
   const rail = createMemo<RailEntry[]>(() => railFor(railOpts()));
   const [page, setPage] = createSignal<PageId>(
     resolvePage(railFor(railOpts()), props.initialPage ?? lsGet(LAST_PAGE_KEY)),
@@ -307,6 +316,12 @@ export const SettingsPanel: Component<{
               </Match>
               <Match when={current() === "links"}>
                 <LinksPage />
+              </Match>
+              <Match when={current() === "t3apps"}>
+                <T3AppsPage
+                  origin={t3AppOrigin(window.location.hostname)}
+                  confirm={props.confirm}
+                />
               </Match>
               <Match when={current() === "actas"}>
                 <Show when={props.actAs}>{(ctl) => <ActAsPage actAs={ctl()} />}</Show>

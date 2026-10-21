@@ -9,8 +9,8 @@
  *
  * Three tiers, separated by a rule each:
  *   - preferences, the eight pages everyone has;
- *   - Skills and Public links, which are things you manage rather than
- *     preferences;
+ *   - Skills, Public links and T3 apps, which are things you manage rather
+ *     than preferences;
  *   - Act as user, which only renders for a caller who administers the box.
  */
 
@@ -25,6 +25,7 @@ export type PageId =
   | "spend"
   | "skills"
   | "links"
+  | "t3apps"
   | "actas";
 
 export interface RailEntry {
@@ -55,13 +56,21 @@ const PREFERENCES: readonly RailEntry[] = [
  * `links` adds Public links beside Skills, in the tier of things you manage.
  * Every caller has it except a lens tab, whose links would be somebody else's
  * and which the server refuses; absent means no entry, like `admin`.
+ *
+ * `t3apps` adds T3 apps (ADR-0045) beside them on the same terms: tmux-api
+ * refuses to pair or revoke under act-as, so a lens tab has no entry.
  */
-export const railFor = (opts: { admin: boolean; links?: boolean }): RailEntry[] => {
+export const railFor = (opts: {
+  admin: boolean;
+  links?: boolean;
+  t3apps?: boolean;
+}): RailEntry[] => {
   const entries: RailEntry[] = [
     ...PREFERENCES,
     { id: "skills", label: "Skills", startsGroup: true },
   ];
   if (opts.links) entries.push({ id: "links", label: "Public links" });
+  if (opts.t3apps) entries.push({ id: "t3apps", label: "T3 apps" });
   if (opts.admin) entries.push({ id: "actas", label: "Act as user", startsGroup: true });
   return entries;
 };

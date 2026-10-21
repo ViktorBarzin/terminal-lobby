@@ -12,6 +12,7 @@ import {
   t3FrameAllow,
   t3FrameUrl,
   t3Offered,
+  t3AppOrigin,
   t3ThreadId,
   t3ViewOrigin,
 } from "../src/t3/embed.logic";
@@ -504,6 +505,21 @@ describe("who is offered the T3 view", () => {
       ),
     );
     expect(rows.filter((r) => t3Offered(r))).toEqual([base]);
+  });
+});
+
+describe("where T3's apps pair", () => {
+  it("is t3 beside the lobby's own host", () => {
+    expect(t3AppOrigin("terminal.viktorbarzin.me")).toBe("https://t3.viktorbarzin.me");
+    expect(t3AppOrigin("terminal-dev.viktorbarzin.me")).toBe("https://t3.viktorbarzin.me");
+    expect(t3AppOrigin("Terminal.Example.COM")).toBe("https://t3.example.com");
+    expect(t3AppOrigin("example.com")).toBe("https://t3.example.com");
+  });
+
+  it("has none on a dev server without a domain", () => {
+    for (const h of ["127.0.0.1", "localhost", "[::1]", "10.0.10.10", "devvm", ""]) {
+      expect(t3AppOrigin(h), h).toBeNull();
+    }
   });
 });
 

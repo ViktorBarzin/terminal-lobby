@@ -287,6 +287,8 @@ src/
     links-api.ts         tmux-api's public-links routes: list, create (the
                          token comes back once), revoke one, and the session
                          bar's Stop, which revokes every link on a session
+    devices-api.ts       tmux-api's paired-devices routes (ADR-0045): a
+                         pairing code, the caller's paired T3 apps, revoke one
     shares-api.ts        tmux-api's named-share routes for the People half of
                          the Share dialog (list, invite, change, remove), the
                          lobby URL that opens a session for its guests, and a
@@ -1080,6 +1082,9 @@ src/
         LinksPage.tsx         Every live public link you own across sessions,
                               with expiry, visitor count and Revoke. Absent in a
                               lens tab
+        T3AppsPage.tsx        Pair one of T3's apps (a link, its QR code and the
+                              code, counting down), and the paired apps with
+                              Revoke. Absent in a lens tab
         SkillsPage.tsx        The Skills surface (docs/adr/0011), a rail page
                               since 2026-08-30: a tab per list — this account's
                               skills, each other account's with a same/differs
@@ -1146,7 +1151,11 @@ src/
   t3/
     embed.logic.ts       PURE the T3 view's embed contract: its origin and the
                          `?t3view=` override, the thread id, message parsing,
-                         and the chords the frame hands back
+                         the chords the frame hands back, who is offered it,
+                         and the origin T3's apps pair with
+    pairing.logic.ts     PURE Settings → T3 apps: the pairing card's states,
+                         the link and grouped code, the countdown, a device
+                         row's words, and the QR code's SVG path
     frame-claim.ts       At most one T3 frame per tab: the latest ask holds it
     frame-keeper.ts      The tab's one T3 frame: booted early on a desktop,
                          moved between panes without reloading, parked hidden
@@ -1335,7 +1344,8 @@ All of the following ship in the deployed build:
   cover the composer.
 - **Settings** — one overlay, navigated by a category rail with a single page
   showing: Appearance, Terminal, Sessions, Keyboard, Notifications, Network,
-  Privacy, then Skills, then Act as user for an admin. ↑↓ walk the rail, Enter
+  Privacy, then Skills, Public links and T3 apps (not in a lens tab), then Act
+  as user for an admin. ↑↓ walk the rail, Enter
   steps into the page, and it reopens where you left it (`tl:settings:page`,
   per device). Each row is label-left/control-right; explanations sit behind a
   ⓘ that expands in place, except the three that describe a consequence

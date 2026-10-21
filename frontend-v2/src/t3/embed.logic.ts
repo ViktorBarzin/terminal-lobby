@@ -49,6 +49,19 @@ export function defaultT3Origin(lobbyHostname: string): string | null {
   return d ? `https://${T3_LABEL}.${d}` : null;
 }
 
+/** The host name T3's own apps connect to, beside the lobby's (ADR-0045 decision 6). */
+const T3_APP_LABEL = "t3";
+
+/**
+ * Where T3's web, desktop and phone apps reach the lobby's sessions, and so
+ * where a pairing link points: `t3.` on the lobby's own domain. Null on a dev
+ * server with no domain, where Settings shows the code without a link.
+ */
+export function t3AppOrigin(lobbyHostname: string): string | null {
+  const d = sharedDomain(lobbyHostname);
+  return d ? `https://${T3_APP_LABEL}.${d}` : null;
+}
+
 /**
  * An override the lobby will frame, as a bare origin, or null.
  *

@@ -6046,6 +6046,47 @@ body.tl-kb-up {
   justify-content: flex-end;
   padding-top: 6px;
 }
+/* ---- T3 apps (ADR-0045) ------------------------------------------------- */
+/* Settings → T3 apps. The link field and the device rows are the Share
+   dialog's; the QR code stays dark on white in every theme, since that is
+   what a phone camera reads best. */
+.tl-t3-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+.tl-t3-qr {
+  width: min(200px, 100%);
+  height: auto;
+  align-self: flex-start;
+  border-radius: var(--radius);
+}
+.tl-t3-pair-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+}
+.tl-t3-code-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-t3-code-label,
+.tl-t3-countdown {
+  color: var(--text-muted);
+}
+.tl-t3-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+
 /* The People half (ADR-0043): one row per person, their name, then Watch or
    Drive, then Remove, wrapping onto a second line only on a phone. */
 .tl-share-guest-field {

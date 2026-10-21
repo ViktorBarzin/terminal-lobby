@@ -3327,6 +3327,8 @@ export const App: Component = () => {
           sessionTitles={sessionTitles}
           // Public links are yours alone, so a lens tab has no page for them.
           publicLinks={!lens()}
+          // Nor T3 apps: a device token would be a credential to their account.
+          t3Apps={!lens()}
         />
       </Show>
 
