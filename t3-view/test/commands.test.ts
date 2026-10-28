@@ -57,6 +57,7 @@ function fakeApi(
     model: record("model", { model: "claude-sonnet-5", effort: "high" }),
     prewarm: record("prewarm", undefined),
     claim: record("claim", { claimed: true, found: "claimed", placed: true }),
+    kill: record("kill", undefined),
   } as LobbyCalls;
   return { api, calls };
 }
@@ -96,6 +97,7 @@ function setup(
   const handle: ThreadHandle = { entry, live };
   const { api, calls } = options.api ?? fakeApi();
   const aliases: Array<[string, string]> = [];
+  const removed: string[] = [];
   let draftLooks = 0;
   const project: DirectoryProject = {
     id: ProjectId.make("project:lobby"),
@@ -125,9 +127,12 @@ function setup(
         "claude-haiku-4-5-20251001",
         ...(who.osUser === "wizard" ? (options.offered ?? []) : []),
       ]),
+    removed: async (_identity, threadId) => {
+      removed.push(threadId);
+    },
     log: (line) => logs.push(line),
   });
-  return { commands, calls, live, pending, aliases, logs };
+  return { commands, calls, live, pending, aliases, logs, removed };
 }
 
 const base = {
@@ -632,6 +637,58 @@ describe("queue, stop, mode and model", () => {
         modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: "claude-sonnet-5" },
       }),
     ).rejects.toThrow("the session is working — stop it first");
+  });
+});
+
+describe("thread.delete and thread.archive", () => {
+  for (const type of ["thread.delete", "thread.archive"] as const) {
+    it(`${type} closes the lobby session and drops the thread from the list`, async () => {
+      const { commands, calls, removed } = setup();
+      await commands.dispatch(identity, { type, ...base });
+      expect(calls).toEqual([
+        { op: "kill", args: ["running-echo-hi-with-bash-tool", undefined] },
+      ]);
+      expect(removed).toEqual(["scratch"]);
+    });
+  }
+
+  it("closes a session shared with write access in its owner's lobby", async () => {
+    const { commands, calls } = setup({ access: "rw" });
+    await commands.dispatch(identity, { type: "thread.delete", ...base });
+    expect(calls).toEqual([{ op: "kill", args: ["running-echo-hi-with-bash-tool", "emo"] }]);
+  });
+
+  it("refuses a session shared to watch, and closes nothing", async () => {
+    const { commands, calls, removed } = setup({ access: "ro" });
+    await expect(commands.dispatch(identity, { type: "thread.delete", ...base })).rejects.toThrow(
+      "to watch, not to drive",
+    );
+    expect(calls).toEqual([]);
+    expect(removed).toEqual([]);
+  });
+
+  it("counts a session the lobby no longer has as deleted", async () => {
+    const api = fakeApi({
+      kill: () => {
+        throw new LobbyError(404, "session not found\n");
+      },
+    });
+    const { commands, removed } = setup({ api });
+    await commands.dispatch(identity, { type: "thread.delete", ...base });
+    expect(removed).toEqual(["scratch"]);
+  });
+
+  it("returns any other refusal in the lobby's words, and keeps the thread", async () => {
+    const api = fakeApi({
+      kill: () => {
+        throw new LobbyError(500, "kill-session failed\n");
+      },
+    });
+    const { commands, removed } = setup({ api });
+    await expect(commands.dispatch(identity, { type: "thread.delete", ...base })).rejects.toThrow(
+      new CommandFailure("kill-session failed"),
+    );
+    expect(removed).toEqual([]);
   });
 });
 

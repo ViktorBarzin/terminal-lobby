@@ -16,6 +16,8 @@
  *   runtime-request.respond              POST /answer naming the tool call
  *   runtime / interaction mode           POST /model {mode}
  *   thread.model-selection.set           POST /model {model, effort}; 409 while a turn runs
+ *   thread.delete, thread.archive        DELETE /sessions/{name}, the lobby's own close: the lobby
+ *                                        snapshots the session first, so it restores from there
  *
  * Every send records messageId -> text first (pending.ts), so the user row
  * Claude writes comes back under the browser's own id. A read-only session
@@ -45,7 +47,7 @@ export class CommandFailure extends Error {
 
 export type LobbyCalls = Pick<
   LobbyApi,
-  "prompt" | "cancel" | "cancelQueued" | "answer" | "mode" | "model" | "prewarm" | "claim"
+  "prompt" | "cancel" | "cancelQueued" | "answer" | "mode" | "model" | "prewarm" | "claim" | "kill"
 >;
 
 export interface ThreadHandle {
@@ -64,6 +66,8 @@ export interface CommandDeps {
     identity: Identity,
     projectId: string,
   ) => Promise<DirectoryProject | undefined>;
+  /** Reloads the user's list once a session is closed, so T3 drops its thread now. */
+  readonly removed?: (identity: Identity, threadId: string) => Promise<void>;
   /** Records the thread id T3 minted for a session the sidecar created (aliases.ts). */
   readonly alias: (identity: Identity, minted: string, threadId: string) => void;
   /**
@@ -314,6 +318,22 @@ export class Commands {
       case "thread.model-selection.set": {
         refuseIfReadOnly();
         await this.#setModel(handle, relay, command.modelSelection, true);
+        return;
+      }
+      case "thread.delete":
+      case "thread.archive": {
+        refuseIfReadOnly();
+        // The lobby has no archive: a closed session is kept as a snapshot the
+        // lobby restores from, which is what archiving asks for anyway.
+        try {
+          await this.#d.api.kill(relay, where.session, where.owner);
+        } catch (error) {
+          // Already closed, from the lobby or another client: the same outcome.
+          if (!(error instanceof LobbyError && error.status === 404)) {
+            throw new CommandFailure(lobbyReason(error));
+          }
+        }
+        await this.#d.removed?.(identity, command.threadId);
         return;
       }
       default:

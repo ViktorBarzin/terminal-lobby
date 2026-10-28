@@ -346,6 +346,27 @@ export class LobbyApi {
     };
   }
 
+  /**
+   * tmux-api: closes a session, as the lobby's own close button does
+   * (session_mutate.go killSession). The lobby snapshots it first, so the
+   * session can still be restored from the lobby. ?owner= names the owner of a
+   * session shared with the user.
+   */
+  async kill(relay: RelayCredentials, session: string, owner: string | undefined): Promise<void> {
+    const qs = owner === undefined ? "" : `?${new URLSearchParams({ owner })}`;
+    const response = await this.#call(
+      relay,
+      `${this.#tmuxApi}/sessions/${encodeURIComponent(session)}${qs}`,
+      {
+        method: "DELETE",
+        headers: this.headers(relay),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+    const text = await response.text();
+    if (!response.ok) throw new LobbyError(response.status, text);
+  }
+
   /** tmux-api: warms a pre-warm slot for a directory (prewarm.go). */
   async prewarm(
     relay: RelayCredentials,

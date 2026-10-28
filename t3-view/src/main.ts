@@ -84,6 +84,7 @@ function start(): void {
       await user.refresh();
       return user.directory.project(projectId);
     },
+    removed: (identity) => hub.user(identity).refresh(true),
     alias: (identity, minted, threadId) => aliases.set(identity.osUser, minted, threadId),
     knownModels: (identity) => new Set([...LOBBY_CLAUDE_SLUGS, ...hub.user(identity).liveModels]),
     log,
