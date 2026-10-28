@@ -141,6 +141,12 @@ describe("Settings → T3 apps: pairing", () => {
     await flush();
     expect(text(container)).toContain("Settings → Connections → Add environment");
   });
+
+  it("says a phone scans with T3's scanner, not the camera", async () => {
+    const { container } = render(() => <T3AppsPage origin={ORIGIN} api={fakeApi()} />);
+    await flush();
+    expect(text(container)).toContain("scan with the scanner inside T3");
+  });
 });
 
 describe("Settings → T3 apps: noticing the code was used", () => {

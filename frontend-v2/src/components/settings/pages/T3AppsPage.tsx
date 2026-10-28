@@ -233,6 +233,10 @@ export const T3AppsPage: Component<{
           Open T3 (web, desktop or phone), go to Settings → Connections → Add environment, and paste
           the link or scan the QR code. Each code works once, for five minutes.
         </div>
+        <div class="tl-set-note">
+          On a phone, scan with the scanner inside T3. The phone's own camera opens the link in the
+          browser, which signs in to T3's web version and leaves the app unpaired.
+        </div>
         <Switch>
           <Match when={showing()}>
             {(code) => (
