@@ -43,7 +43,10 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # The box's release, not ubuntu-latest: the live tmux tests encode tmux 3.4's
+    # behaviour, and the binaries have to run on the box's glibc. ubuntu-latest
+    # moved to 26.04 on 2026-10-28 and failed TestTmuxEscapesControlCharactersButNotTab.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
