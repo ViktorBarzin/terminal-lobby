@@ -789,6 +789,22 @@ describe("paired apps: WebSocket tickets", () => {
     expect((await post("/api/auth/websocket-ticket", BAD_DEVICE)).status).toBe(401);
   });
 
+  it("issues an rpc ticket at the audience path and leaves media to the bare path", async () => {
+    // T3 v0.1.3 clients ask /websocket-ticket/:use first and fall back to
+    // the bare path on a 404; the sidecar has no media socket to ticket for.
+    const response = await post("/api/auth/websocket-ticket/rpc", DEVICE);
+    expect(response.status).toBe(200);
+    const { ticket } = (await response.json()) as { ticket: string };
+    const rpc = await openRpc({}, "t3code://app", `&wsTicket=${encodeURIComponent(ticket)}`);
+    expect((await rpc.exitOf(rpc.request("server.probe", {}))).exit).toEqual({
+      _tag: "Success",
+      value: {},
+    });
+    rpc.socket.close();
+    expect((await post("/api/auth/websocket-ticket/rpc", BAD_DEVICE)).status).toBe(401);
+    expect((await post("/api/auth/websocket-ticket/media", DEVICE)).status).toBe(404);
+  });
+
   it("upgrades with a ticket from another origin, once", async () => {
     const ticket = await ticketFor(DEVICE);
     const query = `&wsTicket=${encodeURIComponent(ticket)}`;

@@ -389,6 +389,16 @@ function rpcOverWebSocket(deps: SidecarDeps, identity: Identity) {
 }
 
 export function routes(deps: SidecarDeps) {
+  const issueTicket = guarded(deps, (_identity, _request, access) =>
+    Effect.sync(() => {
+      if (access.kind !== "bearer") return authInvalid("missing_credential");
+      const issued = deps.tickets.issue(access.bearer);
+      return schemaJson(AuthWebSocketTicketResult, {
+        ticket: issued.ticket,
+        expiresAt: DateTime.makeUnsafe(issued.expiresAt),
+      });
+    }),
+  );
   return Layer.mergeAll(
     // No credential: an app reads this before it has paired, and checks the
     // environment id on every reconnect.
@@ -415,20 +425,11 @@ export function routes(deps: SidecarDeps) {
         ),
       ),
     ),
-    HttpRouter.add(
-      "POST",
-      "/api/auth/websocket-ticket",
-      guarded(deps, (_identity, _request, access) =>
-        Effect.sync(() => {
-          if (access.kind !== "bearer") return authInvalid("missing_credential");
-          const issued = deps.tickets.issue(access.bearer);
-          return schemaJson(AuthWebSocketTicketResult, {
-            ticket: issued.ticket,
-            expiresAt: DateTime.makeUnsafe(issued.expiresAt),
-          });
-        }),
-      ),
-    ),
+    HttpRouter.add("POST", "/api/auth/websocket-ticket", issueTicket),
+    // T3 v0.1.3 clients ask for a ticket by use first. Only the rpc socket
+    // exists here; a media request 404s and the client falls back to the
+    // bare path above.
+    HttpRouter.add("POST", "/api/auth/websocket-ticket/rpc", issueTicket),
     HttpRouter.add(
       "GET",
       "/.well-known/t3/thread/:key",

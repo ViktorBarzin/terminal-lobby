@@ -1,16 +1,16 @@
 diff --git a/apps/web/src/components/AppSidebarLayout.tsx b/apps/web/src/components/AppSidebarLayout.tsx
-index 89d52c8..407baab 100644
+index f7b3209f66..7a6e1f32c9 100644
 --- a/apps/web/src/components/AppSidebarLayout.tsx
 +++ b/apps/web/src/components/AppSidebarLayout.tsx
-@@ -9,6 +9,7 @@ import {
- } from "react";
- import { useLocation, useNavigate } from "@tanstack/react-router";
+@@ -10,6 +10,7 @@ import {
+ import { useLocation, useRouter, type AnyRouter } from "@tanstack/react-router";
  
+ import { isCommandPaletteOpen } from "../commandPaletteBus";
 +import { EmbedBridge, isEmbedded } from "../embed";
  import { isElectron } from "../env";
- import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
  import {
-@@ -320,7 +321,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
+   releaseThreadUndoShortcut,
+@@ -419,7 +420,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
        <SidebarProvider
          className="h-dvh! min-h-0!"
          data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
@@ -19,30 +19,38 @@ index 89d52c8..407baab 100644
          style={sidebarProviderStyle}
        >
          <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
-@@ -355,7 +356,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
-           <SidebarRail onDoubleClick={resetSidebarWidth} />
+@@ -449,7 +450,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
          </Sidebar>
          {children}
+         <BackgroundThreadAnnouncer />
 -        <SidebarControl />
 +        {isEmbedded ? <EmbedBridge /> : <SidebarControl />}
-         <NavigationHistoryShortcuts />
-         <MainAppLocationTracker />
        </SidebarProvider>
+     </PanelAnimationSuppressionProvider>
+   );
 diff --git a/apps/web/src/components/settings/SettingsSidebarNav.tsx b/apps/web/src/components/settings/SettingsSidebarNav.tsx
-index 9be6947..7620fa3 100644
+index 1d2bdc4670..a11206b65a 100644
 --- a/apps/web/src/components/settings/SettingsSidebarNav.tsx
 +++ b/apps/web/src/components/settings/SettingsSidebarNav.tsx
-@@ -338,7 +338,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
-                     pathname === item.to ||
-                     pathname.startsWith(`${item.to}/`);
-                   return (
--                    <SidebarMenuItem key={item.to}>
-+                    <SidebarMenuItem key={item.to} data-settings-section={item.to}>
-                       <SidebarMenuButton
-                         isActive={isActive}
-                         onClick={() => handleSectionClick(item.to)}
+@@ -365,6 +365,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+                     key={group.heading ?? index}
+                     role="group"
+                     aria-label={group.heading ?? undefined}
++                    data-settings-group={group.heading ?? undefined}
+                     className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                   >
+                     {group.heading ? (
+@@ -382,7 +383,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+                         const Icon = SETTINGS_SECTION_ICONS[to];
+                         const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                         return (
+-                          <SidebarMenuItem key={to}>
++                          <SidebarMenuItem key={to} data-settings-section={to}>
+                             <SidebarMenuButton
+                               isActive={isActive}
+                               onClick={() => handleSectionClick(to)}
 diff --git a/apps/web/src/components/sidebar/SidebarChrome.tsx b/apps/web/src/components/sidebar/SidebarChrome.tsx
-index e7a61f6..f5f1171 100644
+index d7207e3e37..4da0fae682 100644
 --- a/apps/web/src/components/sidebar/SidebarChrome.tsx
 +++ b/apps/web/src/components/sidebar/SidebarChrome.tsx
 @@ -141,7 +141,7 @@ function SidebarUtilityItem({
@@ -56,7 +64,7 @@ index e7a61f6..f5f1171 100644
            render={
 diff --git a/apps/web/src/embed.logic.ts b/apps/web/src/embed.logic.ts
 new file mode 100644
-index 0000000..ac1fd64
+index 0000000000..ac1fd6494e
 --- /dev/null
 +++ b/apps/web/src/embed.logic.ts
 @@ -0,0 +1,374 @@
@@ -436,7 +444,7 @@ index 0000000..ac1fd64
 +}
 diff --git a/apps/web/src/embed.tsx b/apps/web/src/embed.tsx
 new file mode 100644
-index 0000000..8649850
+index 0000000000..8649850921
 --- /dev/null
 +++ b/apps/web/src/embed.tsx
 @@ -0,0 +1,328 @@
@@ -769,10 +777,10 @@ index 0000000..8649850
 +  return null;
 +}
 diff --git a/apps/web/src/index.css b/apps/web/src/index.css
-index f28ac85..a8294eb 100644
+index 30bc1c0268..80d130b8e7 100644
 --- a/apps/web/src/index.css
 +++ b/apps/web/src/index.css
-@@ -2452,3 +2452,38 @@ code {
+@@ -2598,3 +2598,42 @@ code {
      }
    }
  }
@@ -789,20 +797,24 @@ index f28ac85..a8294eb 100644
 +/* The terminal drawer itself, should a shortcut open it: terminal.* is unserved. */
 +html[data-t3-lobby] [data-thread-terminal-drawer],
 +/* Sidebar links to pages built on unserved RPCs (pullRequests.*, server.getUsageSummary). */
-+html[data-t3-lobby] [data-sidebar-utility="Pull Requests"],
++html[data-t3-lobby] [data-sidebar-utility="Pull requests"],
 +html[data-t3-lobby] [data-sidebar-utility="Usage"],
 +/* Settings sections whose reads and writes the sidecar refuses: provider
-+   setup and installs, server keybindings, device hosts and preview,
-+   scheduled tasks, source control accounts, storage cleanup, project
-+   scripts, and archived threads. */
++   setup and installs, server keybindings, device hosts, the browser preview,
++   scheduled tasks, source control accounts, storage cleanup, worktrees,
++   project scripts, and archived threads. The "Code" group holds only hidden
++   sections, so its heading goes too. */
 +html[data-t3-lobby] [data-settings-section="/settings/providers"],
 +html[data-t3-lobby] [data-settings-section="/settings/keybindings"],
-+html[data-t3-lobby] [data-settings-section="/settings/integrations"],
++html[data-t3-lobby] [data-settings-section="/settings/devices"],
++html[data-t3-lobby] [data-settings-section="/settings/browser"],
 +html[data-t3-lobby] [data-settings-section="/settings/scheduled-tasks"],
 +html[data-t3-lobby] [data-settings-section="/settings/source-control"],
-+html[data-t3-lobby] [data-settings-section="/settings/storage"],
++html[data-t3-lobby] [data-settings-section="/settings/maintenance"],
++html[data-t3-lobby] [data-settings-section="/settings/worktrees"],
 +html[data-t3-lobby] [data-settings-section="/settings/projects"],
-+html[data-t3-lobby] [data-settings-section="/settings/archived"] {
++html[data-t3-lobby] [data-settings-section="/settings/archived"],
++html[data-t3-lobby] [data-settings-group="Code"] {
 +  display: none !important;
 +}
 +
@@ -812,14 +824,14 @@ index f28ac85..a8294eb 100644
 +  display: none !important;
 +}
 diff --git a/apps/web/src/main.tsx b/apps/web/src/main.tsx
-index e2dfab6..e3494df 100644
+index d6cf4ce77b..e9232c06ce 100644
 --- a/apps/web/src/main.tsx
 +++ b/apps/web/src/main.tsx
 @@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
- import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
  
+ import "@fontsource-variable/inter";
  import "./index.css";
 +import "./embed";
  
- import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
+ import { hasCloudPublicConfig } from "./cloud/publicConfig";
  import { isElectron } from "./env";
