@@ -193,6 +193,9 @@ src/
                          after beforeunload or pagehide while in flight most
                          likely landed, so the composer does not put its words
                          back (a reload during a wake-send duplicated them)
+    unanswered.ts        Prompt requests that got no answer (offline, past the
+                         deadline): the words go back in the field, and leave
+                         again if the session store sees the prompt landed
     storage.ts           MinStorage plus localStorageOrNull(). Four modules
                          each carried the same two lines, and reading the
                          localStorage property is itself what throws when a
