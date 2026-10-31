@@ -18,6 +18,8 @@ import {
   drawnCursor,
   echoesOwnPress,
   listPlacement,
+  MAC_HELD_KEYS,
+  macKeyPresses,
   pagePoint,
   panelStreamWanted,
   type ListPlacement,
@@ -25,6 +27,7 @@ import {
   type PageRect,
   type TapMark,
 } from "./browser.logic";
+import { detectMac } from "../keybindings/engine";
 import { BrowserPopups } from "./BrowserPopups";
 import {
   createBrowserStream,
@@ -606,6 +609,11 @@ export const BrowserPanel: Component<{
     onCleanup(() => el?.removeEventListener("wheel", onWheel));
   });
 
+  // A Mac viewer's shortcuts are pressed as the Linux ones the page's Chrome
+  // knows. Those go down and up in one press, so their own keyup is dropped:
+  // a Mac sends none for a key pressed while Cmd is held anyway.
+  const macViewer = detectMac();
+  const pressedWhole = new Set<string>();
   const onKeyDown = (e: KeyboardEvent): void => {
     if (!inControl() || e.isComposing || NOT_KEYS.has(e.key)) return;
     const mod = e.metaKey || e.ctrlKey;
@@ -618,6 +626,13 @@ export const BrowserPanel: Component<{
       return;
     }
     e.preventDefault();
+    const presses = macViewer ? macKeyPresses(e) : null;
+    if (presses) {
+      pressedWhole.add(e.code);
+      for (const key of presses) drive({ t: "key", type: "press", key });
+      return;
+    }
+    pressedWhole.delete(e.code);
     drive({ t: "key", type: "down", key: e.key });
   };
   const onKeyUp = (e: KeyboardEvent): void => {
@@ -625,6 +640,7 @@ export const BrowserPanel: Component<{
     const mod = e.metaKey || e.ctrlKey;
     if (mod && (e.key === "v" || e.key === "V" || e.key === "c" || e.key === "C")) return;
     e.preventDefault();
+    if (macViewer && (MAC_HELD_KEYS.has(e.key) || pressedWhole.delete(e.code))) return;
     drive({ t: "key", type: "up", key: e.key });
   };
   const onPaste = (e: ClipboardEvent): void => {

@@ -18,6 +18,7 @@ import {
   cursorRipples,
   drawnCursor,
   echoesOwnPress,
+  macKeyPresses,
   listPlacement,
   pagePoint,
   panelLayout,
@@ -678,5 +679,83 @@ describe("a host report that echoes this viewer's own press", () => {
     expect(echoesOwnPress(own, { kind: "down", x: 200, y: 50 }, 1_300)).toBe(false);
     expect(echoesOwnPress(own, { kind: "down", x: 100, y: 50 }, 4_000)).toBe(false);
     expect(echoesOwnPress(null, { kind: "down", x: 100, y: 50 }, 1_300)).toBe(false);
+  });
+});
+
+describe("macKeyPresses", () => {
+  /**
+   * The page runs in Linux Chrome, which acts on Ctrl shortcuts and ignores
+   * Cmd and Option ones (measured: Meta+A, Alt+Backspace and Meta+ArrowLeft
+   * leave a textarea as it was). A Mac viewer's shortcut is pressed as the
+   * Linux one that does the same thing.
+   */
+  const k = (
+    key: string,
+    mods: Partial<Record<"meta" | "alt" | "ctrl" | "shift", boolean>> = {},
+    code = "",
+  ) => ({
+    key,
+    code,
+    metaKey: !!mods.meta,
+    altKey: !!mods.alt,
+    ctrlKey: !!mods.ctrl,
+    shiftKey: !!mods.shift,
+  });
+
+  it.each([
+    ["Cmd-A selects all", k("a", { meta: true }, "KeyA"), ["Control+a"]],
+    ["Cmd-Z undoes", k("z", { meta: true }, "KeyZ"), ["Control+z"]],
+    ["Cmd-Shift-Z redoes", k("z", { meta: true, shift: true }, "KeyZ"), ["Control+Shift+z"]],
+    ["Cmd-X cuts", k("x", { meta: true }, "KeyX"), ["Control+x"]],
+    [
+      "Cmd-Option-letter keeps Option",
+      k("∫", { meta: true, alt: true }, "KeyB"),
+      ["Control+Alt+b"],
+    ],
+    ["Cmd-digit", k("1", { meta: true }, "Digit1"), ["Control+1"]],
+    ["Cmd-Enter", k("Enter", { meta: true }, "Enter"), ["Control+Enter"]],
+    ["Cmd-Left goes to the line's start", k("ArrowLeft", { meta: true }), ["Home"]],
+    [
+      "Cmd-Shift-Right selects to the line's end",
+      k("ArrowRight", { meta: true, shift: true }),
+      ["Shift+End"],
+    ],
+    ["Cmd-Up goes to the top", k("ArrowUp", { meta: true }), ["Control+Home"]],
+    [
+      "Cmd-Shift-Down selects to the bottom",
+      k("ArrowDown", { meta: true, shift: true }),
+      ["Control+Shift+End"],
+    ],
+    [
+      "Cmd-Backspace deletes to the line's start",
+      k("Backspace", { meta: true }),
+      ["Shift+Home", "Backspace"],
+    ],
+    ["Cmd-Delete deletes to the line's end", k("Delete", { meta: true }), ["Shift+End", "Delete"]],
+    ["Option-Left moves a word", k("ArrowLeft", { alt: true }), ["Control+ArrowLeft"]],
+    [
+      "Option-Shift-Right selects a word",
+      k("ArrowRight", { alt: true, shift: true }),
+      ["Control+Shift+ArrowRight"],
+    ],
+    ["Option-Up moves a paragraph", k("ArrowUp", { alt: true }), ["Control+ArrowUp"]],
+    ["Option-Backspace deletes a word", k("Backspace", { alt: true }), ["Control+Backspace"]],
+    ["Option-Delete deletes the next word", k("Delete", { alt: true }), ["Control+Delete"]],
+    ["Option-Enter keeps Option", k("Enter", { alt: true }, "Enter"), ["Alt+Enter"]],
+    ["Cmd alone is held back", k("Meta", { meta: true }, "MetaLeft"), []],
+    ["Option alone is held back", k("Alt", { alt: true }, "AltLeft"), []],
+  ])("%s", (_name, e, presses) => {
+    expect(macKeyPresses(e)).toEqual(presses);
+  });
+
+  it.each([
+    ["a plain letter", k("a", {}, "KeyA")],
+    ["a shifted letter", k("A", { shift: true }, "KeyA")],
+    ["a character Option types", k("å", { alt: true }, "KeyA")],
+    ["a Ctrl shortcut, which Linux already knows", k("a", { ctrl: true }, "KeyA")],
+    ["a plain arrow", k("ArrowLeft")],
+    ["Shift alone", k("Shift", { shift: true }, "ShiftLeft")],
+  ])("leaves %s as it is", (_name, e) => {
+    expect(macKeyPresses(e)).toBeNull();
   });
 });

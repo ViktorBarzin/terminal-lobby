@@ -259,6 +259,17 @@ on change, so a `subscribe` first sends a fresh screenshot. The screencast runs
 only while at least one viewer is subscribed. Input goes through Playwright's
 `page.mouse` and `page.keyboard`.
 
+The page runs in Linux Chrome, which acts on Ctrl shortcuts and does nothing
+for Cmd or Option ones (measured: Meta+A, Alt+Backspace and Meta+ArrowLeft left
+a textarea unchanged). So the panel presses a Mac viewer's shortcut as the
+Linux one that does the same thing (`macKeyPresses` in `browser.logic.ts`):
+Cmd-letter as Ctrl-letter, Cmd-arrow as Home, End or Ctrl-Home and Ctrl-End,
+Option-arrow and Option-Backspace by the word, Cmd-Backspace as Shift-Home then
+Backspace. Each goes as one `press`, and a bare Cmd or Option is never sent,
+since a Mac fires no keyup for a key pressed while Cmd is held. Windows and
+Linux viewers' keys go through as they are. The lobby's own browser keeps the
+shortcuts it reserves, such as Cmd-W, Cmd-T and Cmd-Tab.
+
 ### The clipboard
 
 Headless Chrome keeps one clipboard for the whole browser. A page's copy lands

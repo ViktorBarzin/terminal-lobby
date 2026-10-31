@@ -1006,3 +1006,58 @@ describe("<BrowserPanel> clipboard", () => {
     await vi.waitFor(() => expect(queryByText("The page copied text.")).toBeNull());
   });
 });
+
+describe("<BrowserPanel> keys from a Mac", () => {
+  function onPlatform(platform: string) {
+    Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+    const m = mount(true);
+    m.ws.host(mine);
+    return { ...m, stage: m.getByRole("application") };
+  }
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "platform");
+  });
+  const keys = (sent: readonly Record<string, unknown>[]) => sent.filter((m) => m.t === "key");
+
+  it("presses a Cmd shortcut as the Ctrl one the page's Linux Chrome knows", () => {
+    const { stage, ws } = onPlatform("MacIntel");
+    fireEvent.keyDown(stage, { key: "Meta", code: "MetaLeft", metaKey: true });
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA", metaKey: true });
+    // A Mac sends no keyup for a key pressed while Cmd is held.
+    fireEvent.keyUp(stage, { key: "Meta", code: "MetaLeft" });
+    expect(keys(ws.sent)).toEqual([{ t: "key", type: "press", key: "Control+a" }]);
+  });
+
+  it("moves by word for Option-arrow and drops the key's own keyup", () => {
+    const { stage, ws } = onPlatform("MacIntel");
+    fireEvent.keyDown(stage, { key: "Alt", code: "AltLeft", altKey: true });
+    fireEvent.keyDown(stage, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+    fireEvent.keyUp(stage, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+    fireEvent.keyUp(stage, { key: "Alt", code: "AltLeft" });
+    expect(keys(ws.sent)).toEqual([{ t: "key", type: "press", key: "Control+ArrowLeft" }]);
+  });
+
+  it("still sends the keyup of a key typed after a Cmd shortcut lost its own", () => {
+    const { stage, ws } = onPlatform("MacIntel");
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA", metaKey: true });
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA" });
+    fireEvent.keyUp(stage, { key: "a", code: "KeyA" });
+    expect(keys(ws.sent)).toEqual([
+      { t: "key", type: "press", key: "Control+a" },
+      { t: "key", type: "down", key: "a" },
+      { t: "key", type: "up", key: "a" },
+    ]);
+  });
+
+  it("sends every key as it is from Windows or Linux", () => {
+    const { stage, ws } = onPlatform("Win32");
+    fireEvent.keyDown(stage, { key: "Control", code: "ControlLeft", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "Alt", code: "AltLeft", altKey: true });
+    expect(keys(ws.sent)).toEqual([
+      { t: "key", type: "down", key: "Control" },
+      { t: "key", type: "down", key: "a" },
+      { t: "key", type: "down", key: "Alt" },
+    ]);
+  });
+});
