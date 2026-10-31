@@ -103,6 +103,7 @@ export type ViewerMessage =
   | { t: "wheel"; x: number; y: number; dx: number; dy: number }
   | { t: "key"; type: "down" | "up" | "press"; key: string }
   | { t: "insertText"; text: string }
+  | { t: "paste"; text: string }
   | { t: "navigate"; url: string }
   | { t: "back" }
   | { t: "forward" }
@@ -298,8 +299,11 @@ export interface BrowserStreamOptions {
    * would move control off the panel.
    */
   remember?: MinStorage | null;
-  /** The host answered a `copy` with the page's selected text. */
-  onCopied?: (text: string) => void;
+  /**
+   * Text from the browser's clipboard: the answer to a `copy` ("copy"), or
+   * what the page copied while this viewer holds control ("page").
+   */
+  onCopied?: (text: string, from: "copy" | "page") => void;
   /** Opens the socket. Tests pass a fake; the page uses WebSocket. */
   socket?: (url: string) => WebSocketLike;
 }
@@ -606,7 +610,8 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         if (typeof msg.summary === "string") setActivity(msg.summary);
         return;
       case "copied":
-        if (typeof msg.text === "string") opts.onCopied?.(msg.text);
+        if (typeof msg.text === "string")
+          opts.onCopied?.(msg.text, msg.from === "page" ? "page" : "copy");
         return;
       case "error":
         if (typeof msg.message !== "string") return;

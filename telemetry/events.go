@@ -232,6 +232,11 @@ var knownEvents = map[string]bool{
 	"browser.panel_open":   true, // the Browser panel opened (tl.kind = card|bar, tl.to = text|terminal|t3)
 	"browser.take_control": true, // a person took control from the agent
 	"browser.hand_back":    true, // ...and handed it back (tl.ms = how long they held it)
+	// Text moved between a person's clipboard and the page, never the text
+	// itself. tl.via = key | button | page (the page copied by itself),
+	// tl.outcome = copied | empty | refused, and pasted for a paste.
+	"browser.copy":  true,
+	"browser.paste": true,
 
 	// -- terminal surface ---------------------------------------------------
 	"terminal.copied": true,

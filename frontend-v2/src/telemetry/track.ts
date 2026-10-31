@@ -151,10 +151,14 @@ export type TlEvent =
   | "claude.cancelled"
   // the session browser (design 2026-10-01): the panel opened (tl.kind = card
   // | bar, tl.to = the view), control taken, and handed back (tl.ms held).
-  // Never a URL or anything from the page.
+  // Never a URL or anything from the page. Copy and paste carry tl.via (key |
+  // button | page) and tl.outcome (copied | empty | refused | pasted), never
+  // the text.
   | "browser.panel_open"
   | "browser.take_control"
-  | "browser.hand_back";
+  | "browser.hand_back"
+  | "browser.copy"
+  | "browser.paste";
 
 /** Attribute values are scalars only — see the no-content rule above. */
 export type TlAttrs = Record<string, string | number | boolean | null | undefined>;

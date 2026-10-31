@@ -64,6 +64,8 @@ const TICK_MS = Math.min(
   5000,
   Math.max(20, Math.floor(Math.min(FREEZE_MS, CLOSE_MS, LAPSE_MS) / 10)),
 );
+/** How often the clipboard is checked for a page's copy while a person is in control. */
+const PAGE_COPY_POLL_MS = 500;
 /** A lapse moved by more than this since the last report is reported again. */
 const LAPSE_REPORT_MS = 60_000;
 /** Longest MCP message read from Claude. */
@@ -150,6 +152,9 @@ async function serve() {
   const popups = new PopupBoard();
   /** each tab's last cursor position, replayed to a viewer that starts watching it */
   const cursors = new CursorBoard();
+  /** @type {ReturnType<typeof setInterval> | null} looks for page copies while a person is in control */
+  let pageCopyPoll = null;
+  let lookingForPageCopy = false;
 
   const viewers = new ViewerServer({
     onHello: (v) => {
@@ -356,7 +361,7 @@ async function serve() {
     return v.canControl && control.holderId !== null && v.id === control.holderId;
   }
 
-  /** @param {PopupMessage} msg */
+  /** @param {HostMessage} msg */
   function toController(msg) {
     for (const v of viewers.viewers) if (isController(v)) viewers.send(v, msg);
   }
@@ -407,6 +412,37 @@ async function serve() {
   function controlChanged() {
     for (const p of popups.drop("select")) letGo(p);
     if (control.holder !== null) for (const p of pendingPopups()) toController(p.msg);
+    watchPageCopies();
+  }
+
+  /**
+   * While a person is in control, what a page copies (a Copy button, say) is
+   * sent to them. The agent's copies are not: the clipboard is emptied when a
+   * person takes control and left alone while the agent drives.
+   */
+  function watchPageCopies() {
+    if (control.holder === null || !session) {
+      if (pageCopyPoll) clearInterval(pageCopyPoll);
+      pageCopyPoll = null;
+      return;
+    }
+    if (pageCopyPoll) return;
+    void session.pageCopy();
+    pageCopyPoll = setInterval(lookForPageCopy, PAGE_COPY_POLL_MS);
+    pageCopyPoll.unref();
+  }
+
+  function lookForPageCopy() {
+    if (!session || lookingForPageCopy) return;
+    lookingForPageCopy = true;
+    session
+      .pageCopy()
+      .then((text) => {
+        if (text) toController({ t: "copied", text, from: "page" });
+      })
+      .finally(() => {
+        lookingForPageCopy = false;
+      });
   }
 
   /**
@@ -597,7 +633,7 @@ async function serve() {
     }
     session.act(tab, action).then(
       (text) => {
-        if (msg.t === "copy") viewers.send(v, { t: "copied", text: text ?? "" });
+        if (msg.t === "copy") viewers.send(v, { t: "copied", text: text ?? "", from: "copy" });
         if (selectOpens(msg)) void lookForSelect(tab);
       },
       (err) =>

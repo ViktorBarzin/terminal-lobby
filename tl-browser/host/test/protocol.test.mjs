@@ -49,6 +49,7 @@ const valid = [
   { t: "key", type: "press", key: "Enter" },
   { t: "key", type: "down", key: "a" },
   { t: "insertText", text: "hello" },
+  { t: "paste", text: "hello\nthere" },
   { t: "navigate", url: "https://example.com" },
   { t: "back" },
   { t: "forward" },
@@ -115,6 +116,9 @@ const invalid = [
   `{"t":"key","type":"press","key":"${"a".repeat(65)}"}`,
   '{"t":"insertText"}',
   '{"t":"insertText","text":5}',
+  '{"t":"paste"}',
+  '{"t":"paste","text":""}',
+  '{"t":"paste","text":5}',
   '{"t":"navigate"}',
   '{"t":"navigate","url":""}',
   '{"t":"choose"}',
@@ -143,8 +147,10 @@ for (const line of invalid) {
 }
 
 test("a pasted text over the limit is refused", () => {
-  const big = JSON.stringify({ t: "insertText", text: "x".repeat(1_000_001) });
-  assert.equal(parseViewerMessage(big), null);
+  for (const t of ["insertText", "paste"]) {
+    const big = JSON.stringify({ t, text: "x".repeat(1_000_001) });
+    assert.equal(parseViewerMessage(big), null, t);
+  }
 });
 
 test("a choice over the limits is refused", () => {

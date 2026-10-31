@@ -1245,6 +1245,9 @@ src/
                          different moments: the live one when a file is picked,
                          the new-session one after the create, because until
                          then there is no session to own the file
+    browser-clipboard.ts The session browser's copy and paste: a copy's write
+                         starts inside the gesture with a ClipboardItem whose
+                         text the host has yet to send, then writeText
   deploy/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload

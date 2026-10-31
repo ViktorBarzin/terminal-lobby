@@ -34,10 +34,20 @@ import {
   type BrowserState,
   type ViewerMessage,
 } from "../lib/browser-stream";
+import { copyArriving, copyNow, readClipboard } from "../clipboard/browser-clipboard";
 import { closeOnBack } from "../lib/back-closes";
 import { sessionStorageOrNull } from "../lib/storage";
+import { isCoarsePointer } from "../mobile/pointer";
+import { showToast } from "../store/toast";
 import { track } from "../telemetry/track";
-import { ArrowLeftGlyph, ArrowRightGlyph, BrowserGlyph, ReloadGlyph } from "./Icons";
+import {
+  ArrowLeftGlyph,
+  ArrowRightGlyph,
+  BrowserGlyph,
+  ClipboardIcon,
+  CopyIcon,
+  ReloadGlyph,
+} from "./Icons";
 
 /** The furthest a pinch zooms the scaled page in. */
 const MAX_ZOOM = 4;
@@ -49,6 +59,8 @@ const LINE_PX = 16;
 /** How long a Take control press waits for the host before another press
  *  counts: the host answers with `control` in well under a second. */
 const TAKE_WAIT_MS = 4_000;
+/** How long a copy waits for the host's answer before it copies nothing. */
+const COPY_WAIT_MS = 5_000;
 /** How long a press's ring stays in the page: its animation, and a little. */
 const RIPPLE_MS = 700;
 /** Keys a keyboard reports that are not keys the page can be sent. */
@@ -119,8 +131,9 @@ export const BrowserPanel: Component<{
         onScreen: props.onScreen(),
         inControl: inControl(),
       }),
-    onCopied: (text) => {
-      void navigator.clipboard?.writeText(text).catch(() => undefined);
+    onCopied: (text, from) => {
+      if (from === "copy") copyAnswered(text);
+      else void pageCopied(text);
     },
   });
   // A browser (re)appearing on the session list is worth trying at once: the
@@ -192,6 +205,84 @@ export const BrowserPanel: Component<{
   const drive = (msg: ViewerMessage): void => {
     if (inControl()) stream.send(msg);
   };
+
+  // ---- the clipboard ------------------------------------------------------
+  //
+  // The page's clipboard is Chrome's, in the host. A copy asks the host, which
+  // presses Ctrl-C in the page and answers with what landed; a paste hands the
+  // host the text, which pastes it with Ctrl-V, so the page sees a real paste
+  // event. What the page copies by itself while this panel holds control (a
+  // Copy button, say) arrives unasked. browser-clipboard.ts has why the write
+  // starts inside the gesture.
+
+  /** The copy waiting for the host's answer. */
+  let copyWaiting: ((text: string) => void) | null = null;
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  const copyAnswered = (text: string): void => {
+    clearTimeout(copyTimer);
+    copyWaiting?.(text);
+    copyWaiting = null;
+  };
+  onCleanup(() => copyAnswered(""));
+  const askForCopy = (): Promise<string> => {
+    copyAnswered("");
+    const answer = new Promise<string>((resolve) => (copyWaiting = resolve));
+    copyTimer = setTimeout(() => copyAnswered(""), COPY_WAIT_MS);
+    drive({ t: "copy" });
+    return answer;
+  };
+
+  const copyOut = async (via: "key" | "button"): Promise<void> => {
+    if (!inControl()) return;
+    const outcome = await copyArriving(askForCopy());
+    track("browser.copy", { "tl.via": via, "tl.outcome": outcome });
+    if (outcome === "refused") {
+      showToast("The browser would not let the lobby write to your clipboard.", "error");
+    } else if (via === "button") {
+      if (outcome === "copied") showToast("Copied", "success");
+      else showToast("Nothing is selected in the page.", "info");
+    }
+  };
+
+  const pasteIn = async (): Promise<void> => {
+    if (!inControl()) return;
+    const read = await readClipboard();
+    if ("refused" in read) {
+      track("browser.paste", { "tl.via": "button", "tl.outcome": "refused" });
+      showToast(
+        isCoarsePointer()
+          ? "The browser would not share your clipboard. Allow clipboard access for this site and try again."
+          : "The browser would not share your clipboard. Press ⌘/Ctrl-V on the page instead.",
+        "error",
+      );
+      return;
+    }
+    if (!read.text) {
+      track("browser.paste", { "tl.via": "button", "tl.outcome": "empty" });
+      showToast("Your clipboard has no text to paste.", "info");
+      return;
+    }
+    track("browser.paste", { "tl.via": "button", "tl.outcome": "pasted" });
+    drive({ t: "paste", text: read.text });
+  };
+
+  /** Text the page copied that the browser would not take without a tap. */
+  const [pageCopy, setPageCopy] = createSignal<string | null>(null);
+  const pageCopied = async (text: string): Promise<void> => {
+    if (!text || !inControl()) return;
+    const landed = await copyNow(text);
+    track("browser.copy", { "tl.via": "page", "tl.outcome": landed ? "copied" : "refused" });
+    setPageCopy(landed ? null : text);
+  };
+  const copyPageCopy = async (): Promise<void> => {
+    const text = pageCopy();
+    if (text === null) return;
+    if (await copyNow(text)) setPageCopy(null);
+    else showToast("The browser would not let the lobby write to your clipboard.", "error");
+  };
+  createEffect(() => {
+    if (!inControl()) setPageCopy(null);
+  });
 
   // ---- what is on screen --------------------------------------------------
 
@@ -523,7 +614,7 @@ export const BrowserPanel: Component<{
     if (mod && (e.key === "v" || e.key === "V")) return;
     if (mod && (e.key === "c" || e.key === "C")) {
       e.preventDefault();
-      drive({ t: "copy" });
+      void copyOut("key");
       return;
     }
     e.preventDefault();
@@ -540,7 +631,9 @@ export const BrowserPanel: Component<{
     if (!inControl()) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     e.preventDefault();
-    if (text) drive({ t: "insertText", text });
+    if (!text) return;
+    track("browser.paste", { "tl.via": "key", "tl.outcome": "pasted" });
+    drive({ t: "paste", text });
   };
 
   // The phone's soft keyboard types into a hidden field, and what lands there
@@ -712,6 +805,22 @@ export const BrowserPanel: Component<{
           {holderName()} has control
         </div>
       </Show>
+      <Show when={pageCopy() !== null}>
+        <div class="tl-browser-note tl-browser-clip" role="status">
+          <span>The page copied text.</span>
+          <button type="button" class="tl-btn" onClick={() => void copyPageCopy()}>
+            Copy it
+          </button>
+          <button
+            type="button"
+            class="tl-icon-btn"
+            aria-label="Dismiss"
+            onClick={() => setPageCopy(null)}
+          >
+            ✕
+          </button>
+        </div>
+      </Show>
       <Show when={stream.tabs().length > 1}>
         <div class="tl-browser-tabs" role="tablist" aria-label="Browser tabs">
           <For each={stream.tabs()}>
@@ -775,6 +884,29 @@ export const BrowserPanel: Component<{
           onBlur={() => setEditing(false)}
           onInput={(e) => setAddress(e.currentTarget.value)}
         />
+        <button
+          type="button"
+          class="tl-icon-btn"
+          aria-label="Copy from the page"
+          title="Copy what is selected in the page"
+          disabled={!inControl()}
+          // Keeps the page's focus, and with it the selection being copied.
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => void copyOut("button")}
+        >
+          <CopyIcon size={15} />
+        </button>
+        <button
+          type="button"
+          class="tl-icon-btn"
+          aria-label="Paste into the page"
+          title="Paste your clipboard into the page"
+          disabled={!inControl()}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => void pasteIn()}
+        >
+          <ClipboardIcon size={15} />
+        </button>
       </form>
       <div ref={pagebox} class="tl-browser-pagebox">
         <div

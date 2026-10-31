@@ -173,10 +173,10 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 | host → viewer | `tabs` | Tabs changed: id, url, title, which one the agent last acted on |
 | host → viewer | `control` | Who holds control (`holder`, a name, and `holderId`, a connection), since when, when it lapses |
 | host → viewer | `state` | `live`, `frozen`, `closed` |
-| host → viewer | `copied` | Text selected in the page, answering `copy` |
+| host → viewer | `copied` | Text from the browser's clipboard: answering `copy` (`from: "copy"`), or what a page copied while this connection holds control (`from: "page"`). See "The clipboard" |
 | host → viewer | `cursor` | Where the mouse is on a tab: `tab`, `x` and `y` in the page's CSS pixels, `kind` (`move`, `down`, `up`, `click`). Sent to viewers watching that tab; a viewer that starts watching gets the last position as a `move` |
 | viewer → host | `subscribe` / `unsubscribe` | Start or stop frames for a tab |
-| viewer → host | `mouse`, `wheel`, `key`, `insertText` | Input, ignored unless this connection holds control |
+| viewer → host | `mouse`, `wheel`, `key`, `insertText`, `paste` | Input, ignored unless this connection holds control |
 | viewer → host | `navigate`, `back`, `forward`, `reload`, `copy` | Same rule |
 | viewer → host | `selectTab` | Change which tab this viewer watches |
 | viewer → host | `takeControl`, `handBack` | Control changes |
@@ -257,8 +257,45 @@ Any cursor message may be dropped for a viewer that has not caught up.
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs
 only while at least one viewer is subscribed. Input goes through Playwright's
-`page.mouse` and `page.keyboard`. Paste is `insertText`, and copy reads the
-page's selection.
+`page.mouse` and `page.keyboard`.
+
+### The clipboard
+
+Headless Chrome keeps one clipboard for the whole browser. A page's copy lands
+there, from the keyboard, `execCommand` or `navigator.clipboard.writeText`,
+and a native paste reads it. Measured on 2026-10-31 against Chrome 148: pages
+in the agent's context are granted no clipboard permission, and their
+`readText` is refused, while a page in a second context at an origin granted
+`clipboard-read` and `clipboard-write` reads and writes the same clipboard. The
+host keeps one such page (`lib/clipboard.mjs`), opened on first use, at
+`https://clipboard.tl-browser.invalid`, fulfilled by a route so it never
+reaches the network. Being in another context keeps it out of playwright-mcp's
+tabs and the tab strip.
+
+The host treats the clipboard as a mailbox and empties it after every read:
+
+| Viewer sends | The host |
+|---|---|
+| `paste` | Writes the text to the clipboard, presses Ctrl+V in the page and empties the clipboard, so the page gets a real paste event and the text does not stay for the next page or the agent. Types the text with `insertText` if the clipboard cannot be reached |
+| `copy` | Presses Ctrl+C in the page, so a page that handles copy itself decides what is copied, then answers `copied` with `from: "copy"` and what landed, or `""` when nothing was selected. Reads the selection instead if the clipboard cannot be reached |
+
+While a person holds control, the host reads the clipboard every 500 ms and
+sends any text a page copied by itself, a Copy button on a code block say, as
+`copied` with `from: "page"`, to the person in control only. It empties the
+clipboard when a person takes control, so what the agent copied before is not
+sent to them. Reads, writes and the person's input run in one queue, so a
+person's own copy or paste is never taken for the page's.
+
+On the lobby's side, a copy has to be written to the person's clipboard after
+a round trip, and Safari and Firefox allow the write only inside or shortly
+after the gesture. The panel therefore starts the write inside the gesture,
+with a `ClipboardItem` whose text the host has yet to send, and falls back to
+`writeText`, which Chrome allows from a focused document
+(`frontend-v2/src/clipboard/browser-clipboard.ts`). A page's own copy arrives
+with no gesture to ride, so where `writeText` is refused the panel shows "The
+page copied text" with a Copy it button. Paste uses the paste event for
+⌘/Ctrl-V and `navigator.clipboard.readText()` for the Paste button in the
+address bar, which is also the way in on a phone.
 
 "The tab the agent last acted on" is the page whose main frame last navigated
 or that was last created. playwright-mcp does not expose its current tab, so

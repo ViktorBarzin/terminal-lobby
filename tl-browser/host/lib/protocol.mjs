@@ -16,6 +16,7 @@ import path from "node:path";
  *   | { t: "wheel", x: number, y: number, dx: number, dy: number }
  *   | { t: "key", type: "down" | "up" | "press", key: string }
  *   | { t: "insertText", text: string }
+ *   | { t: "paste", text: string }
  *   | { t: "navigate", url: string }
  *   | { t: "back" } | { t: "forward" } | { t: "reload" } | { t: "copy" }
  *   | { t: "takeControl" } | { t: "handBack" }
@@ -23,6 +24,8 @@ import path from "node:path";
  *   | { t: "choose", value: string, tab?: string }
  *   | { t: "choose", values: string[], tab?: string }
  *   | { t: "dialog", accept: boolean, text?: string, tab?: string }} ViewerMessage
+ *   paste puts the person's clipboard text on Chrome's clipboard and pastes
+ *   it, so the page sees a real paste event; insertText types it.
  *   choose answers a select popup, dialog a JavaScript dialog; both name the
  *   popup's tab, or mean the viewer's own tab when they do not. resume names
  *   the "you" this viewer had on its previous connection, sent right after
@@ -37,14 +40,16 @@ import path from "node:path";
  *   | ({ t: "control" } & ControlSnapshot)
  *   | { t: "state", state: BrowserState | "closed" }
  *   | { t: "activity", tool: string, summary: string }
- *   | { t: "copied", text: string }
+ *   | { t: "copied", text: string, from: "copy" | "page" }
  *   | import("./cursor.mjs").CursorMessage
  *   | { t: "error", message: string }
  *   | PopupMessage} HostMessage what the host sends a viewer. The hello's
  *   "you" is the id the host gave this connection; a control message's
  *   holderId names the connection in control, so a viewer holds control
  *   exactly when holderId equals its own "you". A cursor message is where
- *   the mouse is on a tab in its CSS pixels, sent to the viewers watching it
+ *   the mouse is on a tab in its CSS pixels, sent to the viewers watching it.
+ *   copied carries text from Chrome's clipboard to the person in control:
+ *   from "copy" answers their copy, from "page" is text the page copied
  *
  * @typedef {{ value: string, label: string, selected: boolean, disabled: boolean }} SelectOption
  * @typedef {{ x: number, y: number, w: number, h: number }} Rect in the page's CSS pixels
@@ -57,7 +62,7 @@ import path from "node:path";
  *   sent only to the person in control. "none" means the tab's popup is gone.
  */
 
-/** A paste is capped at about a megabyte of text. */
+/** A paste, or typed text, is capped at about a megabyte. */
 const MAX_TEXT = 1_000_000;
 /** Long enough for any KeyboardEvent.key value, short enough to be one. */
 const MAX_KEY = 64;
@@ -198,6 +203,7 @@ export function parseViewerMessage(line) {
         return null;
       return /** @type {ViewerMessage} */ ({ t, type: m.type, key: m.key });
     case "insertText":
+    case "paste":
       return text(m.text, MAX_TEXT) ? { t, text: m.text } : null;
     case "navigate":
       return text(m.url, MAX_URL) ? { t, url: m.url } : null;
