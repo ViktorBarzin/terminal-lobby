@@ -110,7 +110,6 @@ import {
   createCoarsePointer,
   createMobileFlip,
   isMobileFlip,
-  isMobilePlatform,
 } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
 import { installViewportSync } from "../mobile/viewport";
@@ -139,10 +138,6 @@ import {
   NEW_SESSION_COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
-import { requestMode } from "../store/viewmode";
-import { followTarget, frameChords, t3ViewOrigin } from "../t3/embed.logic";
-import { T3Park, type T3Wiring } from "./T3Host";
-import { canKeepFrame } from "../t3/frame-keeper";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 /** sessionStorage: this tab went back to the phone's list (opensOnContent). */
@@ -2142,35 +2137,6 @@ export const App: Component = () => {
   // capture-phase window keydown sees every chord in the page — the terminal's
   // included, since the terminal is drawn in this document.
   const engine = createKeybindingEngine();
-  // The T3 view (docs/plans/2026-10-12-t3-view-design.md): where it is served,
-  // whether this caller is acting as themselves (every user since ADR-0045,
-  // not only admins), and the chords its frame hands back to this engine.
-  // Each SessionView decides from these whether its own session offers it.
-  const t3Chords = createMemo(() => frameChords(engine.bindings()));
-  const t3: T3Wiring = {
-    self: () => {
-      const w = store.whoami();
-      return !!w && !w.realUser;
-    },
-    origin: t3ViewOrigin(window.location),
-    chords: t3Chords,
-    // T3's own navigation (its palette, New thread) moved the frame to
-    // another of the caller's sessions: the lobby goes there too, in T3.
-    follow: (target) => {
-      const name = followTarget(store.sessions, store.me(), target);
-      if (name === null) return false;
-      requestMode(name, "t3");
-      store.select(name);
-      return true;
-    },
-  };
-  // Boot the T3 frame before the first click, where it can be kept between
-  // uses (t3/frame-keeper.ts): a desktop whose browser has moveBefore. A
-  // phone or tablet loads it on demand instead, rather than spend memory and
-  // battery on a hidden T3 client.
-  const t3Preload = createMemo(
-    () => !!t3.origin && t3.self() && !isMobilePlatform() && canKeepFrame(),
-  );
   // Both overlays render OVER the terminal and take focus off it, so dismissing
   // one leaves focus on <body> and the pty deaf. refocusTerminal calls the
   // bridge the mounted TerminalNative publishes; it is a no-op with no session
@@ -2535,10 +2501,6 @@ export const App: Component = () => {
         "tl-acting-as": !!actingAs(),
       }}
     >
-      {/* The T3 frame's park: out of the grid (position: fixed) and hidden. */}
-      <Show when={t3Preload() && t3.origin}>
-        {(origin) => <T3Park origin={origin()} chords={t3Chords} />}
-      </Show>
       <aside class="tl-shell-sidebar">
         {/* The cards are the preload's only consumer: a pointer resting on
             one is what starts the attach, and the store it asks is the
@@ -3093,7 +3055,6 @@ export const App: Component = () => {
                       prefs={prefs}
                       notify={notify}
                       overlayOpen={overlayOpen}
-                      t3={t3}
                       // This reaches the LOBBY, so only the session on screen may
                       // speak: a hidden mount raising a badge would be a session
                       // acting from behind another.
@@ -3327,8 +3288,6 @@ export const App: Component = () => {
           sessionTitles={sessionTitles}
           // Public links are yours alone, so a lens tab has no page for them.
           publicLinks={!lens()}
-          // Nor T3 apps: a device token would be a credential to their account.
-          t3Apps={!lens()}
         />
       </Show>
 

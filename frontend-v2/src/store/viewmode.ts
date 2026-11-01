@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on, untrack, type Accessor } from "solid-js";
+import { createEffect, createSignal, type Accessor } from "solid-js";
 import { track } from "../telemetry/track";
 import { lsGet, lsSet } from "../lib/storage";
 
@@ -18,16 +18,14 @@ import { lsGet, lsSet } from "../lib/storage";
  * those sessions now open in text; a stored "text" still reads as text and is
  * pruned the next time the switch is pressed.
  *
- * A third view, "t3", is T3 Code's web client in a frame (docs/plans/
- * 2026-10-12-t3-view-design.md). It is offered only to an admin on their own
- * Claude session, so a stored "t3" is read through that offer: where it is not
- * offered the session shows the default, and the stored choice stays put for
- * the device and the moment it is offered again.
+ * A third view, "t3", framed T3 Code's web client until ADR-0046 retired it.
+ * A browser that used it may still hold "t3"; like any other value that is not
+ * a mode, it reads as the default.
  */
 
-export type ViewMode = "text" | "terminal" | "t3";
+export type ViewMode = "text" | "terminal";
 
-const isMode = (v: string | null): v is ViewMode => v === "text" || v === "terminal" || v === "t3";
+const isMode = (v: string | null): v is ViewMode => v === "text" || v === "terminal";
 
 const KEY_PREFIX = "tl:viewmode:v1:";
 
@@ -69,54 +67,15 @@ export function carryViewMode(from: string, to: string): void {
   lsSet(KEY_PREFIX + to, stored);
 }
 
-/**
- * A view asked for from outside the session's own switch: the T3 frame moving
- * to another session (components/T3Host.tsx onFollow) opens that session in
- * T3. A session's view reads storage once per name, and a kept session is
- * already mounted, so the ask also travels as a signal every view watches.
- */
-const [asked, setAsked] = createSignal<{ session: string; mode: ViewMode } | null>(null, {
-  equals: false,
-});
-
-export function requestMode(session: string, mode: ViewMode): void {
-  saveMode(session, mode);
-  setAsked({ session, mode });
-}
-
-/**
- * The view a session shows, and the two ways to change it.
- *
- * `t3Offered` says whether this session may show the T3 view right now. While
- * it is false a stored "t3" reads as the default; nothing is written, so the
- * choice comes back when the offer does (the admin flag arrives with /whoami,
- * after the first paint).
- */
 export function createViewMode(
   session: Accessor<string>,
-  t3Offered: Accessor<boolean> = () => false,
 ): [Accessor<ViewMode>, (m: ViewMode) => void, () => void] {
-  const [chosen, setChosen] = createSignal<ViewMode>(loadMode(session()));
+  const [mode, setMode] = createSignal<ViewMode>(loadMode(session()));
   // Re-hydrate when the session changes (each session has its own last view).
-  createEffect(() => setChosen(loadMode(session())));
-  // Deferred, so a view mounting later does not take up an old ask over what
-  // has been chosen since: storage already carries the ask to a new mount.
-  createEffect(
-    on(
-      asked,
-      (a) => {
-        if (a && a.session === untrack(session)) setChosen(a.mode);
-      },
-      { defer: true },
-    ),
-  );
-  const mode = (): ViewMode => {
-    const m = chosen();
-    return m === "t3" && !t3Offered() ? defaultMode() : m;
-  };
+  createEffect(() => setMode(loadMode(session())));
 
   const set = (m: ViewMode) => {
-    setChosen(m);
+    setMode(m);
     saveMode(session(), m);
   };
   const toggle = () => set(mode() === "text" ? "terminal" : "text");

@@ -69,17 +69,8 @@ describe("railFor", () => {
     expect(admin.find((e) => e.id === "links")?.label).toBe("Public links");
   });
 
-  it("puts T3 apps in the managed tier when offered, and nowhere when not", () => {
-    // A lens tab gets no entry: tmux-api refuses to pair under act-as.
-    expect(ids(false)).not.toContain("t3apps");
-    const all = railFor({ admin: true, links: true, t3apps: true });
-    expect(all.map((e) => e.id).slice(-4)).toEqual(["skills", "links", "t3apps", "actas"]);
-    expect(all.find((e) => e.id === "t3apps")?.label).toBe("T3 apps");
-    expect(all.find((e) => e.id === "t3apps")?.startsGroup).toBeFalsy();
-  });
-
   it("gives every entry a label", () => {
-    for (const e of railFor({ admin: true, links: true, t3apps: true })) {
+    for (const e of railFor({ admin: true, links: true })) {
       expect(e.label).toBeTruthy();
     }
   });
@@ -99,6 +90,8 @@ describe("resolvePage", () => {
     expect(resolvePage(railFor({ admin: true }), "nonsense")).toBe("appearance");
     expect(resolvePage(railFor({ admin: true }), "")).toBe("appearance");
     expect(resolvePage(railFor({ admin: true }), null)).toBe("appearance");
+    // The T3 apps page was retired with T3 app pairing (ADR-0046).
+    expect(resolvePage(railFor({ admin: true, links: true }), "t3apps")).toBe("appearance");
   });
 });
 

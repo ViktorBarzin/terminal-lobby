@@ -287,8 +287,6 @@ src/
     links-api.ts         tmux-api's public-links routes: list, create (the
                          token comes back once), revoke one, and the session
                          bar's Stop, which revokes every link on a session
-    devices-api.ts       tmux-api's paired-devices routes (ADR-0045): a
-                         pairing code, the caller's paired T3 apps, revoke one
     shares-api.ts        tmux-api's named-share routes for the People half of
                          the Share dialog (list, invite, change, remove), the
                          lobby URL that opens a session for its guests, and a
@@ -810,11 +808,7 @@ src/
                          stay on the session bar, which follows focus
     SessionView.tsx      The per-session two-view surface (text | terminal),
                          and the T3 header over both: title, "project · state"
-                         subtitle, one group with the view icon and "…". The
-                         caller's own Claude session has a third view, T3
-    T3Host.tsx           The T3 view: T3 Code's web client framed from its own
-                         origin, one frame per tab, and the lobby's side of
-                         the postMessage contract (t3-view/EMBED.md)
+                         subtitle, one group with the view icon and "…"
     header.logic.ts      PURE header subtitle: the state word and dot, the
                          project and any background work
     TextView.tsx         Text mode in one centred 760px column: the
@@ -1082,9 +1076,6 @@ src/
         LinksPage.tsx         Every live public link you own across sessions,
                               with expiry, visitor count and Revoke. Absent in a
                               lens tab
-        T3AppsPage.tsx        Pair one of T3's apps (a link, its QR code and the
-                              code, counting down), and the paired apps with
-                              Revoke. Absent in a lens tab
         SkillsPage.tsx        The Skills surface (docs/adr/0011), a rail page
                               since 2026-08-30: a tab per list — this account's
                               skills, each other account's with a same/differs
@@ -1148,19 +1139,6 @@ src/
                          overlay closes (window.__tlFocusTerminal)
     editing.ts           Is the keyboard inside something that types? The one
                          chord that has to yield to a field is Cmd+Z
-  t3/
-    embed.logic.ts       PURE the T3 view's embed contract: its origin and the
-                         `?t3view=` override, the thread id, message parsing,
-                         the chords the frame hands back and who is offered
-                         it. T3's apps pair with the same origin
-    pairing.logic.ts     PURE Settings → T3 apps: the pairing card's states
-                         (a used code noticed from the device list), the link
-                         and grouped code, the countdown, a device row's
-                         words, and the QR code's SVG path
-    frame-claim.ts       At most one T3 frame per tab: the latest ask holds it
-    frame-keeper.ts      The tab's one T3 frame: booted early on a desktop,
-                         moved between panes without reloading, parked hidden
-                         between uses
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge
@@ -1345,8 +1323,8 @@ All of the following ship in the deployed build:
   cover the composer.
 - **Settings** — one overlay, navigated by a category rail with a single page
   showing: Appearance, Terminal, Sessions, Keyboard, Notifications, Network,
-  Privacy, then Skills, Public links and T3 apps (not in a lens tab), then Act
-  as user for an admin. ↑↓ walk the rail, Enter
+  Privacy, then Skills and Public links (not in a lens tab), then Act as user
+  for an admin. ↑↓ walk the rail, Enter
   steps into the page, and it reopens where you left it (`tl:settings:page`,
   per device). Each row is label-left/control-right; explanations sit behind a
   ⓘ that expands in place, except the three that describe a consequence
