@@ -8,9 +8,13 @@ package main
 //   - A caller's pin (TL_CALLER_PINS, pins.go) applies to t3_thread_launch the
 //     way it applies to POST /v1/conversations: the pinned values replace what
 //     the caller sent, including nothing. T3 names the settings differently, so
-//     a pin is translated (launchModes below has the map). The model and
-//     effort pins also apply to t3_thread_configure, which can change a
-//     thread's model after launch.
+//     a pin is translated (launchModes below has the map). It applies to
+//     every tool in T3 v0.1.5's MCP toolkits that sets a thread's model or
+//     modes: t3_thread_launch, delegate_task and create_threads, and the
+//     model and effort of t3_thread_configure, which can change a thread's
+//     model after launch. t3_thread_transfer's fork copies its source
+//     thread's setup, and schedule_task names no model or mode, so neither
+//     has anything to pin.
 //   - A wait is capped at maxWaitSeconds, the same ceiling ?wait= has on /v1.
 //     T3 waits ten minutes by default and up to an hour, and a request held
 //     that long is cut by the edge (330 s) or this server's write deadline
@@ -93,14 +97,87 @@ func pinLaunchArgs(a map[string]any, pin callerPin) []string {
 		a["modelSelection"] = sel
 		changed = append(changed, "modelSelection")
 	}
-	if m, ok := launchModes[pinned(pin.PermissionMode)]; ok {
-		if a["runtimeMode"] != m.runtime {
-			a["runtimeMode"] = m.runtime
-			changed = append(changed, "runtimeMode")
+	return append(changed, pinModes(a, pin)...)
+}
+
+// pinModes sets runtimeMode and interactionMode from the permission pin and
+// names those that changed.
+func pinModes(a map[string]any, pin callerPin) []string {
+	m, ok := launchModes[pinned(pin.PermissionMode)]
+	if !ok {
+		return nil
+	}
+	var changed []string
+	if a["runtimeMode"] != m.runtime {
+		a["runtimeMode"] = m.runtime
+		changed = append(changed, "runtimeMode")
+	}
+	if a["interactionMode"] != m.interaction {
+		a["interactionMode"] = m.interaction
+		changed = append(changed, "interactionMode")
+	}
+	return changed
+}
+
+// pinTaskArgs applies a pin to delegate_task arguments, or to one entry of
+// create_threads' threads. Both name the model in a `target`
+// {providerInstanceId, driverKind, model, options, environmentId, projectId}
+// rather than a modelSelection, and take runtimeMode and interactionMode,
+// where "inherit" is also a value a caller may send (T3 v0.1.5,
+// OrchestratorMcpTarget and OrchestratorMcpRuntimeMode).
+func pinTaskArgs(a map[string]any, pin callerPin) []string {
+	var changed []string
+	if tgt, ok := pinTarget(a["target"], pin); ok && !sameJSON(a["target"], tgt) {
+		a["target"] = tgt
+		changed = append(changed, "target")
+	}
+	return append(changed, pinModes(a, pin)...)
+}
+
+// pinTarget is the target a pin asks for, built from the caller's own. The
+// target's model is optional (it defaults to the caller's), so an effort pin
+// applies without one.
+func pinTarget(cur any, pin callerPin) (map[string]any, bool) {
+	model, effort := pinned(pin.Model), pinned(pin.Effort)
+	if model == "" && effort == "" {
+		return nil, false
+	}
+	tgt := map[string]any{}
+	if m, ok := cur.(map[string]any); ok {
+		for k, v := range m {
+			tgt[k] = v
 		}
-		if a["interactionMode"] != m.interaction {
-			a["interactionMode"] = m.interaction
-			changed = append(changed, "interactionMode")
+	}
+	if model != "" {
+		inst, _ := tgt["providerInstanceId"].(string)
+		if inst == "" {
+			inst, _ = tgt["driverKind"].(string)
+		}
+		if inst != "" && inst != claudeInstance {
+			delete(tgt, "options")
+		}
+		delete(tgt, "driverKind")
+		tgt["providerInstanceId"] = claudeInstance
+		tgt["model"] = model
+	}
+	if effort != "" {
+		tgt["options"] = withEffort(tgt["options"], effort)
+	}
+	return tgt, true
+}
+
+// pinCreateThreadsArgs applies pinTaskArgs to each thread create_threads
+// makes, naming changes as threads[i].<field>.
+func pinCreateThreadsArgs(a map[string]any, pin callerPin) []string {
+	threads, _ := a["threads"].([]any)
+	var changed []string
+	for i, t := range threads {
+		m, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, f := range pinTaskArgs(m, pin) {
+			changed = append(changed, "threads["+strconv.Itoa(i)+"]."+f)
 		}
 	}
 	return changed
@@ -259,6 +336,10 @@ func rewriteMCPBody(body []byte, pin *callerPin, capMs int64) ([]byte, []string)
 			changed = append(changed, pinLaunchArgs(a, *pin)...)
 		case "t3_thread_configure":
 			changed = append(changed, pinConfigureArgs(a, *pin)...)
+		case "delegate_task":
+			changed = append(changed, pinTaskArgs(a, *pin)...)
+		case "create_threads":
+			changed = append(changed, pinCreateThreadsArgs(a, *pin)...)
 		}
 	}
 	changed = append(changed, capWaitArgs(name, a, capMs)...)

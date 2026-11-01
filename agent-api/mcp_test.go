@@ -612,3 +612,27 @@ func TestMCPPinsConfigure(t *testing.T) {
 		t.Fatalf("trace %+v", e)
 	}
 }
+
+// Every tool that makes a thread carries the pin, not only the launch.
+func TestMCPPinsDelegateAndCreateThreads(t *testing.T) {
+	rig := newMCPRig(t)
+	rig.h.srv.Models = models{Default: "claude-opus-5-5", DefaultEffort: "high"}
+	rig.h.srv.CallerPins = map[string]callerPin{testActor: {Model: pinInherit, Effort: pinInherit, PermissionMode: "bypassPermissions"}}
+	sid := rig.initialize(testToken)
+	rig.post(testToken, sid, toolCall(1, "delegate_task", `{"task":"x","target":{"model":"claude-opus-5"},"runtimeMode":"approval-required"}`))
+	rig.post(testToken, sid, toolCall(2, "create_threads", `{"threads":[{"title":"a","interactionMode":"plan"}]}`))
+	calls := rig.wizard.toolCalls()
+	if len(calls) != 2 {
+		t.Fatalf("T3 saw %d calls", len(calls))
+	}
+	want := `map[model:claude-opus-5-5 options:[map[id:effort value:high]] providerInstanceId:claudeAgent]`
+	d := calls[0].Args
+	if fmt.Sprint(d["target"]) != want || d["runtimeMode"] != "full-access" || d["interactionMode"] != "default" {
+		t.Fatalf("delegate_task reached T3 as %v", d)
+	}
+	threads, _ := calls[1].Args["threads"].([]any)
+	th, _ := threads[0].(map[string]any)
+	if fmt.Sprint(th["target"]) != want || th["runtimeMode"] != "full-access" || th["interactionMode"] != "default" {
+		t.Fatalf("create_threads reached T3 as %v", calls[1].Args)
+	}
+}

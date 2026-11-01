@@ -351,3 +351,77 @@ func TestRewriteMCPBodyPinsConfigure(t *testing.T) {
 		t.Fatalf("a read was rewritten: %s %v", got, changed)
 	}
 }
+
+// delegate_task and create_threads (T3 v0.1.5 orchestratorMcp.ts) name the
+// model in a `target` {providerInstanceId, driverKind, model, options} and
+// take runtimeMode and interactionMode, each of which may also be "inherit".
+// A pin replaces all of them, including nothing.
+func TestPinTaskArgs(t *testing.T) {
+	full := callerPin{Model: "claude-opus-5-5", Effort: "high", PermissionMode: "bypassPermissions"}
+	for _, c := range []struct {
+		name    string
+		pin     callerPin
+		in      string
+		want    string
+		changed []string
+	}{
+		{"no pin leaves the call alone", callerPin{},
+			`{"task":"x","target":{"model":"claude-fable-5"},"runtimeMode":"approval-required"}`,
+			`{"task":"x","target":{"model":"claude-fable-5"},"runtimeMode":"approval-required"}`, nil},
+		{"a pin fills a call that named nothing", full, `{"task":"x"}`,
+			`{"task":"x","target":{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5","options":[{"id":"effort","value":"high"}]},"runtimeMode":"full-access","interactionMode":"default"}`,
+			[]string{"target", "runtimeMode", "interactionMode"}},
+		{"another provider's target moves to Claude and loses its options", callerPin{Model: "claude-opus-5-5"},
+			`{"target":{"driverKind":"codex","model":"gpt-5-codex","options":{"reasoningEffort":"high"},"projectId":"p"}}`,
+			`{"target":{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5","projectId":"p"}}`,
+			[]string{"target"}},
+		{"a Claude target keeps its other options", callerPin{Effort: "low"},
+			`{"target":{"providerInstanceId":"claudeAgent","model":"m","options":{"effort":"max","fastMode":true}}}`,
+			`{"target":{"providerInstanceId":"claudeAgent","model":"m","options":{"effort":"low","fastMode":true}}}`,
+			[]string{"target"}},
+		{"an effort pin needs no model, since the target's model is optional", callerPin{Effort: "high"},
+			`{}`, `{"target":{"options":[{"id":"effort","value":"high"}]}}`, []string{"target"}},
+		{"a caller's inherit mode is replaced", callerPin{PermissionMode: "plan"},
+			`{"runtimeMode":"inherit","interactionMode":"inherit"}`,
+			`{"runtimeMode":"approval-required","interactionMode":"plan"}`, []string{"runtimeMode", "interactionMode"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := args(t, c.in)
+			changed := pinTaskArgs(a, c.pin)
+			got, _ := json.Marshal(a)
+			if !jsonEqual(t, got, []byte(c.want)) {
+				t.Errorf("args\n got %s\nwant %s", got, c.want)
+			}
+			if !reflect.DeepEqual(changed, c.changed) {
+				t.Errorf("changed %v, want %v", changed, c.changed)
+			}
+		})
+	}
+}
+
+func TestRewriteMCPBodyPinsEveryThreadMaker(t *testing.T) {
+	pin := &callerPin{Model: "claude-opus-5-5", PermissionMode: "bypassPermissions"}
+	for _, c := range []struct {
+		name, in, want string
+		changed        []string
+	}{
+		{"delegate_task",
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate_task","arguments":{"task":"x","runtimeMode":"approval-required"}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate_task","arguments":{"task":"x","target":{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5"},"runtimeMode":"full-access","interactionMode":"default"}}}`,
+			[]string{"target", "runtimeMode", "interactionMode"}},
+		{"create_threads, each thread",
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_threads","arguments":{"threads":[{"title":"a","runtimeMode":"full-access","interactionMode":"default","target":{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5"}},{"title":"b","interactionMode":"plan"}]}}}`,
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_threads","arguments":{"threads":[{"title":"a","runtimeMode":"full-access","interactionMode":"default","target":{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5"}},{"title":"b","target":{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5"},"runtimeMode":"full-access","interactionMode":"default"}]}}}`,
+			[]string{"threads[1].target", "threads[1].runtimeMode", "threads[1].interactionMode"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, changed := rewriteMCPBody([]byte(c.in), pin, 300000)
+			if !jsonEqual(t, got, []byte(c.want)) {
+				t.Errorf("body\n got %s\nwant %s", got, c.want)
+			}
+			if !reflect.DeepEqual(changed, c.changed) {
+				t.Errorf("changed %v, want %v", changed, c.changed)
+			}
+		})
+	}
+}

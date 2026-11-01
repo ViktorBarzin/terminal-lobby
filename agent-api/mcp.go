@@ -118,7 +118,7 @@ func (s *Server) mcpPost(w http.ResponseWriter, r *http.Request) {
 	}
 	forward, rewritten := rewriteMCPBody(body, pin, maxWaitSeconds*1000)
 	entry.Rewritten = rewritten
-	if (msg.Tool == "t3_thread_launch" || msg.Tool == "t3_thread_configure") && len(rewritten) > 0 {
+	if pin != nil && len(rewritten) > 0 && !(len(rewritten) == 1 && rewritten[0] == "timeoutMs") {
 		logf("agent-api: %s's %s pinned: %s", id.Header, msg.Tool, strings.Join(rewritten, ", "))
 	}
 
