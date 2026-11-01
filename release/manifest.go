@@ -667,6 +667,10 @@ if getent passwd tl-link >/dev/null; then
   userdel tl-link >/dev/null 2>&1 || true
 fi
 
+# What the retired T3 upstream check left behind (ADR-0046): its metric file.
+# Left in place it stops getting newer and infra's staleness alert fires on it.
+rm -f /var/lib/node_exporter/textfile/tl-t3-upstream.prom
+
 MIGRATE_CONFIG
 
 # Chunks are copied, never synced: old hashed names must stay valid for tabs on

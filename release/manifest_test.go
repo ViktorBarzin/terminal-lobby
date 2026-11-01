@@ -452,6 +452,17 @@ func TestPostinstStopsTheUnitsThePackageRetired(t *testing.T) {
 	}
 }
 
+// The retired upstream check wrote a textfile that infra's T3UpstreamCheckStale
+// alert ages. Left on disk it stops getting newer and the alert fires two days
+// after the upgrade; gone, the series disappears and the alert has nothing to
+// read, which is how it behaved before the check shipped (ADR-0046).
+func TestPostinstRemovesTheRetiredUpstreamCheckMetric(t *testing.T) {
+	const want = "rm -f /var/lib/node_exporter/textfile/tl-t3-upstream.prom"
+	if !strings.Contains(PostinstScript, want) {
+		t.Errorf("postinst does not %q, so the stale file trips T3UpstreamCheckStale", want)
+	}
+}
+
 // A retired unit is one the package no longer installs. An entry that still
 // has a unit file in the manifest would stop a service the same upgrade puts
 // back, which reads as a flap rather than a removal.
