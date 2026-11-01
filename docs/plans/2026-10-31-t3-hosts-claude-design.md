@@ -1,6 +1,6 @@
 # T3 hosts Claude, the lobby lists it
 
-**Status:** approved 2026-10-31, building · **ADR:**
+**Status:** shipped 2026-11-01 (terminal-lobby 0.136.0; infra a040615e2 and 7000ecb10; wa-bot 2a6d3c2) · **ADR:**
 [0046](../adr/0046-t3-hosts-claude-for-each-user.md) · **Supersedes:**
 [ADR-0045](../adr/0045-t3-apps-are-clients-of-lobby-sessions.md) and the
 framed view of [ADR-0044](../adr/0044-t3-code-renders-a-session-through-its-own-protocol.md)
@@ -229,10 +229,26 @@ Between steps 1 and 2 the lobby's framed T3 view has nothing to show, since
 `t3.viktorbarzin.me` no longer serves lobby sessions. The window is the length
 of one release.
 
+## What shipped differently
+
+- The lobby reads each user's T3 port from `/etc/t3-serve/dispatch.json`,
+  because `/etc/t3-serve/<user>.env` is readable by root only.
+- Threads the lobby launches have ids like `mcp:launch:<64 hex>`, and T3
+  shows the lobby's first prompt as sent by "Agent".
+- T3 sends `nextCursor` as an integer offset.
+- agent-api's `/mcp` maps a caller pin of `inherit` to the box default model
+  and effort, and applies pins to `t3_thread_configure`, `delegate_task` and
+  `create_threads` as well as `t3_thread_launch`.
+- About one list poll in twenty takes longer than 5 seconds while wizard's T3 is
+  busy. The lobby keeps showing the last rows and the next poll succeeds.
+- The 0.136.0 install left a stylesheet 404 cached in a browser for four hours
+  (Cloudflare's browser cache TTL). Missing hashed assets are now `no-store`.
+
 ## Open questions
 
 - Whether the T3 app's deep link opens reliably from a browser on iOS and
-  Android when the app is paired.
+  Android when the app is paired. Not yet checked: the iPhone rig was not
+  answering on 2026-11-01.
 - Whether `t3-serve@emo` runs Claude end to end. It has never run a turn (0
   runs, `settings.json` is `{}`), though its Claude credential is in place, so
   the lobby always passes `modelSelection` with an `instanceId`.
