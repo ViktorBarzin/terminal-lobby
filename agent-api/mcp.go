@@ -113,6 +113,7 @@ func (s *Server) mcpPost(w http.ResponseWriter, r *http.Request) {
 
 	var pin *callerPin
 	if p, ok := s.CallerPins[id.Header]; ok {
+		p = resolveMCPPin(p, s.Models)
 		pin = &p
 	}
 	forward, rewritten := rewriteMCPBody(body, pin, maxWaitSeconds*1000)

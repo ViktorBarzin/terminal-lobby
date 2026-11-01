@@ -38,7 +38,10 @@ StartLimitIntervalSec=0
 # "<caller>:model=...,effort=...,permission_mode=..." with any subset of the
 # three keys. A value of "inherit" drops what the Caller sent so the box's own
 # default applies (managed-settings for model and effort, bypass for the
-# mode). Unset by default. A malformed entry is logged and ignored.
+# mode). Unset by default. A malformed entry is logged and ignored. The same
+# pins apply to t3_thread_launch on /mcp, where "inherit" for model and effort
+# writes the box's default model and effort (model and effortLevel in the
+# managed settings) into the call, since T3 has no fallback of its own.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
 # Binds 127.0.0.1:8710 always, and TL_AGENT_BIND names any further address to

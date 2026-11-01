@@ -126,3 +126,22 @@ func indexOf(h, n string) int {
 	}
 	return -1
 }
+
+// The box's default effort is read beside its default model, so /mcp can pin
+// an `inherit` caller to it. A per-model entry for the default model wins
+// over the top-level one, as it does in Claude Code's own policy layer.
+func TestLoadModelsReadsTheDefaultEffort(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"top level", `{"model":"claude-opus-5-5","effortLevel":"high"}`, "high"},
+		{"per model wins", `{"model":"claude-opus-5-5","effortLevel":"high","modelSettings":{"claude-opus-5-5":{"effortLevel":"xhigh"},"claude-opus-5":{"effortLevel":"low"}}}`, "xhigh"},
+		{"another model's entry is not the default's", `{"model":"claude-opus-5-5","modelSettings":{"claude-opus-5":{"effortLevel":"low"}}}`, ""},
+		{"not a level", `{"model":"claude-opus-5-5","effortLevel":"ludicrous"}`, ""},
+		{"none", `{"model":"claude-opus-5-5"}`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := loadModels(writeFixture(t, c.body)).DefaultEffort; got != c.want {
+				t.Fatalf("default effort %q, want %q", got, c.want)
+			}
+		})
+	}
+}

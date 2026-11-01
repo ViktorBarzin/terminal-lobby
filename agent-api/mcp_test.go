@@ -572,3 +572,21 @@ func TestMCPCountsCalls(t *testing.T) {
 		t.Fatalf("missing %s in\n%s", want, w.Body.String())
 	}
 }
+
+// Muse's real pin: inherit, inherit, bypass. Whatever model it names, the
+// launch runs the box default model and effort.
+func TestMCPInheritPinRunsTheBoxDefault(t *testing.T) {
+	rig := newMCPRig(t)
+	rig.h.srv.Models = models{Default: "claude-opus-5-5", DefaultEffort: "high"}
+	rig.h.srv.CallerPins = map[string]callerPin{testActor: {Model: pinInherit, Effort: pinInherit, PermissionMode: "bypassPermissions"}}
+	sid := rig.initialize(testToken)
+	w := rig.post(testToken, sid, toolCall(1, "t3_thread_launch",
+		`{"title":"t","projectId":"p1","modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5","options":[{"id":"effort","value":"max"}]}}`))
+	if w.Code != 200 {
+		t.Fatalf("launch: %d %s", w.Code, w.Body.String())
+	}
+	sel, _ := rig.wizard.toolCalls()[0].Args["modelSelection"].(map[string]any)
+	if sel["model"] != "claude-opus-5-5" || fmt.Sprint(sel["options"]) != "[map[id:effort value:high]]" {
+		t.Fatalf("T3 got %v", sel)
+	}
+}

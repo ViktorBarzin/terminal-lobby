@@ -272,3 +272,29 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 	}
 	return reflect.DeepEqual(x, y)
 }
+
+// On /mcp, "inherit" means the box's own default, read from managed
+// settings: a caller pinned that way runs what the box runs, whatever model
+// it names. Where the box's default is unknown, inherit forces nothing.
+func TestResolveMCPPin(t *testing.T) {
+	box := models{Default: "claude-opus-5-5", DefaultEffort: "high"}
+	for _, c := range []struct {
+		name string
+		pin  callerPin
+		box  models
+		want callerPin
+	}{
+		{"inherit is the box default", callerPin{Model: pinInherit, Effort: pinInherit, PermissionMode: "bypassPermissions"}, box,
+			callerPin{Model: "claude-opus-5-5", Effort: "high", PermissionMode: "bypassPermissions"}},
+		{"a named value stays", callerPin{Model: "claude-sonnet-5", Effort: "low"}, box, callerPin{Model: "claude-sonnet-5", Effort: "low"}},
+		{"an unpinned field stays unpinned", callerPin{PermissionMode: "plan"}, box, callerPin{PermissionMode: "plan"}},
+		{"an unknown box default forces nothing", callerPin{Model: pinInherit, Effort: pinInherit}, models{}, callerPin{}},
+		{"permission inherit is left as it is", callerPin{PermissionMode: pinInherit}, box, callerPin{PermissionMode: pinInherit}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveMCPPin(c.pin, c.box); got != c.want {
+				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}

@@ -15,12 +15,14 @@ package main
 //     first, which the caller would see as a dropped connection. With the cap,
 //     T3 answers timedOut: true and the caller waits again.
 //
-// One difference from /v1 is deliberate: "inherit" leaves the caller's value
-// in place rather than dropping it. On /v1, dropping a value hands the choice
-// to managed-settings. T3 has no such default for a call made outside a
-// thread (a fresh T3 has no default model, which is why t3client always sends
-// modelSelection), so dropping the caller's model could leave the launch with
-// none.
+// "inherit" means the box default here as on /v1, reached differently. /v1
+// drops the caller's value so claude falls back to managed settings. T3 has
+// no such fallback for a call made outside a thread (a fresh T3 has no
+// default model, which is why t3client always sends modelSelection), so /mcp
+// writes the box's default model and effort, read from the same managed
+// settings, into the call (resolveMCPPin). A caller pinned that way always
+// runs what the box runs, and a stale model it names never reaches T3. When
+// managed settings name no default, inherit forces nothing.
 
 import (
 	"bytes"
@@ -58,6 +60,19 @@ var launchModes = map[string]struct{ runtime, interaction string }{
 var waitTools = map[string]bool{
 	"t3_thread_wait":     true,
 	"t3_background_wait": true,
+}
+
+// resolveMCPPin replaces "inherit" for model and effort with the box's
+// defaults, or with nothing when the box names none. permission_mode is left
+// as it is: pinLaunchArgs maps only the four real modes.
+func resolveMCPPin(p callerPin, box models) callerPin {
+	if p.Model == pinInherit {
+		p.Model = box.Default
+	}
+	if p.Effort == pinInherit {
+		p.Effort = box.DefaultEffort
+	}
+	return p
 }
 
 // pinned is the value a pin field forces, or "" when it forces nothing.
