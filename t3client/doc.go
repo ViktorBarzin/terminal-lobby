@@ -5,5 +5,7 @@
 // A Locator finds a user's server: the loopback port, the environment id and
 // the public host. Credentials hold one long-lived MCP token per user, made
 // headlessly from a t3-mint pairing code and renewed after 20 days or on a
-// 401. A Client speaks MCP streamable HTTP in JSON mode over both.
+// 401. A Client speaks MCP streamable HTTP in JSON mode over both: Call and
+// the typed helpers for the services' own use, and Forward for agent-api's
+// pass-through, whose session handling is described in forward.go.
 package t3client

@@ -63,6 +63,7 @@ type Client struct {
 
 	mu       sync.Mutex
 	sessions map[string]*session // by user
+	fwd      forwardSessions
 }
 
 type session struct {
@@ -307,6 +308,15 @@ type rawResponse struct {
 }
 
 func (c *Client) post(ctx context.Context, base, tok, sid string, body []byte) (rawResponse, error) {
+	return c.postProto(ctx, base, tok, sid, "", body)
+}
+
+// postProto posts to /mcp; proto overrides the mcp-protocol-version header
+// sent with a session.
+func (c *Client) postProto(ctx context.Context, base, tok, sid, proto string, body []byte) (rawResponse, error) {
+	if proto == "" {
+		proto = ProtocolVersion
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/mcp", bytes.NewReader(body))
 	if err != nil {
 		return rawResponse{}, err
@@ -316,7 +326,7 @@ func (c *Client) post(ctx context.Context, base, tok, sid string, body []byte) (
 	req.Header.Set("authorization", "Bearer "+tok)
 	if sid != "" {
 		req.Header.Set("mcp-session-id", sid)
-		req.Header.Set("mcp-protocol-version", ProtocolVersion)
+		req.Header.Set("mcp-protocol-version", proto)
 	}
 	resp, err := httpClient(c.cfg.HTTP).Do(req)
 	if err != nil {
