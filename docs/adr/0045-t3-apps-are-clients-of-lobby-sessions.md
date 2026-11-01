@@ -1,5 +1,11 @@
 # T3's apps are clients of lobby sessions
 
+> Superseded by [ADR-0046](0046-t3-hosts-claude-for-each-user.md)
+> (2026-10-31): T3 Code hosts its own Claude sessions and the lobby lists them
+> over T3's MCP endpoint. `tl-t3-view`, T3 app pairing in Settings and
+> `tl-t3-upstream-check` are retired. The record below describes the design as
+> it was built.
+
 Status: accepted 2026-10-21. Stages 1 to 3 shipped the same day in terminal-lobby 0.128.0 to 0.131.0, and the lobby follows T3 v0.1.1; the iPhone check and the retirement of `t3-serve` are still to come.
 
 Viktor, 2026-10-20: *"let's try the t3 interoperability again. i think tmux

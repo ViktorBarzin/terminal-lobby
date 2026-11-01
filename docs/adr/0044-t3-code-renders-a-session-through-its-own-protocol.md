@@ -1,5 +1,10 @@
 # T3 Code renders a session through its own protocol
 
+> Superseded by [ADR-0046](0046-t3-hosts-claude-for-each-user.md)
+> (2026-10-31): T3 Code hosts its own Claude sessions and the lobby lists them
+> over T3's MCP endpoint. The framed T3 view and `tl-t3-view` are retired. The
+> record below describes the design as it was built.
+
 Status: accepted; first cut released in terminal-lobby 0.125.2 (2026-10-12).
 
 > [!NOTE]

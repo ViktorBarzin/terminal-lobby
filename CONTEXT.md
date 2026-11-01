@@ -1044,30 +1044,23 @@ Claude.
 _Avoid_: chat view, console view, text mode (the mode is the switch's state,
 the view is the thing rendered)
 
-**T3 view**:
-The third view the session bar switches between: T3 Code's own web client,
-iframed into the session pane and served by `tl-t3-view`, rendering the same
-Session as a T3 thread (ADR-0044). Offered to every user on their own Claude
-sessions since ADR-0045; the first cut showed it to admins only. Not T3's
-server and not a second Claude.
+**T3 view** (retired by ADR-0046):
+The third view the session bar switched between from ADR-0044 to ADR-0046:
+T3 Code's web client, iframed into the session pane and served by
+`tl-t3-view`. Retired with the sidecar; the session bar switches between the
+Text view and the Terminal view.
 _Avoid_: T3 mode, T3 bridge (the bridge was ADR-0009's, removed in ADR-0029)
 
-**T3 client** (ADR-0045):
-Any of T3 Code's own apps, web at `t3.viktorbarzin.me` (served by `tl-t3-view`,
-which `t3view.viktorbarzin.me` also serves as a fallback), desktop or phone,
-connected to `tl-t3-view` as its only server. It lists the person's Claude
-**Sessions** as threads and drives them; a thread it starts is a Session from
-its first prompt. The lobby is the only host, so a T3 client never runs a
-Claude of its own.
-_Avoid_: T3 server, t3-serve (T3's own server, retired by ADR-0045)
+**T3 client**:
+Any of T3 Code's own apps: web, desktop or phone. Since ADR-0046 each connects
+to its user's own `t3 serve`, which hosts the Claude sessions started in T3.
+From ADR-0045 to ADR-0046 they connected to `tl-t3-view` and drove lobby
+**Sessions** instead.
 
-**Paired device** (ADR-0045):
+**Paired device** (retired by ADR-0046):
 A **T3 client** that signed in with a pairing code the lobby showed (Settings →
-T3 apps), and holds a bearer token tmux-api issued for it. Listed by device
-label and revocable from the same page. A browser at `t3.viktorbarzin.me` signs in through Authentik
-instead and is not a paired device.
-_Avoid_: environment (T3's word for the server a client connects to, of which
-there is one)
+T3 apps) and held a bearer token tmux-api issued for it. The page, the tokens
+and tmux-api's `/devices` routes were retired with `tl-t3-view`.
 
 **Blank** (Text view):
 A **Text view** that has been on screen for two seconds with no rows drawn. It
