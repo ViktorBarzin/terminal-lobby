@@ -23,14 +23,17 @@ func thread(id string, extra map[string]any) map[string]any {
 
 func TestListThreadsPagesAndDropsSubagents(t *testing.T) {
 	f := newFakeT3(t)
-	pages := map[string]map[string]any{
-		"": {"threads": []any{thread("mcp:a", nil), thread("mcp:sub", map[string]any{"relationshipToParent": "subagent", "parentThreadId": "mcp:a"})},
-			"nextCursor": "c1", "total": 4},
-		"c1": {"threads": []any{thread("import:claudeAgent:b", map[string]any{"status": "waiting"}), thread("c", map[string]any{"relationshipToParent": "fork"})},
+	pages := map[float64]map[string]any{
+		-1: {"threads": []any{thread("mcp:a", nil), thread("mcp:sub", map[string]any{"relationshipToParent": "subagent", "parentThreadId": "mcp:a"})},
+			"nextCursor": 100, "total": 4},
+		100: {"threads": []any{thread("import:claudeAgent:b", map[string]any{"status": "waiting"}), thread("c", map[string]any{"relationshipToParent": "fork"})},
 			"nextCursor": nil, "total": 4},
 	}
 	f.tool = func(name string, args map[string]any) (any, *fakeToolErr) {
-		cur, _ := args["cursor"].(string)
+		cur, ok := args["cursor"].(float64)
+		if !ok {
+			cur = -1
+		}
 		return pages[cur], nil
 	}
 	c, _, _ := newTestClient(t, f)
@@ -59,7 +62,7 @@ func TestListThreadsPagesAndDropsSubagents(t *testing.T) {
 	if _, ok := a["cursor"]; ok {
 		t.Fatal("first page sent a cursor")
 	}
-	if calls[1].Args["cursor"] != "c1" {
+	if calls[1].Args["cursor"] != float64(100) {
 		t.Fatalf("second page args %v", calls[1].Args)
 	}
 }
@@ -67,7 +70,7 @@ func TestListThreadsPagesAndDropsSubagents(t *testing.T) {
 func TestListThreadsStopsOnRepeatedCursor(t *testing.T) {
 	f := newFakeT3(t)
 	f.tool = func(string, map[string]any) (any, *fakeToolErr) {
-		return map[string]any{"threads": []any{}, "nextCursor": "same"}, nil
+		return map[string]any{"threads": []any{}, "nextCursor": 7}, nil
 	}
 	c, _, _ := newTestClient(t, f)
 	if _, err := c.ListThreads(context.Background(), "wizard"); err == nil {
@@ -226,7 +229,7 @@ func TestProjectForDir(t *testing.T) {
 		switch name {
 		case "t3_project_list":
 			if args["cursor"] == nil {
-				return map[string]any{"projects": projects[:1], "nextCursor": "n"}, nil
+				return map[string]any{"projects": projects[:1], "nextCursor": 1}, nil
 			}
 			return map[string]any{"projects": projects[1:], "nextCursor": nil}, nil
 		case "t3_project_create":
