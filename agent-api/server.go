@@ -305,8 +305,8 @@ type apiHandler func(*call) (any, error)
 //
 // /v1 is a nested mux behind one auth wrapper. That is the load-bearing detail
 // in this function: a route registered inside it is authenticated by
-// construction, so "every route except /health and /openapi.json requires
-// auth" is a property of the wiring rather than a convention each handler has
+// construction, so "every route except /health, /openapi.json and /metrics
+// requires auth" is a property of the wiring rather than a convention each handler has
 // to honour.
 func (s *Server) Routes() http.Handler {
 	v1 := http.NewServeMux()
@@ -337,7 +337,7 @@ func (s *Server) Routes() http.Handler {
 	mcp.HandleFunc("GET /mcp", s.mcpGet)
 	root.Handle("/mcp", s.requireAuth(mcp))
 
-	// The two open routes. /health is what tl-apply probes after an install
+	// The open routes. /health is what tl-apply probes after an install
 	// and what a monitor polls, so it authenticates nothing and allocates
 	// nothing. /openapi.json is open because a caller has to READ it before
 	// it can hold a credential — it is the document a client is generated

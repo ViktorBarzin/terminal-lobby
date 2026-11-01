@@ -73,6 +73,10 @@ func TestOpenAPIDescribesExactlyTheRealRoutes(t *testing.T) {
 		"POST /v1/delegations/{id}/sent":        true,
 		"POST /v1/delegations/{id}/undelivered": true,
 		"POST /v1/delegations/{id}/result":      true,
+		"GET /metrics":                          true,
+		"POST /mcp":                             true,
+		"DELETE /mcp":                           true,
+		"GET /mcp":                              true,
 	}
 	// The v1 half of that list must match the auth test's list exactly, so
 	// the two cannot drift apart.
@@ -177,9 +181,9 @@ func TestOpenAPIEveryRequestBodyHasAnExample(t *testing.T) {
 			}
 		}
 	}
-	if bodies != 6 {
-		t.Fatalf("%d request bodies found, want 6 (create, send, answer, and a delegation's create, undelivered "+
-			"and result) — the check may be looking in the wrong place", bodies)
+	if bodies != 7 {
+		t.Fatalf("%d request bodies found, want 7 (create, send, answer, a delegation's create, undelivered "+
+			"and result, and an MCP message) — the check may be looking in the wrong place", bodies)
 	}
 }
 
@@ -282,7 +286,7 @@ func TestOpenAPISecurityMatchesTheGate(t *testing.T) {
 	}
 	paths, _ := doc["paths"].(map[string]any)
 
-	open := map[string]bool{"/health": true, "/openapi.json": true}
+	open := map[string]bool{"/health": true, "/openapi.json": true, "/metrics": true}
 	for path, item := range paths {
 		methods, _ := item.(map[string]any)
 		for method, raw := range methods {

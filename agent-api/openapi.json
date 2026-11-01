@@ -35,6 +35,10 @@
     {
       "name": "service",
       "description": "Liveness and this document."
+    },
+    {
+      "name": "t3",
+      "description": "T3 Code's own MCP tools, reached through this service with your agent-api token."
     }
   ],
   "security": [
@@ -1406,6 +1410,337 @@
           },
           "500": {
             "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "tags": [
+          "t3"
+        ],
+        "operationId": "mcpPost",
+        "summary": "Send one MCP message to your own T3 Code server.",
+        "description": "MCP streamable HTTP pass-through to your T3 Code server: the T3 of the OS user your token maps to. The tools are T3's own (t3_thread_launch, t3_thread_send, t3_thread_wait, t3_thread_read, t3_thread_list, t3_pending_request, t3_thread_interrupt, t3_attachment_prepare_upload, and the rest `tools/list` returns). The bearer is your agent-api token; agent-api holds the T3 credential.\n\nPoint any MCP client at this URL. Send `initialize` first; the answer's `mcp-session-id` header is your session, to send on every later message with `mcp-protocol-version`. A session is yours alone and survives a T3 restart. One JSON-RPC message per request: batches are refused.\n\nTwo things are changed on the way. If this box pins your launch settings (the same pins `POST /v1/conversations` applies), `t3_thread_launch` gets them: the pinned model in `modelSelection`, the pinned effort as its `effort` option, and the pinned permission mode as `runtimeMode` and `interactionMode` (bypassPermissions is full-access, acceptEdits is auto-accept-edits, default is approval-required, plan is approval-required in plan mode). And a wait (`timeoutMs` on t3_thread_wait, t3_background_wait or any tool) is held to 300000 ms, the same 300-second ceiling `?wait=` has; when it runs out, T3 answers with `timedOut: true` and you wait again.\n\nT3's answers come back as T3 sent them: its status, its body, and its JSON-RPC and tool errors. agent-api's own failures (T3 unreachable, no T3 credential) are JSON-RPC errors with a 5xx status.",
+        "parameters": [
+          {
+            "name": "mcp-session-id",
+            "in": "header",
+            "required": false,
+            "description": "The session `initialize` returned. Required on every message but `initialize`.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "tl-3xQm9cV7pLr2Hs8KwTd4Nf6B"
+          },
+          {
+            "name": "mcp-protocol-version",
+            "in": "header",
+            "required": false,
+            "description": "The MCP revision `initialize` agreed, sent with the session id.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "2025-06-18"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "One JSON-RPC 2.0 request or notification, as the MCP specification defines it."
+              },
+              "examples": {
+                "initialize": {
+                  "summary": "Open a session.",
+                  "value": {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {},
+                      "clientInfo": {
+                        "name": "muse",
+                        "version": "1"
+                      }
+                    }
+                  }
+                },
+                "launch": {
+                  "summary": "Start a thread in a project.",
+                  "value": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                      "name": "t3_thread_launch",
+                      "arguments": {
+                        "projectId": "proj_01",
+                        "title": "Fix the flaky test",
+                        "message": "The login test fails one run in ten. Find out why and fix it.",
+                        "clientRequestId": "muse-7f3a"
+                      }
+                    }
+                  }
+                },
+                "wait": {
+                  "summary": "Wait for the thread's run to finish.",
+                  "value": {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                      "name": "t3_thread_wait",
+                      "arguments": {
+                        "threadId": "thread_01",
+                        "runId": "run_01",
+                        "timeoutMs": 120000
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "T3's answer, as T3 sent it. A tool that failed answers 200 with `isError: true` in the result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 response from T3."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "{\"threadId\":\"thread_01\"}"
+                      }
+                    ],
+                    "structuredContent": {
+                      "threadId": "thread_01",
+                      "projectId": "proj_01",
+                      "runId": "run_01",
+                      "status": "running"
+                    },
+                    "isError": false
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "A notification was accepted. No body."
+          },
+          "400": {
+            "description": "A batch, a body that is not one JSON-RPC message, or a message other than `initialize` with no session id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "batched JSON-RPC is not supported"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "The session id is unknown, has ended, or belongs to another caller. Send `initialize` again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "session not found; initialize again"
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Your T3 server could not be reached, or agent-api could not get a T3 credential for it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "wizard's T3 could not be reached: connection refused"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This box has no T3 pass-through configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "the T3 pass-through is not configured on this box"
+                  }
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "T3 did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "wizard's T3 did not answer in time"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "t3"
+        ],
+        "operationId": "mcpDelete",
+        "summary": "End your MCP session with T3.",
+        "description": "Ends the session named in `mcp-session-id` and closes it on T3. A session that is unknown, already ended or another caller's is left alone, and the answer is the same. Sessions idle for a day end by themselves.",
+        "parameters": [
+          {
+            "name": "mcp-session-id",
+            "in": "header",
+            "required": true,
+            "description": "The session to end.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "tl-3xQm9cV7pLr2Hs8KwTd4Nf6B"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The session is over."
+          },
+          "400": {
+            "description": "No `mcp-session-id` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "mcp-session-id is required"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "t3"
+        ],
+        "operationId": "mcpGet",
+        "summary": "Refused: T3 offers no server-to-client stream.",
+        "description": "MCP clients may open a GET stream for server-initiated messages. T3 has none, so this answers 405 as the MCP specification asks, and a client carries on with POST alone.",
+        "responses": {
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "description": "No stream is offered. `Allow: POST, DELETE`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A JSON-RPC 2.0 error response: `jsonrpc`, the request's `id` (null when it had none) and `error` with `code` and `message`."
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32603,
+                    "message": "T3 offers no server-to-client stream; POST each message"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "operationId": "getMetrics",
+        "summary": "Prometheus counters for this service's calls to T3.",
+        "description": "The Prometheus text format: `tl_t3_calls_total` by service, OS user, tool and result, and `tl_t3_last_success_timestamp_seconds`. Requires no credential, like /health, and holds no content. It is for the workstation's monitoring and is not routed on the public host.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The current counters.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "description": "Prometheus exposition format 0.0.4."
+                },
+                "example": "tl_t3_calls_total{result=\"ok\",service=\"agent-api\",tool=\"t3_thread_read\",user=\"wizard\"} 3\n"
+              }
+            }
           }
         }
       }
