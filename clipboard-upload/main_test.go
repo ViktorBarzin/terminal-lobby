@@ -215,6 +215,12 @@ func TestHashedAssetsAreImmutableAndConfined(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "SHOULD NOT LEAK") {
 			t.Fatalf("GET %s reached outside the assets directory", bad)
 		}
+		// A miss must never be cached. During a deploy the new page can ask
+		// for a name before its file is installed, and Cloudflare's browser
+		// cache TTL would otherwise pin that 404 in the browser for hours.
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Fatalf("GET %s: Cache-Control = %q, want no-store", bad, cc)
+		}
 	}
 }
 

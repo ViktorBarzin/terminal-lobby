@@ -234,12 +234,12 @@ func handleHashedAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimPrefix(r.URL.Path, hashedAssetPrefix)
 	if !hashedAssetName.MatchString(name) {
-		http.Error(w, "not found", http.StatusNotFound)
+		hashedAssetMiss(w)
 		return
 	}
 	ctype, ok := hashedAssetTypes[strings.ToLower(filepath.Ext(name))]
 	if !ok {
-		http.Error(w, "not found", http.StatusNotFound)
+		hashedAssetMiss(w)
 		return
 	}
 	f, err := os.Open(filepath.Join(assetDir(), "assets", name))
@@ -247,18 +247,28 @@ func handleHashedAsset(w http.ResponseWriter, r *http.Request) {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("hashed asset open %s failed: %v", name, err)
 		}
-		http.Error(w, "not found", http.StatusNotFound)
+		hashedAssetMiss(w)
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		http.Error(w, "not found", http.StatusNotFound)
+		hashedAssetMiss(w)
 		return
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeContent(w, r, "", info.ModTime(), f)
+}
+
+// hashedAssetMiss answers a hashed name that is not installed. The 404 is
+// no-store: during a deploy the new page can ask for a name a moment before
+// its file lands, and without an explicit header Cloudflare's browser cache
+// TTL stamps the miss with max-age=14400, so the browser keeps the 404 for
+// four hours after the file exists (seen 2026-11-01 on release 0.136.0).
+func hashedAssetMiss(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, "not found", http.StatusNotFound)
 }
 
 // handleAsset serves one whitelisted public file. GET/HEAD only (the infra
