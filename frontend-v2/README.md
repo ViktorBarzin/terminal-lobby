@@ -238,6 +238,9 @@ src/
                          server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
+    t3-open.ts           Opening a T3 row: a new tab with a mouse, the
+                         T3OpenSheet on a touch screen, and the tab reserved
+                         at a T3 create's press (ADR-0046)
     term-size.ts         The terminal size this device last drew, kept in
                          localStorage. The New-session composer's slot claim
                          carries it, so the session is sized before its
@@ -1013,6 +1016,8 @@ src/
     ShortcutsHelp.tsx    Keyboard-shortcuts help overlay
     RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
                          would recreate, choose which rows to bring back
+    T3OpenSheet.tsx      A T3 row's two ways in on a touch screen: the T3
+                         app, or T3's web client in the browser (ADR-0046)
     ShareDialog.tsx      Share… on your own session's ⋯ menu: its public links
                          (mode, expiry, note, live visitors, Revoke) and a form
                          for a new one, whose URL is shown once. Its link rows

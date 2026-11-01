@@ -475,6 +475,79 @@ export async function claimSlot(body: ClaimRequest): Promise<ClaimResult> {
   }
 }
 
+/** POST /api/sessions/t3's body: start a Claude thread in the user's T3. */
+export interface T3CreateRequest {
+  /** Where it works; "" is the user's home. tmux-api resolves the git
+   *  toplevel and uses (or makes) the T3 project with that root. */
+  dir: string;
+  prompt: string;
+  /** "" for the box default. */
+  model?: string;
+  /** "" for the model's default. */
+  effort?: string;
+  /** "" for the prompt's first line. */
+  title?: string;
+  /** The layout project to place the new row in, as a claim does. */
+  project?: string;
+}
+
+/** What POST /api/sessions/t3 answers: the row's alias and its two links. */
+export interface T3Created {
+  name: string;
+  url: string;
+  appUrl: string;
+  threadId: string;
+}
+
+/**
+ * POST /api/sessions/t3 — start a Claude thread in the user's own T3
+ * (tmux-api/t3_routes.go). NOT a hint: the thread is the whole point, so a
+ * refusal throws an ApiError carrying the server's reason.
+ */
+export async function createT3Session(body: T3CreateRequest): Promise<T3Created> {
+  const res = await req(
+    "/sessions/t3",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    // A launch is a project lookup, perhaps a project create, and the launch;
+    // tmux-api allows itself 30 s for the three.
+    35_000,
+  );
+  if (!res.ok) throw new ApiError(res.status, (await reason(res)) || `HTTP ${res.status}`);
+  const got = (await res.json()) as Partial<T3Created>;
+  if (typeof got.name !== "string" || typeof got.url !== "string") {
+    throw new ApiError(502, "T3 answered without a thread");
+  }
+  return {
+    name: got.name,
+    url: got.url,
+    appUrl: typeof got.appUrl === "string" ? got.appUrl : "",
+    threadId: typeof got.threadId === "string" ? got.threadId : "",
+  };
+}
+
+/**
+ * DELETE /api/sessions/{alias} on a T3 row — archive the thread. MCP has no
+ * delete, so this is what closing a T3 row means, and the thread stays in
+ * T3's archive. Throws with the server's reason on anything but 204.
+ */
+export async function archiveT3Session(name: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok) throw new ApiError(res.status, (await reason(res)) || `HTTP ${res.status}`);
+}
+
+/** The first line of an error body, which tmux-api writes for a person. */
+async function reason(res: Response): Promise<string> {
+  try {
+    return ((await res.text()).split("\n")[0] ?? "").trim().slice(0, 200);
+  } catch {
+    return "";
+  }
+}
+
 /**
  * POST /api/sessions/{name}/resume — bring a suspended session back.
  *
@@ -612,6 +685,11 @@ export interface LobbyApi {
    *  reason `resumeSession` is; the store treats an absent one as a server
    *  that predates the route. */
   restartSession?(name: string): Promise<void>;
+  /** Start a Claude thread in the user's T3. Optional for the same reason
+   *  `restartSession` is; the store reports an absent one as unavailable. */
+  createT3Session?(body: T3CreateRequest): Promise<T3Created>;
+  /** Archive a T3 row's thread. Optional likewise. */
+  archiveT3Session?(name: string): Promise<void>;
 }
 
 export const lobbyApi: LobbyApi = {
@@ -631,6 +709,8 @@ export const lobbyApi: LobbyApi = {
   releasePrewarm,
   resumeSession,
   restartSession,
+  createT3Session,
+  archiveT3Session,
 };
 
 // --- workspaces (which sessions sit on screen together) -----------------------

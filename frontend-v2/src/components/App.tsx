@@ -18,6 +18,7 @@ import { createLobbyStore, type NotifyKind, type SelectedSession } from "../stor
 import { canActAs } from "../lib/mode";
 import {
   emptyWorkspaces,
+  isT3Session,
   MIN_WORKSPACE_MEMBERS,
   NAME_RE,
   sessionLabel,
@@ -130,6 +131,8 @@ import { actAsUrl, lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
 import { ShareDialog } from "./ShareDialog";
 import { closeShare, openShare, shareTarget } from "../store/share-dialog";
+import { T3OpenSheet } from "./T3OpenSheet";
+import { t3Sheet } from "../lib/t3-open";
 import { canShare } from "./links.logic";
 import { revokeSessionLinks } from "../lib/links-api";
 import { availableCommands, getWorkspaces, listUsers, putWorkspaces } from "../lib/lobby-api";
@@ -768,8 +771,12 @@ export const App: Component = () => {
   const skills = createSkillsStore();
   // What the Skills group needs to say which sessions still run an older skill
   // set: the live list, name and Claude state only.
+  // Not the T3 rows: Skills offers to restart a session's Claude, and a T3
+  // thread's Claude is T3's to restart.
   const skillSessions = createMemo(() =>
-    store.sessions.map((s) => ({ name: s.name, state: s.state || "", tool: s.tool })),
+    store.sessions
+      .filter((s) => !isT3Session(s))
+      .map((s) => ({ name: s.name, state: s.state || "", tool: s.tool })),
   );
   // What the Agent spend page needs to name a row: a session's title, keyed by
   // the name the spend store recorded it under. A name is an id and nobody
@@ -3272,6 +3279,7 @@ export const App: Component = () => {
       <Show when={settingsOpen()}>
         <SettingsPanel
           prefs={prefs}
+          whoami={store.whoami}
           onClose={() => setSettingsOpen(false)}
           initialPage={settingsPage()}
           onPageChange={setSettingsPage}
@@ -3303,6 +3311,10 @@ export const App: Component = () => {
           />
         )}
       </Show>
+
+      {/* A T3 row's two ways in, on a touch screen (lib/t3-open.ts). Once for
+          the app, like the Share dialog, since a row or the composer opens it. */}
+      <Show when={t3Sheet()}>{(t) => <T3OpenSheet target={t()} />}</Show>
 
       <Show when={palette.isOpen()}>
         <CommandPalette controller={palette} />

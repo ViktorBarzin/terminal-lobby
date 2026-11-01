@@ -212,7 +212,26 @@ export interface Session {
    *  public link right now (tmux-api/links_transcript.go `annotateViewers`).
    *  Absent while nobody is, and on every session that is not yours. */
   viewers?: number;
+  /** `t3` on a row that is a thread in the user's own T3 Code server rather
+   *  than a tmux session (tmux-api/t3.go, ADR-0046). Absent on every tmux row.
+   *  A T3 row's `name` is a lobby alias (`t3_` and 12 characters), which is
+   *  what every route that takes a name receives. */
+  backend?: "t3";
+  /** The T3 thread the alias stands for. */
+  t3ThreadId?: string;
+  /** Opens the thread in T3's web client on the user's host. */
+  url?: string;
+  /** Opens the thread in the T3 app (`t3code://threads/...`). */
+  appUrl?: string;
 }
+
+/** Is this row a T3 thread rather than a tmux session? */
+export function isT3Session(s: Pick<Session, "backend"> | undefined | null): boolean {
+  return s?.backend === "t3";
+}
+
+/** Where a new Claude session starts: the user's T3, or a tmux session. */
+export type ClaudeBackend = "t3" | "tmux";
 
 /**
  * Public links (docs/plans/2026-10-06-public-links-design.md, ADR-0041): a
@@ -289,6 +308,13 @@ export interface Whoami {
    *  built before the flag, which `lib/mode.ts` reads as multi-user so an older
    *  backend behaves exactly as it does today. */
   multiUser?: boolean;
+  /** Whether this user has a T3 Code server of their own (tmux-api
+   *  t3_routes.go). Absent from a server that predates T3 rows, which reads as
+   *  no: the lobby then offers nothing T3. */
+  t3?: boolean;
+  /** Where this user's New starts Claude when their own setting
+   *  (`session.claudeBackend`) is unset: TL_T3_DEFAULT_USERS on the box. */
+  claudeBackend?: ClaudeBackend;
 }
 
 export const LAYOUT_VERSION = 1;

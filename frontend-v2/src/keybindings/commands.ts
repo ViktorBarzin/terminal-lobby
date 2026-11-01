@@ -1,4 +1,4 @@
-import { sessionTitleDraft } from "../types/lobby";
+import { isT3Session, sessionTitleDraft } from "../types/lobby";
 import type { LobbyStore, NotifyKind } from "../store/lobby";
 import type { UndoStore } from "../store/undo";
 import type { PaletteController } from "./palette-controller";
@@ -83,6 +83,16 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const titleOf = (name: string): string =>
     sessionTitleDraft(store.sessions.find((x) => x.name === name));
   const order = () => flatSessionOrder(store.model());
+  /**
+   * The order the next/previous chords walk: every row but a T3 one. A T3 row
+   * opens in a tab of its own, so stepping onto one would open a tab on every
+   * press that passed it. Alt+1..0 keep every row, since they mean "what
+   * clicking that card does" and the numbers are drawn on the cards.
+   */
+  const walkOrder = () =>
+    order().filter(
+      (t) => t.owner || !isT3Session(store.sessions.find((x) => x.name === t.name)),
+    );
   const stateOf = (name: string): string | undefined =>
     store.sessions.find((s) => s.name === name)?.state || undefined;
 
@@ -107,13 +117,13 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "session.next" || cmd === "session.prev") {
-      const target = cycleTarget(order(), current(), cmd === "session.next" ? 1 : -1);
+      const target = cycleTarget(walkOrder(), current(), cmd === "session.next" ? 1 : -1);
       if (target) store.select(target.name, target.owner);
       return;
     }
 
     if (cmd === "session.next.awaiting") {
-      const target = nextAwaitingTarget(order(), stateOf, current());
+      const target = nextAwaitingTarget(walkOrder(), stateOf, current());
       if (target) store.select(target.name, target.owner);
       else deps.notify("No session awaiting input", "info");
       return;
@@ -123,7 +133,7 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     // was reachable from the keyboard.
     if (cmd === "session.next.unseen") {
       const target = nextMatchingTarget(
-        order(),
+        walkOrder(),
         (s: { name: string; state?: string }) => deps.isUnseen?.(s) ?? false,
         current(),
       );

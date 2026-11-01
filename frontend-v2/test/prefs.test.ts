@@ -78,6 +78,7 @@ describe("coercePrefs — validate-or-default", () => {
         newCodexEffort: "default",
         newPiModel: "default",
         newPiEffort: "default",
+        claudeBackend: "",
       },
       notify: { onDone: false, onAwaiting: true },
       // Absent from the input, so these take their defaults. This assertion is

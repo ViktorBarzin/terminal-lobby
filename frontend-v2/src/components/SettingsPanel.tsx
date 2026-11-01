@@ -16,7 +16,7 @@ import type { PrefsStore } from "../store/prefs";
 import type { NotificationSystem } from "../notify/notifications";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 import type { SkillsStore } from "../store/skills";
-import type { SessionTool } from "../types/lobby";
+import type { SessionTool, Whoami } from "../types/lobby";
 import { railFor, resolvePage, type PageId, type RailEntry } from "./settings/rail";
 import { AppearancePage } from "./settings/pages/AppearancePage";
 import { TerminalPage } from "./settings/pages/TerminalPage";
@@ -56,6 +56,9 @@ const LAST_PAGE_KEY = "tl:settings:page";
  */
 export const SettingsPanel: Component<{
   prefs: PrefsStore;
+  /** Who this tab is, for the pages whose rows depend on it: Sessions offers
+   *  the T3 choice only to a user who has a T3. */
+  whoami?: Accessor<Whoami | null>;
   onClose: () => void;
   /** Which page to show, overriding the remembered one. The header's Skills
    *  button passes "skills" so its one-click path survives the move, and it may
@@ -264,7 +267,7 @@ export const SettingsPanel: Component<{
                 <TerminalPage prefs={props.prefs} />
               </Match>
               <Match when={current() === "sessions"}>
-                <SessionsPage prefs={props.prefs} />
+                <SessionsPage prefs={props.prefs} whoami={props.whoami} />
               </Match>
               <Match when={current() === "keyboard"}>
                 <Show

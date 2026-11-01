@@ -309,3 +309,13 @@ export const ReloadGlyph: Component = () => (
     <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" />
   </Glyph>
 );
+
+/** A session row's T3 mark: the thread lives in the user's own T3 Code server
+ *  rather than in a tmux session (ADR-0046). A rounded tag with the letters
+ *  drawn as strokes, so it keeps the set's line weight at any size. */
+export const T3Glyph: Component<{ size?: number }> = (props) => (
+  <Glyph box="0 0 18 12" size={props.size ?? 14} width={1.3}>
+    <rect x="0.8" y="0.8" width="16.4" height="10.4" rx="3" />
+    <path d="M4 3.8h4M6 3.8v4.6M10.6 3.8h2.6l-1.6 2h.4a1.3 1.3 0 0 1 0 2.6h-1.4" />
+  </Glyph>
+);

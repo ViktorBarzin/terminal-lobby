@@ -12,6 +12,7 @@ import {
   type ModelHarness,
 } from "../lib/models";
 import { lsGet, lsSet } from "../lib/storage";
+import type { ClaudeBackend, Whoami } from "../types/lobby";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -146,6 +147,15 @@ export interface Prefs {
     newCodexEffort: string;
     newPiModel: string;
     newPiEffort: string;
+    /**
+     * Where a new Claude session starts: `t3` in the user's own T3 Code
+     * server, `tmux` in a lobby terminal, or `""` for the box's default for
+     * this user (whoami's `claudeBackend`, from TL_T3_DEFAULT_USERS). Read it
+     * through {@link claudeBackendFor}, which also answers `tmux` for a user
+     * with no T3 at all. Settings > Sessions writes it; the composer's
+     * "Claude in T3" and "Claude in Terminal" rows last one session.
+     */
+    claudeBackend: ClaudeBackend | "";
   };
   notify: { onDone: boolean; onAwaiting: boolean };
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
@@ -261,6 +271,7 @@ export const PREF_DEFAULTS: Prefs = {
     newCodexEffort: DEFAULT_CHOICE,
     newPiModel: DEFAULT_CHOICE,
     newPiEffort: DEFAULT_CHOICE,
+    claudeBackend: "",
   },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
@@ -289,6 +300,22 @@ function oneOf<T extends string | number>(v: unknown, allowed: readonly T[]): v 
 
 function isNewCommand(v: unknown): v is NewCommand {
   return oneOf(v, NEW_COMMANDS);
+}
+
+const CLAUDE_BACKENDS: readonly ClaudeBackend[] = ["t3", "tmux"];
+
+/**
+ * Where this user's new Claude session starts: their own setting when they
+ * made one, else the box's default for them, and `tmux` whenever they have no
+ * T3 server (or the server predates T3 rows) whatever either says.
+ */
+export function claudeBackendFor(
+  pref: ClaudeBackend | "",
+  who: Pick<Whoami, "t3" | "claudeBackend"> | null | undefined,
+): ClaudeBackend {
+  if (!who?.t3) return "tmux";
+  if (pref !== "") return pref;
+  return who.claudeBackend === "t3" ? "t3" : "tmux";
 }
 
 /** Clamp any input to a valid integer font size (invalid → default). */
@@ -380,6 +407,8 @@ export function coercePrefs(raw: unknown): Prefs {
       newPiEffort: isEffortFor("pi", session.newPiEffort)
         ? (session.newPiEffort as string)
         : DEFAULT_CHOICE,
+      // Anything but the two backends is no choice, which follows the box.
+      claudeBackend: oneOf(session.claudeBackend, CLAUDE_BACKENDS) ? session.claudeBackend : "",
     },
     notify: {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
@@ -455,6 +484,9 @@ export function composeDoc(raw: unknown, prefs: Prefs): Record<string, unknown> 
       newCodexEffort: prefs.session.newCodexEffort,
       newPiModel: prefs.session.newPiModel,
       newPiEffort: prefs.session.newPiEffort,
+      // Written only once chosen: unset is the absence of the key, so a doc
+      // that never chose follows the box's default wherever it is read.
+      ...(prefs.session.claudeBackend ? { claudeBackend: prefs.session.claudeBackend } : {}),
     },
     notify: {
       ...notify,
@@ -523,6 +555,7 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("session.newCodexEffort", prev.session.newCodexEffort, next.session.newCodexEffort);
   diff("session.newPiModel", prev.session.newPiModel, next.session.newPiModel);
   diff("session.newPiEffort", prev.session.newPiEffort, next.session.newPiEffort);
+  diff("session.claudeBackend", prev.session.claudeBackend, next.session.claudeBackend);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
   diff("sidebar.showLastActive", prev.sidebar.showLastActive, next.sidebar.showLastActive);

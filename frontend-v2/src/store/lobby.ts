@@ -30,10 +30,20 @@ import { registerKillUndoHandlers } from "./undo.kill";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
 import { registerLocalUndoHandlers } from "./undo.local";
 import { registerTitleUndoHandlers } from "./undo.titles";
-import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi, type SlotFlags } from "../lib/lobby-api";
+import {
+  ApiError,
+  lobbyApi,
+  ORIGIN_USER,
+  type LobbyApi,
+  type SlotFlags,
+  type T3Created,
+  type T3CreateRequest,
+} from "../lib/lobby-api";
+import { openT3 } from "../lib/t3-open";
 import {
   emptyLayout,
   NAME_RE,
+  isT3Session,
   sessionLabel,
   type DockState,
   type Layout,
@@ -221,6 +231,20 @@ export interface LobbyStore {
    * hooks write, so the next hook event replaces it.
    */
   setState(name: string, state: SettableState): Promise<boolean>;
+  /**
+   * Archive a T3 row's thread (tmux-api/t3_routes.go). Closing a T3 row means
+   * this, since T3 has no delete over MCP, and the thread stays in T3's
+   * archive, which is why it takes no grace window and leaves no undo entry.
+   * TRUE when T3 archived it and the list has been refreshed; FALSE after a
+   * toast.
+   */
+  archive(name: string): Promise<boolean>;
+  /**
+   * Start a Claude thread in the user's own T3 and resolve its links, or null
+   * after a toast. The row shows on a refresh shortly after; nothing is
+   * selected, because a T3 thread opens in T3.
+   */
+  createT3(body: T3CreateRequest): Promise<T3Created | null>;
   renameProjectAction(oldName: string, newName: string): Promise<boolean>;
   deleteProjectAction(name: string): Promise<void>;
   restore(sel?: RestoreSelection): Promise<void>;
@@ -1107,6 +1131,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * because nothing changed.
    */
   function select(name: string, owner?: string): void {
+    // A T3 row has no terminal to select: every way into one (a card, the
+    // palette, an Alt+N) opens the thread in T3 instead.
+    const t3 = owner ? undefined : t3Row(name);
+    if (t3) {
+      openT3({ url: t3.url ?? "", appUrl: t3.appUrl ?? "", title: sessionLabel(t3) });
+      return;
+    }
     applySelection(name, owner);
     opts.onActivate?.({ name, ...(owner ? { owner } : {}) });
   }
@@ -1183,6 +1214,57 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * takes 1.7-3.1s to load the conversation, so the refresh here shows the
    * stop and the burst after it catches the boot.
    */
+  /** The caller's own T3 row of that name, or undefined for anything else. */
+  function t3Row(name: string): Session | undefined {
+    const s = sessions.find((x) => x.name === name);
+    return s && isT3Session(s) && (!s.owner || s.owner === me()) ? s : undefined;
+  }
+
+  async function archive(name: string): Promise<boolean> {
+    const found = sessions.find((s) => s.name === name);
+    const label = found ? sessionLabel(found) : name;
+    if (!api.archiveT3Session) {
+      showToast("This server cannot archive T3 sessions", "error");
+      return false;
+    }
+    try {
+      await api.archiveT3Session(name);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists", "error");
+      else
+        showToast(
+          `Couldn't archive ${label}: ${e instanceof Error ? e.message : String(e)}`,
+          "error",
+        );
+      return false;
+    }
+    track("session.killed", { "tl.kind": "t3" });
+    await refresh();
+    showToast(`Archived ${label}. It is in T3's archive.`, "success");
+    return true;
+  }
+
+  async function createT3(body: T3CreateRequest): Promise<T3Created | null> {
+    if (!api.createT3Session) {
+      showToast("This server cannot start T3 sessions", "error");
+      return null;
+    }
+    try {
+      const made = await api.createT3Session(body);
+      track("session.created", { "tl.kind": "t3", "tl.to": body.project || "ungrouped" });
+      // tmux-api reads T3 again on a create; the row lands within a poll.
+      void refresh();
+      quickRefreshBurst();
+      return made;
+    } catch (e) {
+      showToast(
+        `Couldn't start the session in T3: ${e instanceof Error ? e.message : String(e)}`,
+        "error",
+      );
+      return null;
+    }
+  }
+
   async function restart(name: string): Promise<boolean> {
     if (!api.restartSession) return false;
     const found = sessions.find((s) => s.name === name);
@@ -1514,6 +1596,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * scrollback and the process tree.
    */
   async function kill(name: string): Promise<void> {
+    // Closing a T3 row archives the thread, whichever way the kill came in.
+    if (t3Row(name)) {
+      await archive(name);
+      return;
+    }
     const at = locate(layout(), name);
     const wasSelected = selected()?.name === name;
     // A second press on a session already on its way out: the window it is in
@@ -2197,6 +2284,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     resume,
     restart,
     setState,
+    archive,
+    createT3,
     renameProjectAction,
     deleteProjectAction,
     restore,

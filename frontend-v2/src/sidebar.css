@@ -1088,6 +1088,18 @@
   color: var(--text-muted);
   opacity: 0.75;
 }
+/* A T3 row's mark, beside its tool mark: the thread opens in T3 Code. Muted,
+   so it says where the row lives without competing with the state dot. */
+.tl-card-t3 {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+.tl-card-t3 svg {
+  height: 10px;
+  width: auto;
+}
 
 /* ---- Context / action menu -------------------------------------------- */
 .tl-menu {

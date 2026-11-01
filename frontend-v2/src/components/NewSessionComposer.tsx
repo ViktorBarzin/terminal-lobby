@@ -17,9 +17,10 @@ import { newSessionCommandsUrl } from "../lib/config";
 import type { SlashCommand } from "../logic/compose.logic";
 import type { Catalogue } from "../store/catalogue";
 import type { LobbyStore } from "../store/lobby";
-import type { SessionTool } from "../types/lobby";
-import type { NewCommand, PrefsStore } from "../store/prefs";
-import { MAX_TITLE_RUNES } from "../lib/title";
+import type { ClaudeBackend, SessionTool } from "../types/lobby";
+import { claudeBackendFor, type NewCommand, type PrefsStore } from "../store/prefs";
+import { openT3, reserveTab } from "../lib/t3-open";
+import { firstPromptLine, MAX_TITLE_RUNES } from "../lib/title";
 import {
   canRun,
   COMMAND_LABELS,
@@ -181,12 +182,33 @@ export const NewSessionComposer: Component<{
   /** Which CLI is starting, or null for a shell, which has none. */
   const harness = (): ModelHarness | null => modelHarness(cmd() as SessionTool);
   const choice = (h: ModelHarness) => modelChoiceFor(props.prefs.prefs(), h);
+
+  // ---- where Claude runs (ADR-0046) ------------------------------------------
+  /** This user has a T3 Code server of their own, so Claude can start there. */
+  const t3Ok = (): boolean => !!props.store.whoami()?.t3;
+  /** Where Claude starts unless this one session says otherwise: the user's
+   *  setting (Settings > Sessions), else the box's default for them. */
+  const defaultBackend = (): ClaudeBackend =>
+    claudeBackendFor(props.prefs.prefs().session.claudeBackend, props.store.whoami());
+  /** "Claude in T3" or "Claude in Terminal" picked for this one session, null
+   *  when the default stands. Cleared after a create, as a one-session
+   *  command is (store/prefs.ts oneSessionCleared). */
+  const [oneOff, setOneOff] = createSignal<ClaudeBackend | null>(null);
+  const backend = (): ClaudeBackend => (t3Ok() ? (oneOff() ?? defaultBackend()) : "tmux");
+  /** Send starts a thread in T3 rather than a tmux session. */
+  const inT3 = (): boolean => cmd() === "claude" && backend() === "t3";
+  /** The command as the strip names it. */
+  const commandName = (): string => {
+    if (cmd() !== "claude" || !t3Ok()) return COMMAND_LABELS[cmd()];
+    return inT3() ? "Claude in T3" : "Claude in Terminal";
+  };
   /** The slot a session created now would claim: Claude, on the model and
    *  effort picked in the Model sheet (both "" for the default), or undefined
    *  for anything the pool does not hold. */
   const slotFlags = (): SlotFlags | undefined => {
     const h = harness();
-    if (cmd() !== "claude" || h !== "claude") return undefined;
+    // A T3 launch runs in T3, so a warm tmux slot would be a Claude nobody adopts.
+    if (cmd() !== "claude" || h !== "claude" || inT3()) return undefined;
     const req = modelRequest(h, choice(h));
     return { model: req?.model ?? "", effort: req?.effort ?? "" };
   };
@@ -444,6 +466,7 @@ export const NewSessionComposer: Component<{
    * the toaster rather than back into a field that is no longer on screen.
    */
   const submit = async (text: string, attached: readonly DraftAttachment[]): Promise<boolean> => {
+    if (inT3()) return submitT3(text, attached);
     // The Send press, which a first prompt is timed from (prompt.landed).
     const sentAt = performance.now();
     const corrected = autocorrected;
@@ -539,6 +562,54 @@ export const NewSessionComposer: Component<{
     return true;
   };
 
+  /**
+   * Start the prompt as a thread in the user's T3 (POST /sessions/t3) and open
+   * it the way a T3 row opens: a new tab with a mouse, the sheet on a phone.
+   *
+   * No tmux card, claim, attach or delivery: T3 runs the turn, and the row
+   * arrives on the next poll. The tab is reserved before the request, while
+   * the press still counts as a gesture, because a launch takes seconds and a
+   * browser blocks a tab opened that long after the click.
+   *
+   * Held files stay held. T3 takes attachments in its own composer, and
+   * nothing here can carry them across, so the send is refused with the
+   * prose and the chips left where they are.
+   */
+  const submitT3 = async (text: string, attached: readonly DraftAttachment[]): Promise<boolean> => {
+    if (attached.length > 0) {
+      showToast("T3 sessions take files in T3. Remove them here, or attach them there.", "warning");
+      return false;
+    }
+    const tab = reserveTab();
+    if (!(await props.store.ensureLayout())) {
+      tab?.cancel();
+      showToast("The lobby is still loading. Try again in a moment.", "warning");
+      return false;
+    }
+    const project = props.project();
+    const req = modelRequest("claude", choice("claude"));
+    // T3 takes claude's five rungs; ultracode is the lobby's xhigh plus
+    // workflows, so xhigh is the nearest it can run.
+    const effort = req?.effort === "ultracode" ? "xhigh" : (req?.effort ?? "");
+    const made = await props.store.createT3({
+      dir: dirFor(project) ?? "",
+      prompt: text,
+      model: req?.model ?? "",
+      effort,
+      project,
+    });
+    if (!made) {
+      tab?.cancel();
+      return false;
+    }
+    props.onProject(project);
+    setOneOff(null);
+    const target = { url: made.url, appUrl: made.appUrl, title: firstPromptLine(text) };
+    if (tab) tab.go(target);
+    else openT3(target);
+    return true;
+  };
+
   /** A shell is created from its NAME, so an unnamed one is not created. Its
    *  Send is drawn unavailable for the same reason the prompt box's is. */
   const namable = (): boolean => name().trim() !== "";
@@ -606,8 +677,16 @@ export const NewSessionComposer: Component<{
     if (name !== props.project()) props.onProject(name);
   };
   const pickCommand = (c: NewCommand): void => {
+    if (c !== "claude") setOneOff(null);
     if (c !== cmd()) props.prefs.setPref({ session: { newCommand: c } });
   };
+  /** One of the two Claude rows: the default clears the one-session pick. */
+  const pickClaude = (b: ClaudeBackend): void => {
+    pickCommand("claude");
+    setOneOff(b === defaultBackend() ? null : b);
+  };
+  const claudeSub = (b: ClaudeBackend): string =>
+    b === defaultBackend() ? "Your default" : "This session only";
 
   // ---- the header's icon group ------------------------------------------------
   // The prototype's new-session screen carries the header a session does: one
@@ -840,9 +919,9 @@ export const NewSessionComposer: Component<{
             title="Command for new session"
             heading="Command"
             icon={<PromptGlyph />}
-            value={cmd()}
-            ariaLabel={`Command for new session: ${COMMAND_LABELS[cmd()]}`}
-            hint={`What the new session runs: ${COMMAND_LABELS[cmd()]}`}
+            value={inT3() ? "claude in T3" : cmd()}
+            ariaLabel={`Command for new session: ${commandName()}`}
+            hint={`What the new session runs: ${commandName()}`}
             open={stripOpen() === "command"}
             onToggle={toggleStrip}
             onClose={closeStrip}
@@ -850,16 +929,40 @@ export const NewSessionComposer: Component<{
             {(done) => (
               <For each={COMMANDS}>
                 {(c) => (
-                  <StripRow
-                    value={c}
-                    name={COMMAND_LABELS[c]}
-                    // Greyed out and saying why: a command with nothing behind
-                    // it starts a session that closes the moment it opens.
-                    sub={canRun(c, avail()) ? undefined : "Not installed on this box"}
-                    disabled={!canRun(c, avail())}
-                    checked={cmd() === c}
-                    onPick={() => done(() => pickCommand(c))}
-                  />
+                  <Show
+                    when={c === "claude" && t3Ok()}
+                    fallback={
+                      <StripRow
+                        value={c}
+                        name={COMMAND_LABELS[c]}
+                        // Greyed out and saying why: a command with nothing
+                        // behind it starts a session that closes the moment
+                        // it opens.
+                        sub={canRun(c, avail()) ? undefined : "Not installed on this box"}
+                        disabled={!canRun(c, avail())}
+                        checked={cmd() === c}
+                        onPick={() => done(() => pickCommand(c))}
+                      />
+                    }
+                  >
+                    {/* Claude twice for a user with a T3: in T3, which needs
+                        nothing installed here, and in a terminal here. */}
+                    <StripRow
+                      value="claude:t3"
+                      name="Claude in T3"
+                      sub={claudeSub("t3")}
+                      checked={inT3()}
+                      onPick={() => done(() => pickClaude("t3"))}
+                    />
+                    <StripRow
+                      value="claude:tmux"
+                      name="Claude in Terminal"
+                      sub={canRun("claude", avail()) ? claudeSub("tmux") : "Not installed on this box"}
+                      disabled={!canRun("claude", avail())}
+                      checked={cmd() === "claude" && !inT3()}
+                      onPick={() => done(() => pickClaude("tmux"))}
+                    />
+                  </Show>
                 )}
               </For>
             )}

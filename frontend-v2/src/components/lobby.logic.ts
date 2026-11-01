@@ -27,6 +27,7 @@
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
 import {
+  isT3Session,
   SUSPENDED,
   type BackgroundWork,
   type Layout,
@@ -225,7 +226,9 @@ export function notifySnapshotOf(s: Session): TitleSession {
     tool: s.tool,
     // Only set for a session shared with you. The badge leaves those out.
     owner: s.owner,
-    quiet: isCallerSession(s) || isSystemSession(s),
+    // A T3 thread is quiet too: lobby notifications are for tmux sessions
+    // (ADR-0046 decision 14), and T3 notifies about its own threads.
+    quiet: isCallerSession(s) || isSystemSession(s) || isT3Session(s),
   };
 }
 

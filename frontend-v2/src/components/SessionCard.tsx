@@ -10,6 +10,7 @@ import {
   type Component,
 } from "solid-js";
 import {
+  isT3Session,
   sessionLabel,
   sessionTitleDraft,
   SETTABLE_STATES,
@@ -47,6 +48,8 @@ import { canShare } from "./links.logic";
 import { guestKill, guestRetitle, removeShare } from "../lib/shares-api";
 import { toasts } from "../store/toast";
 import { openShare } from "../store/share-dialog";
+import { openInApp, openInBrowser, openT3 } from "../lib/t3-open";
+import { T3Glyph } from "./Icons";
 
 /**
  * The hover seam, as little of `store/preload.ts` as a card needs.
@@ -155,13 +158,23 @@ export const SessionCard: Component<{
 }> = (props) => {
   const s = () => props.session;
   /**
+   * A thread in the user's own T3 rather than a tmux session (ADR-0046). It
+   * opens in T3, so everything about a terminal is off: no preload, no
+   * select, no watch mark, no right-swipe kill, and a menu of its own.
+   */
+  const t3 = () => isT3Session(s());
+  /** Its links, for the menu and the open. */
+  const t3Target = () => ({ url: s().url ?? "", appUrl: s().appUrl ?? "", title: label() });
+  /**
    * Finished since you last looked at it. The card used to answer this with
    * `state === "done"`, so every finished session wore the unread treatment and
    * the dimmed "seen" dot in sidebar.css was unreachable — the app-icon badge
    * counted a set the list had no way to point at. The real answer comes from
    * the visit store, via Sidebar.
    */
-  const unseen = (): boolean => props.isUnseen?.(s()) ?? false;
+  // Never for a T3 row: it is read in T3, so the lobby never sees the visit
+  // that would clear the mark.
+  const unseen = (): boolean => !t3() && (props.isUnseen?.(s()) ?? false);
   const foreign = () => !!s().owner && s().owner !== props.store.me();
   /** Who else may open this session of yours. Empty on a foreign row: the
    *  server never sends the owner's other guests to a guest. */
@@ -474,6 +487,10 @@ export const SessionCard: Component<{
    * to give.
    */
   const open = () => {
+    if (t3()) {
+      openT3(t3Target());
+      return;
+    }
     // THE RESUME GOES FIRST, and it is deliberately not awaited. A suspended
     // session has no live claude, so opening it means asking for one — but the
     // pane's frozen scrollback is already worth showing, and the view the
@@ -544,6 +561,8 @@ export const SessionCard: Component<{
     // by session id. An empty one clears the title, handing the session back to
     // whatever summary lands next; the name stays where it is.
     if (next === titleDraft()) return;
+    // A T3 thread always has a title, so an emptied box changes nothing.
+    if (t3() && next.trim() === "") return;
     const owner = s().owner;
     if (foreign() && owner) {
       // Someone else's session, which a driving guest may retitle (ADR-0043).
@@ -609,6 +628,11 @@ export const SessionCard: Component<{
   const kill = async () => {
     menu.close();
     await props.store.kill(s().name);
+  };
+  /** Close a T3 row: archive its thread, which T3 keeps in its archive. */
+  const archive = async () => {
+    menu.close();
+    await props.store.archive(s().name);
   };
   /**
    * Restart: stop this session's Claude and start it again on the same
@@ -784,7 +808,7 @@ export const SessionCard: Component<{
     // Follow the finger, and stop trailing well before the row leaves the
     // screen: this shows the gesture landing, it is not a reveal.
     if (dx < 0) setSwipeDx(Math.max(dx, -SWIPE_TRAIL_PX));
-    else setSwipeDx(foreign() ? 0 : Math.min(dx, SWIPE_TRAIL_PX));
+    else setSwipeDx(foreign() || t3() ? 0 : Math.min(dx, SWIPE_TRAIL_PX));
   };
 
   /**
@@ -825,7 +849,7 @@ export const SessionCard: Component<{
     if (dx < 0) {
       menu.close();
       open();
-    } else if (!foreign()) {
+    } else if (!foreign() && !t3()) {
       void kill(); // the same window the menu's Kill opens
     }
   };
@@ -865,7 +889,8 @@ export const SessionCard: Component<{
   let asked = false;
   const onHoverEnter = (e: PointerEvent) => {
     if (!hover || !hovers(e)) return;
-    if (killing() || editing() || willWatch()) return;
+    // A T3 row has no terminal to attach early.
+    if (t3() || killing() || editing() || willWatch()) return;
     asked = true;
     hover.hoverEnter(identity());
   };
@@ -986,6 +1011,7 @@ export const SessionCard: Component<{
       aria-label={
         `session ${label()}` +
         (s().tool ? ", " + TOOL_LABELS[s().tool!] : "") +
+        (t3() ? ", in T3" : "") +
         (s().state ? ", " + stateLabel(s().state, unseen(), s().bg) : "") +
         (guests().length > 0 ? ", " + sharedTitle(guests()).toLowerCase() : "")
       }
@@ -1013,6 +1039,11 @@ export const SessionCard: Component<{
       </Show>
       <StateDot state={s().state} unseen={unseen()} bg={s().bg} />
       <ToolIcon tool={s().tool} />
+      <Show when={t3()}>
+        <span class="tl-card-t3" title="In T3 Code: opens in T3" aria-hidden="true">
+          <T3Glyph />
+        </span>
+      </Show>
       <Show
         when={!editing()}
         fallback={
@@ -1058,7 +1089,7 @@ export const SessionCard: Component<{
           driving is the ordinary case and does not need a mark. Suppressed on a
           foreign session, whose owner badge already carries 👁 for a read-only
           share — two eyes on one row would say the same thing twice. */}
-      <Show when={!foreign() && willWatch()}>
+      <Show when={!foreign() && !t3() && willWatch()}>
         <span
           class="tl-card-watch"
           title={
@@ -1176,7 +1207,54 @@ export const SessionCard: Component<{
           </Show>
         </div>
       </Show>
-      <Show when={menu.open() && !killing() && !foreign()}>
+      {/* A T3 row: the two ways to open it, Rename, and Archive, which is
+          what closing one means. Everything else in the tmux menu is about a
+          terminal it does not have. Archive asks nothing, as Kill does not:
+          the thread stays in T3's archive and comes back from there. */}
+      <Show when={menu.open() && !killing() && !foreign() && t3()}>
+        <div
+          class="tl-menu tl-menu-placed"
+          role="menu"
+          ref={menu.popup}
+          style={menu.style()}
+          onClick={stopMenuClick}
+          onKeyDown={stopMenuActivationKey}
+        >
+          <button
+            class="tl-menu-item"
+            role="menuitem"
+            onClick={() => {
+              menu.close();
+              openInBrowser(t3Target().url);
+            }}
+          >
+            Open in T3
+          </button>
+          <Show when={s().appUrl}>
+            <button
+              class="tl-menu-item"
+              role="menuitem"
+              onClick={() => {
+                menu.close();
+                openInApp(t3Target().appUrl);
+              }}
+            >
+              Open in T3 app
+            </button>
+          </Show>
+          <button class="tl-menu-item" role="menuitem" onClick={() => beginRename()}>
+            Rename
+          </button>
+          <button
+            class="tl-menu-item tl-menu-danger"
+            role="menuitem"
+            onClick={() => void archive()}
+          >
+            Archive
+          </button>
+        </div>
+      </Show>
+      <Show when={menu.open() && !killing() && !foreign() && !t3()}>
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}
