@@ -19,3 +19,5 @@ func fixedPort(t *testing.T, base string) PortLookup {
 	}
 	return func(string) (int, error) { return p, nil }
 }
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }

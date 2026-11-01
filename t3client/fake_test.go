@@ -34,6 +34,9 @@ type fakeT3 struct {
 	inits      int
 	calls      []fakeCall
 	tool       func(name string, args map[string]any) (any, *fakeToolErr)
+	// lose404 forgets every session before each tools/call, so every
+	// tool call answers 404.
+	lose404 bool
 }
 
 type fakeCall struct {
@@ -224,6 +227,9 @@ func (f *fakeT3) serveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	if f.lose404 && msg.Method == "tools/call" {
+		f.sessions = map[string]bool{}
+	}
 	live := f.sessions[r.Header.Get("mcp-session-id")]
 	f.mu.Unlock()
 	if !live {
