@@ -136,6 +136,19 @@ func TestLaunchArguments(t *testing.T) {
 		t.Fatal("the caller's clientRequestId was replaced")
 	}
 
+	// Effort rides modelSelection as T3's effort option; none means no
+	// options at all, so the model's own default applies.
+	if _, ok := lastCall(t, f).Args["modelSelection"].(map[string]any)["options"]; ok {
+		t.Fatal("options were sent without an effort")
+	}
+	if _, err := c.Launch(ctx, "wizard", LaunchRequest{ProjectID: "p1", Model: "m", Effort: "xhigh"}); err != nil {
+		t.Fatal(err)
+	}
+	opts, _ := lastCall(t, f).Args["modelSelection"].(map[string]any)["options"].([]any)
+	if len(opts) != 1 || opts[0].(map[string]any)["id"] != "effort" || opts[0].(map[string]any)["value"] != "xhigh" {
+		t.Fatalf("effort options %v", opts)
+	}
+
 	if _, err := c.Launch(ctx, "wizard", LaunchRequest{Model: "m"}); err == nil {
 		t.Fatal("a launch without a project was sent")
 	}

@@ -115,6 +115,9 @@ type LaunchRequest struct {
 	// turn, so nothing runs until a message is sent.
 	Prompt string
 	Model  string
+	// Effort is claude's reasoning effort (low to max), sent as T3's effort
+	// option. Empty leaves the model's default.
+	Effort string
 	// InstanceID defaults to "claudeAgent". Always set, since a fresh T3
 	// has no default model.
 	InstanceID string
@@ -150,9 +153,13 @@ func (c *Client) Launch(ctx context.Context, user string, r LaunchRequest) (Laun
 	if r.ClientRequestID == "" {
 		r.ClientRequestID = "tl-" + randomString(18)
 	}
+	sel := map[string]any{"instanceId": r.InstanceID, "model": r.Model}
+	if r.Effort != "" {
+		sel["options"] = []any{map[string]any{"id": "effort", "value": r.Effort}}
+	}
 	args := map[string]any{
 		"projectId":         r.ProjectID,
-		"modelSelection":    map[string]any{"instanceId": r.InstanceID, "model": r.Model},
+		"modelSelection":    sel,
 		"runtimeMode":       r.RuntimeMode,
 		"workspaceStrategy": map[string]any{"type": "root"},
 		"clientRequestId":   r.ClientRequestID,
