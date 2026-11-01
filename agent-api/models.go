@@ -26,7 +26,13 @@ var effortOrder = []string{"low", "medium", "high", "xhigh", "max"}
 // reads: the model picker's rows, which name the exact slugs this box offers,
 // and the default those rows fall back to.
 type managedSettings struct {
-	Model       string `json:"model"`
+	Model string `json:"model"`
+	// EffortLevel and ModelSettings carry the box's default effort: the
+	// default model's own entry, else the top-level one.
+	EffortLevel   string `json:"effortLevel"`
+	ModelSettings map[string]struct {
+		EffortLevel string `json:"effortLevel"`
+	} `json:"modelSettings"`
 	ModelPicker struct {
 		Options []struct {
 			Model string `json:"model"`
@@ -45,6 +51,10 @@ type models struct {
 	// Default is what a session gets when the caller omits the field. Reported
 	// so the document can say so rather than leaving the caller to guess.
 	Default string
+	// DefaultEffort is the effort a session of the default model gets, or
+	// empty when managed settings name none. /mcp pins an "inherit" caller
+	// to it (mcppins.go); /v1 leaves it to the harness.
+	DefaultEffort string
 }
 
 // loadModels reads the slugs Claude Code's own picker offers.
@@ -68,6 +78,13 @@ func loadModels(path string) models {
 		return models{}
 	}
 	out := models{Default: s.Model}
+	effort := s.EffortLevel
+	if per, ok := s.ModelSettings[s.Model]; ok && s.Model != "" && per.EffortLevel != "" {
+		effort = per.EffortLevel
+	}
+	if efforts[effort] {
+		out.DefaultEffort = effort
+	}
 	seen := map[string]bool{}
 	for _, o := range s.ModelPicker.Options {
 		if o.Model == "" || seen[o.Model] {

@@ -96,7 +96,7 @@ func TestBearerWinsOverAStrayHeader(t *testing.T) {
 	}
 }
 
-// The two open routes are open, and they are the only two.
+// The three open routes are open, and they are the only three.
 func TestOpenRoutes(t *testing.T) {
 	h := newHarness(t)
 
@@ -117,10 +117,20 @@ func TestOpenRoutes(t *testing.T) {
 		}
 	})
 
-	// Neither is traced. /health is polled every few seconds by the installer
+	t.Run("metrics", func(t *testing.T) {
+		w := h.do(request{method: "GET", path: "/metrics"})
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+			t.Fatalf("content-type %q", ct)
+		}
+	})
+
+	// None is traced. /health is polled every few seconds by the installer
 	// and by a monitor, and a line per poll would bury the requests the trace
 	// exists to show.
-	t.Run("neither is traced", func(t *testing.T) {
+	t.Run("none is traced", func(t *testing.T) {
 		if lines := h.traceLines(); len(lines) != 0 {
 			t.Fatalf("the open routes wrote %d trace lines", len(lines))
 		}

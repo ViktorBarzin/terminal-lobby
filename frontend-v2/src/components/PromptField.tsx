@@ -28,6 +28,7 @@ import {
   type DraftAttachment,
 } from "../store/drafts";
 import { takeLeftBehind } from "../lib/leaving";
+import { takeUnanswered } from "../lib/unanswered";
 import { closeOnBack } from "../lib/back-closes";
 import {
   anchorRestored,
@@ -979,6 +980,13 @@ export const PromptField: Component<{
         setDraft(back);
         setAttached(held);
         autosize();
+        // A request that got no answer may have landed after all, and the
+        // session store says so when the transcript records it
+        // (lib/unanswered.ts). The words leave again then, unless the field
+        // has been typed into since.
+        void takeUnanswered(message)?.then(() => {
+          if (ta && ta.value === back) clear();
+        });
         return ok;
       });
   };

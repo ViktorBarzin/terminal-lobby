@@ -193,6 +193,9 @@ src/
                          after beforeunload or pagehide while in flight most
                          likely landed, so the composer does not put its words
                          back (a reload during a wake-send duplicated them)
+    unanswered.ts        Prompt requests that got no answer (offline, past the
+                         deadline): the words go back in the field, and leave
+                         again if the session store sees the prompt landed
     storage.ts           MinStorage plus localStorageOrNull(). Four modules
                          each carried the same two lines, and reading the
                          localStorage property is itself what throws when a
@@ -1220,6 +1223,9 @@ src/
                          different moments: the live one when a file is picked,
                          the new-session one after the create, because until
                          then there is no session to own the file
+    browser-clipboard.ts The session browser's copy and paste: a copy's write
+                         starts inside the gesture with a ClipboardItem whose
+                         text the host has yet to send, then writeText
   deploy/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload

@@ -55,7 +55,7 @@ function readKbDoc(): KbDoc {
   }
 }
 
-function detectMac(): boolean {
+export function detectMac(): boolean {
   try {
     if (typeof navigator === "undefined") return false;
     const nav = navigator as Navigator & { userAgentData?: { platform?: string } };

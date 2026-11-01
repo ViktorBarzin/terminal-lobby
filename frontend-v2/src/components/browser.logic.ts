@@ -567,3 +567,65 @@ export function panelLayout(o: {
   if (o.paneWidth === null || o.paneWidth <= 0) return "side";
   return o.paneWidth < PANEL_SIDE_MIN_PANE ? "full" : "side";
 }
+
+/** The parts of a KeyboardEvent a shortcut is read from. */
+export interface KeySeen {
+  key: string;
+  code: string;
+  metaKey: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+}
+
+/** Keys a Mac viewer holds that the page's Linux Chrome has no use for. */
+export const MAC_HELD_KEYS: ReadonlySet<string> = new Set(["Meta", "Alt"]);
+
+const ARROWS: ReadonlySet<string> = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+
+/** The unshifted letter or digit a key's code names, which Option and Shift
+ *  do not change the way they change `key`. */
+function codeChar(code: string): string | null {
+  const m = /^(?:Key([A-Z])|Digit(\d))$/.exec(code);
+  if (!m) return null;
+  return m[1] ? m[1].toLowerCase() : (m[2] ?? null);
+}
+
+/**
+ * What a Mac viewer's keydown should press in the page. The page runs in
+ * Linux Chrome, which acts on Ctrl shortcuts and ignores Cmd and Option ones,
+ * so a Mac shortcut is pressed as the Linux one that does the same thing:
+ * Cmd-letter as Ctrl-letter, Cmd-arrow as Home and End, Option-arrow and
+ * Option-Backspace by the word. Answers the presses, in order, as Playwright
+ * key names; none for a bare Cmd or Option, which the page is never told is
+ * held; and null for a key to send as it is.
+ */
+export function macKeyPresses(e: KeySeen): string[] | null {
+  if (MAC_HELD_KEYS.has(e.key)) return [];
+  const shift = e.shiftKey ? "Shift+" : "";
+  if (e.metaKey) {
+    switch (e.key) {
+      case "ArrowLeft":
+        return [`${shift}Home`];
+      case "ArrowRight":
+        return [`${shift}End`];
+      case "ArrowUp":
+        return [`Control+${shift}Home`];
+      case "ArrowDown":
+        return [`Control+${shift}End`];
+      case "Backspace":
+        return ["Shift+Home", "Backspace"];
+      case "Delete":
+        return ["Shift+End", "Delete"];
+    }
+    const alt = e.altKey ? "Alt+" : "";
+    return [`Control+${alt}${shift}${codeChar(e.code) ?? e.key}`];
+  }
+  if (e.altKey && !e.ctrlKey) {
+    if (ARROWS.has(e.key)) return [`Control+${shift}${e.key}`];
+    if (e.key === "Backspace" || e.key === "Delete") return [`Control+${e.key}`];
+    // A character Option types (å, ∫) is typed as it is.
+    if ([...e.key].length > 1) return [`Alt+${shift}${e.key}`];
+  }
+  return null;
+}

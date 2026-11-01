@@ -65,8 +65,10 @@ var PrivilegedDeps = []PrivilegedDep{
 		Path:      "/usr/local/bin/t3-mint",
 		Installer: "infra: setup-devvm.sh, as t3-autopair",
 		RunsAs:    "root, through /etc/sudoers.d/t3-autopair",
-		Reached:   "nothing here calls it; it reads " + UserMapPath + ", which this package renders",
-		Grant:     "/etc/sudoers.d/t3-autopair",
+		Reached: "agent-api's /mcp pass-through runs `sudo -n /usr/local/bin/t3-mint <user>` " +
+			"as the lobby service user (t3client.SudoMinter) to sign in to that user's T3; " +
+			"the grant for that is infra's. It also reads " + UserMapPath + ", which this package renders",
+		Grant: "/etc/sudoers.d/t3-autopair",
 		Why: "Mints a one-time T3 pairing token as a named user, validating the target " +
 			"against " + UserMapPath + ". That makes this repo's map the sole input deciding " +
 			"what an unprivileged, network-facing service account can mint root-issued " +

@@ -303,7 +303,11 @@ test("a session browser end to end", {
   assert.ok(chrome.length > 0, "Chrome runs under the host");
   for (const pid of chrome) {
     try {
-      assert.equal(procState(pid), "T", `process ${pid} is stopped`);
+      // A zombie has already exited. Chrome retires a renderer when the host
+      // opens its clipboard page, and one that exits just before the freeze
+      // stays unreaped while its parent is stopped.
+      const state = procState(pid);
+      if (state !== "Z") assert.equal(state, "T", `process ${pid} is stopped`);
     } catch (err) {
       if (/** @type {NodeJS.ErrnoException} */ (err).code !== "ENOENT") throw err;
     }
@@ -693,4 +697,71 @@ test("the agent's clicks and a person's land on one cursor the viewers see", {
   assert.notEqual(clicks.isError, true, JSON.stringify(clicks));
   // The agent's click, the person's, Enter and Space.
   assert.match(resultText(clicks), /"4"/, "the keys did activate the button");
+});
+
+const CLIPBOARD_PAGE = `data:text/html,${encodeURIComponent(
+  "<title>Clipboard page</title>" +
+    '<textarea id="t" style="position:absolute;left:0;top:0;width:300px;height:40px"></textarea>' +
+    '<button id="c" style="position:absolute;left:0;top:60px;width:200px;height:40px">Copy</button>' +
+    "<script>" +
+    "t.addEventListener('paste', (e) => { t.dataset.pasted = e.clipboardData.getData('text/plain'); });" +
+    "c.addEventListener('click', () => {" +
+    " const s = document.createElement('textarea'); s.value = 'copied by the page';" +
+    " document.body.append(s); s.select(); document.execCommand('copy'); s.remove(); });" +
+    "</script>",
+)}`;
+
+test("a person's clipboard goes into the page and comes back out", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: 90_000,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  const nav = await callTool("browser_navigate", { url: CLIPBOARD_PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  const { view, send } = await connectViewer(sockPath, "tester", true);
+  const watcher = await connectViewer(sockPath, "watcher", false);
+  watcher.send({ t: "subscribe", tab: null });
+  send({ t: "subscribe", tab: null });
+  await view.next((m) => m.t === "frame", "a frame");
+  send({ t: "takeControl" });
+  await view.next((m) => m.t === "control" && m.holder === "tester", "control taken");
+
+  // A paste reaches the page as a paste event, the way a real one would.
+  send({ t: "mouse", type: "click", x: 100, y: 20, button: "left", clickCount: 1 });
+  send({ t: "paste", text: "pasted text\nline two" });
+  send({ t: "key", type: "press", key: "Control+a" });
+  send({ t: "copy" });
+  const copied = await view.next((m) => m.t === "copied", "the copy answered");
+  assert.deepEqual(copied, { t: "copied", text: "pasted text\nline two", from: "copy" });
+
+  // A copy with nothing selected answers with nothing, not the last copy.
+  send({ t: "mouse", type: "click", x: 600, y: 400, button: "left", clickCount: 1 });
+  send({ t: "copy" });
+  const none = await view.next((m) => m.t === "copied", "an empty copy answered");
+  assert.deepEqual(none, { t: "copied", text: "", from: "copy" });
+
+  // What the page copies itself goes to the person in control, once.
+  send({ t: "mouse", type: "click", x: 100, y: 80, button: "left", clickCount: 1 });
+  const fromPage = await view.next((m) => m.t === "copied", "the page's copy");
+  assert.deepEqual(fromPage, { t: "copied", text: "copied by the page", from: "page" });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(
+    view.seen.some((m) => m.t === "copied"),
+    false,
+    "the page's copy is sent once",
+  );
+  assert.equal(
+    watcher.view.seen.some((m) => m.t === "copied"),
+    false,
+    "a watcher is sent nothing from the clipboard",
+  );
+
+  send({ t: "handBack" });
+  await view.next((m) => m.t === "control" && m.holder === null, "control handed back");
+  const pasted = await callTool("browser_evaluate", {
+    function: "() => document.querySelector('#t').dataset.pasted",
+  });
+  assert.notEqual(pasted.isError, true, JSON.stringify(pasted));
+  assert.match(resultText(pasted), /pasted text\\nline two/, "the page saw a paste event");
 });

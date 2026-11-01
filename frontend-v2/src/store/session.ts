@@ -36,6 +36,7 @@ import { readCatalogue, type Catalogue } from "./catalogue";
 import { loadQueuedEdit, saveQueuedEdit, type OpenQueuedEdit } from "./drafts";
 import { isSlashCommand, sameCommand, type PendingPrompt } from "../logic/compose.logic";
 import { trackPrompt } from "../lib/leaving";
+import { noteUnanswered } from "../lib/unanswered";
 import { fetchWithDeadline } from "../lib/http";
 import { TRUST_NOTICE } from "../lib/first-prompt";
 import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answer-api";
@@ -398,6 +399,23 @@ const READY_TRIES = 3;
  */
 const KEEPALIVE_MAX_BYTES = 60_000;
 
+/**
+ * How far behind this device's clock a record's time may read and still be the
+ * record of a prompt sent from here. Only used once the stream has started over
+ * and event ids no longer compare; the record is stamped by the server, and a
+ * phone's clock can be seconds out.
+ */
+const UNANSWERED_CLOCK_SLACK_MS = 60_000;
+
+/** A prompt whose request got no answer (lib/unanswered.ts). */
+interface Unanswered {
+  text: string;
+  /** The newest event id when it was sent, or null once ids no longer compare. */
+  afterId: number | null;
+  sentAt: number;
+  land: () => void;
+}
+
 async function promptRefusal(res: Response): Promise<string> {
   if (res.status !== 409) return "";
   try {
@@ -652,6 +670,32 @@ export function createSessionStore(
   let pendingSeq = 0;
 
   /**
+   * Prompts whose request got no answer, watched until the session shows it
+   * has them (lib/unanswered.ts). Each was sent after event `afterId`, so an
+   * older record of the same words does not count. A stream that starts over
+   * (`reset`) leaves ids that no longer compare, and `afterId` goes null: the
+   * record's own time decides then, against when the prompt went, with
+   * UNANSWERED_CLOCK_SLACK_MS for this device's clock.
+   */
+  let unanswered: Unanswered[] = [];
+  /** Whether `e` is the session's record of the prompt `u`. */
+  const records = (e: Event, u: Omit<Unanswered, "land">): boolean => {
+    if (e.kind !== "user" && !(e.kind === "meta" && e.meta === "command")) return false;
+    if (!sameCommand(e.body ?? "", u.text)) return false;
+    if (u.afterId !== null) return e.id > u.afterId;
+    return (e.at ?? 0) >= u.sentAt - UNANSWERED_CLOCK_SLACK_MS;
+  };
+  /** Let the composer know which unanswered prompts the session has after all. */
+  const landUnanswered = (has: (u: Unanswered) => boolean): void => {
+    if (unanswered.length === 0) return;
+    const landed = unanswered.filter(has);
+    if (landed.length === 0) return;
+    unanswered = unanswered.filter((u) => !landed.includes(u));
+    for (const u of landed) u.land();
+    opts.notify?.("Your message reached the session after all.", "info");
+  };
+
+  /**
    * Persist the transcript, off the render path.
    *
    * requestIdleCallback for the same reason the progressive mount uses it: the
@@ -721,6 +765,7 @@ export function createSessionStore(
       backfill = [];
       const fresh = takeFresh(older);
       if (fresh.length > 0) setEvents((prev) => mergeById(prev, fresh));
+      landUnanswered((u) => fresh.some((e) => records(e, u)));
       paint();
     }
     // Still waiting on the rest of an ASCENDING opening window: keep buffering.
@@ -729,6 +774,7 @@ export function createSessionStore(
     pending = [];
     if (arrived.length > 0) {
       scheduleCacheWrite();
+      landUnanswered((u) => arrived.some((e) => records(e, u)));
       // batch() so the derivation runs once for the whole group rather than once
       // per index write.
       batch(() => {
@@ -848,6 +894,9 @@ export function createSessionStore(
     pending = [];
     backfill = [];
     seen.clear();
+    // Their ids belong to the stream that just ended: the record's time
+    // decides from here (`records`).
+    for (const u of unanswered) u.afterId = null;
     cursor = 0;
     step = 0;
     dropStream();
@@ -910,7 +959,11 @@ export function createSessionStore(
       backfill.push(e);
       scheduleFlush();
     },
-    onState: (st: SessionState) => setSessionState(st),
+    onState: (st: SessionState) => {
+      setSessionState(st);
+      // Queued behind a running turn, a prompt has no record until it runs.
+      landUnanswered((u) => (st.queue ?? []).some((q) => sameCommand(q, u.text)));
+    },
     // The ids held are this source's own from here on, and a copy stored
     // under the old epoch would resume against a rebuilt source that skips
     // part of the conversation (found live on 2026-09-27).
@@ -1152,6 +1205,8 @@ export function createSessionStore(
 
   const send = async (text: string, sendOpts?: { awaitReady?: boolean }): Promise<boolean> => {
     const awaitReady = sendOpts?.awaitReady === true;
+    const afterId = events.length > 0 ? (events[events.length - 1]?.id ?? 0) : 0;
+    const sentAt = Date.now();
     // Shown before the POST rather than after it, so the message is on screen
     // the moment Send is pressed. Its own record may land before the response
     // does, which releases it as usual; the updates below then find nothing.
@@ -1234,8 +1289,17 @@ export function createSessionStore(
       }
       return res.ok;
     } catch {
-      /* the prompt still shows once the transcript tails */
+      // No answer is not a refusal: the request may have reached the server
+      // and lost its response on the way back, which is what a phone's radio
+      // does going offline (reported 2026-10-31). The words go back in the
+      // field, and the composer takes them out again if the session shows it
+      // has them. A record that already arrived settles it now.
+      if (events.some((e) => records(e, { text, afterId, sentAt }))) return true;
       dropPending(pending);
+      let land: () => void = () => {};
+      const landed = new Promise<void>((r) => (land = r));
+      unanswered.push({ text, afterId, sentAt, land });
+      noteUnanswered(text, landed);
       opts.notify?.("Couldn't reach the session", "error");
       return false;
     }

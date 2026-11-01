@@ -881,3 +881,183 @@ describe("<BrowserPanel> the cursor of the person in control", () => {
     });
   });
 });
+
+describe("<BrowserPanel> clipboard", () => {
+  /** jsdom has no ClipboardItem, so copies land through writeText here. */
+  function stubClipboard(over: Partial<Clipboard> = {}) {
+    const written: string[] = [];
+    const clipboard = {
+      writeText: vi.fn(async (t: string) => void written.push(t)),
+      readText: vi.fn(async () => "from my clipboard"),
+      ...over,
+    };
+    Object.defineProperty(navigator, "clipboard", { value: clipboard, configurable: true });
+    return { written, clipboard };
+  }
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
+
+  function inControl() {
+    const m = mount(true);
+    m.ws.host(mine);
+    return { ...m, stage: m.getByRole("application") };
+  }
+
+  it("offers Copy and Paste only while in control", () => {
+    const { getByLabelText, ws } = mount(true);
+    expect(getByLabelText("Copy from the page")).toBeDisabled();
+    expect(getByLabelText("Paste into the page")).toBeDisabled();
+    ws.host(mine);
+    expect(getByLabelText("Copy from the page")).toBeEnabled();
+    expect(getByLabelText("Paste into the page")).toBeEnabled();
+  });
+
+  it("pastes what Ctrl-V carries as a paste, not as typing", () => {
+    const { stage, ws } = inControl();
+    fireEvent.paste(stage, { clipboardData: { getData: () => "line one\nline two" } });
+    expect(ws.sent.at(-1)).toEqual({ t: "paste", text: "line one\nline two" });
+  });
+
+  it("reads the clipboard for the Paste button", async () => {
+    stubClipboard();
+    const { getByLabelText, ws } = inControl();
+    fireEvent.click(getByLabelText("Paste into the page"));
+    await vi.waitFor(() =>
+      expect(ws.sent.at(-1)).toEqual({ t: "paste", text: "from my clipboard" }),
+    );
+    expect(track).toHaveBeenCalledWith("browser.paste", {
+      "tl.via": "button",
+      "tl.outcome": "pasted",
+    });
+  });
+
+  it("says so when the browser will not share its clipboard", async () => {
+    stubClipboard({
+      readText: vi.fn(async () => {
+        throw new DOMException("no", "NotAllowedError");
+      }),
+    });
+    const { getByLabelText, ws } = inControl();
+    fireEvent.click(getByLabelText("Paste into the page"));
+    await vi.waitFor(() =>
+      expect(track).toHaveBeenCalledWith("browser.paste", {
+        "tl.via": "button",
+        "tl.outcome": "refused",
+      }),
+    );
+    expect(ws.sent.some((m) => m.t === "paste")).toBe(false);
+  });
+
+  it("copies what the host answers for Ctrl-C and the Copy button", async () => {
+    const { written } = stubClipboard();
+    const { getByLabelText, stage, ws } = inControl();
+    fireEvent.keyDown(stage, { key: "c", ctrlKey: true });
+    expect(ws.sent.at(-1)).toEqual({ t: "copy" });
+    ws.host({ t: "copied", text: "selected words", from: "copy" });
+    await vi.waitFor(() => expect(written).toEqual(["selected words"]));
+
+    fireEvent.click(getByLabelText("Copy from the page"));
+    expect(ws.sent.at(-1)).toEqual({ t: "copy" });
+    ws.host({ t: "copied", text: "more words", from: "copy" });
+    await vi.waitFor(() => expect(written).toEqual(["selected words", "more words"]));
+    expect(track).toHaveBeenCalledWith("browser.copy", {
+      "tl.via": "button",
+      "tl.outcome": "copied",
+    });
+  });
+
+  it("leaves the clipboard alone when nothing was selected", async () => {
+    const { written } = stubClipboard();
+    const { getByLabelText, ws } = inControl();
+    fireEvent.click(getByLabelText("Copy from the page"));
+    ws.host({ t: "copied", text: "", from: "copy" });
+    await vi.waitFor(() =>
+      expect(track).toHaveBeenCalledWith("browser.copy", {
+        "tl.via": "button",
+        "tl.outcome": "empty",
+      }),
+    );
+    expect(written).toEqual([]);
+  });
+
+  it("puts what the page copies on the clipboard", async () => {
+    const { written } = stubClipboard();
+    const { ws, queryByText } = inControl();
+    ws.host({ t: "copied", text: "npm install thing", from: "page" });
+    await vi.waitFor(() => expect(written).toEqual(["npm install thing"]));
+    expect(queryByText("The page copied text.")).toBeNull();
+  });
+
+  it("offers a Copy button when the browser refuses the page's copy without a tap", async () => {
+    let refuse = true;
+    const { written } = stubClipboard({
+      writeText: vi.fn(async (t: string) => {
+        if (refuse) throw new DOMException("no", "NotAllowedError");
+        written.push(t);
+      }),
+    });
+    const { ws, findByText, getByText, queryByText } = inControl();
+    ws.host({ t: "copied", text: "npm install thing", from: "page" });
+    await findByText("The page copied text.");
+    refuse = false;
+    fireEvent.click(getByText("Copy it"));
+    await vi.waitFor(() => expect(written).toEqual(["npm install thing"]));
+    await vi.waitFor(() => expect(queryByText("The page copied text.")).toBeNull());
+  });
+});
+
+describe("<BrowserPanel> keys from a Mac", () => {
+  function onPlatform(platform: string) {
+    Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+    const m = mount(true);
+    m.ws.host(mine);
+    return { ...m, stage: m.getByRole("application") };
+  }
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "platform");
+  });
+  const keys = (sent: readonly Record<string, unknown>[]) => sent.filter((m) => m.t === "key");
+
+  it("presses a Cmd shortcut as the Ctrl one the page's Linux Chrome knows", () => {
+    const { stage, ws } = onPlatform("MacIntel");
+    fireEvent.keyDown(stage, { key: "Meta", code: "MetaLeft", metaKey: true });
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA", metaKey: true });
+    // A Mac sends no keyup for a key pressed while Cmd is held.
+    fireEvent.keyUp(stage, { key: "Meta", code: "MetaLeft" });
+    expect(keys(ws.sent)).toEqual([{ t: "key", type: "press", key: "Control+a" }]);
+  });
+
+  it("moves by word for Option-arrow and drops the key's own keyup", () => {
+    const { stage, ws } = onPlatform("MacIntel");
+    fireEvent.keyDown(stage, { key: "Alt", code: "AltLeft", altKey: true });
+    fireEvent.keyDown(stage, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+    fireEvent.keyUp(stage, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+    fireEvent.keyUp(stage, { key: "Alt", code: "AltLeft" });
+    expect(keys(ws.sent)).toEqual([{ t: "key", type: "press", key: "Control+ArrowLeft" }]);
+  });
+
+  it("still sends the keyup of a key typed after a Cmd shortcut lost its own", () => {
+    const { stage, ws } = onPlatform("MacIntel");
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA", metaKey: true });
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA" });
+    fireEvent.keyUp(stage, { key: "a", code: "KeyA" });
+    expect(keys(ws.sent)).toEqual([
+      { t: "key", type: "press", key: "Control+a" },
+      { t: "key", type: "down", key: "a" },
+      { t: "key", type: "up", key: "a" },
+    ]);
+  });
+
+  it("sends every key as it is from Windows or Linux", () => {
+    const { stage, ws } = onPlatform("Win32");
+    fireEvent.keyDown(stage, { key: "Control", code: "ControlLeft", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "a", code: "KeyA", ctrlKey: true });
+    fireEvent.keyDown(stage, { key: "Alt", code: "AltLeft", altKey: true });
+    expect(keys(ws.sent)).toEqual([
+      { t: "key", type: "down", key: "Control" },
+      { t: "key", type: "down", key: "a" },
+      { t: "key", type: "down", key: "Alt" },
+    ]);
+  });
+});

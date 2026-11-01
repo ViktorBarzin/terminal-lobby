@@ -8416,6 +8416,17 @@ body.tl-kb-up {
   color: var(--text-primary);
   font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
+/* A page's copy the browser would not take without a tap: say so, and offer
+   the tap. */
+.tl-browser-clip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tl-browser-clip > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .tl-browser-tabs {
   display: flex;
   gap: 4px;

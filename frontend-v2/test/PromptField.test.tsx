@@ -13,6 +13,7 @@ import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
 import { trackPrompt } from "../src/lib/leaving";
+import { noteUnanswered } from "../src/lib/unanswered";
 import { labelledByText } from "./safari-autofill-words";
 
 beforeEach(() => localStorage.clear());
@@ -253,6 +254,55 @@ describe("<PromptField> — a send the page leaves behind", () => {
     refused.fail();
     await settle();
     expect(field(b.container).value).toBe("reply with pear");
+  });
+});
+
+/**
+ * Reported by Viktor on 2026-10-31: offline on a phone, a send failed and the
+ * words came back, but the message had reached Claude after all, so back
+ * online the field held words already sent. A request that got no answer may
+ * have landed, and the session store says so when the transcript records it
+ * (lib/unanswered.ts). The words come back at once, because most of the time
+ * they really did not go, and leave again when the store says they landed. A
+ * field typed into since keeps what was typed.
+ */
+describe("<PromptField> — a send that got no answer and landed after all", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const unanswered = (text: string) => {
+    let land: () => void = () => {};
+    const landed = new Promise<void>((r) => (land = r));
+    const send = async (): Promise<boolean> => {
+      noteUnanswered(text, landed);
+      return false;
+    };
+    return { send, land: () => land() };
+  };
+
+  it("takes the words back out of the field once they landed", async () => {
+    const s = unanswered("reply with mango");
+    const { container } = render(() => (
+      <PromptField onSend={s.send} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    type(field(container), "reply with mango");
+    fireEvent.keyDown(field(container), { key: "Enter" });
+    await settle();
+    expect(field(container).value).toBe("reply with mango");
+    s.land();
+    await settle();
+    expect(field(container).value).toBe("");
+    expect(loadDraft("k7m2q9x4tp0v")).toBeNull();
+  });
+
+  it("keeps what was typed after the words came back", async () => {
+    const s = unanswered("reply with kiwi");
+    const { container } = render(() => <PromptField onSend={s.send} label="Message" />);
+    type(field(container), "reply with kiwi");
+    fireEvent.keyDown(field(container), { key: "Enter" });
+    await settle();
+    type(field(container), "reply with kiwi, and a pear");
+    s.land();
+    await settle();
+    expect(field(container).value).toBe("reply with kiwi, and a pear");
   });
 });
 

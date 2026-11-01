@@ -69,7 +69,7 @@ const (
 	browserHelloTimeout = 3 * time.Second
 
 	// maxViewerMessage bounds one message from the lobby. The largest real one
-	// is a paste (insertText); 1 MiB of text is far past any form field.
+	// is a paste (paste or insertText); 1 MiB of text is far past any form field.
 	maxViewerMessage = 1 << 20
 
 	// maxHostLine bounds one line from the host. A frame is a base64 JPEG of

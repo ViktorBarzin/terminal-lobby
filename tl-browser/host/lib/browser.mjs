@@ -5,6 +5,7 @@
 
 import { existsSync } from "node:fs";
 import { chromium } from "playwright-core";
+import { ChromeClipboard } from "./clipboard.mjs";
 import { CURSOR_BINDING, cursorInPage, MOVE_INTERVAL_MS } from "./cursor.mjs";
 import { clearMcpModal, mcpModalPending } from "./mcptab.mjs";
 import {
@@ -99,6 +100,7 @@ export class BrowserSession {
   tabs = new TabRegistry();
   #browser;
   #context;
+  #clipboard;
   /** @type {number[]} the Chrome processes this host started */
   #roots;
   /** @type {Map<Page, CDPSession>} */
@@ -127,6 +129,7 @@ export class BrowserSession {
   constructor(browser, context, roots, opts) {
     this.#browser = browser;
     this.#context = context;
+    this.#clipboard = new ChromeClipboard(browser);
     this.#roots = roots;
     this.#o = opts;
     context.on("page", (page) => this.#addPage(page));
@@ -231,6 +234,15 @@ export class BrowserSession {
       if (!page) throw new Error("That tab has closed.");
       return this.#act(page, msg);
     });
+  }
+
+  /**
+   * Text a page copied since the last look, or "" when there is none. Read in
+   * order with input, so a person's copy and paste are not seen as the page's.
+   * @returns {Promise<string>}
+   */
+  pageCopy() {
+    return this.#inOrder(() => this.#clipboard.take().catch(() => ""));
   }
 
   /**
@@ -373,6 +385,9 @@ export class BrowserSession {
       case "insertText":
         await page.keyboard.insertText(msg.text);
         return undefined;
+      case "paste":
+        await this.#paste(page, msg.text);
+        return undefined;
       case "navigate":
         await page.goto(msg.url, { waitUntil: "commit", timeout: NAV_TIMEOUT_MS });
         return undefined;
@@ -386,18 +401,51 @@ export class BrowserSession {
         await page.reload({ waitUntil: "commit", timeout: NAV_TIMEOUT_MS });
         return undefined;
       case "copy":
-        return page.evaluate(() => {
-          const el = document.activeElement;
-          if (
-            (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) &&
-            el.selectionStart !== null &&
-            el.selectionEnd !== null
-          )
-            return el.value.slice(el.selectionStart, el.selectionEnd);
-          return String(window.getSelection() ?? "");
-        });
+        return this.#copy(page);
       default:
         return undefined;
+    }
+  }
+
+  /**
+   * A native paste, so the page gets the paste event it would from a person
+   * at its own keyboard. Typed instead when the clipboard cannot be reached.
+   * @param {Page} page
+   * @param {string} text
+   */
+  async #paste(page, text) {
+    try {
+      await this.#clipboard.write(text);
+    } catch {
+      await page.keyboard.insertText(text);
+      return;
+    }
+    await page.keyboard.press("Control+V");
+    await this.#clipboard.write("").catch(() => {});
+  }
+
+  /**
+   * A native copy, so a page that handles copy itself (an editor that draws
+   * its own selection, say) decides what is copied. The selection is read
+   * instead when the clipboard cannot be reached.
+   * @param {Page} page
+   * @returns {Promise<string>}
+   */
+  async #copy(page) {
+    await page.keyboard.press("Control+C");
+    try {
+      return await this.#clipboard.take();
+    } catch {
+      return page.evaluate(() => {
+        const el = document.activeElement;
+        if (
+          (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) &&
+          el.selectionStart !== null &&
+          el.selectionEnd !== null
+        )
+          return el.value.slice(el.selectionStart, el.selectionEnd);
+        return String(window.getSelection() ?? "");
+      });
     }
   }
 
