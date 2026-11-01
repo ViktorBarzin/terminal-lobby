@@ -298,10 +298,6 @@ var Package = Manifest{
 		// A long-running service rather than a timer: the comparison is between
 		// consecutive looks, so the previous snapshot has to survive the tick.
 		"tl-session-watch",
-		// The T3 view's sidecar (ADR-0044).
-		"tl-t3-view",
-		// The daily check behind the T3StableHeld alert (ADR-0045).
-		"tl-t3-upstream-check.timer",
 	},
 	// The T3 bridge and its syncer are gone (ADR-0029). This is the release
 	// that stops them: the files go with the manifest entries above, and the
@@ -309,7 +305,13 @@ var Package = Manifest{
 	//
 	// The two public-link terminal servers went when links stopped carrying a
 	// terminal (ADR-0041); postinst also removes their account and sudo grant.
-	Retire:   []string{"tl-t3-sync@*.service", "ttyd-link-ro.service", "ttyd-link-rw.service"},
+	//
+	// The T3 view's sidecar and the daily check of its pin went when T3 Code
+	// became the host of its own sessions (ADR-0046).
+	Retire: []string{
+		"tl-t3-sync@*.service", "ttyd-link-ro.service", "ttyd-link-rw.service",
+		"tl-t3-view.service", "tl-t3-upstream-check.timer", "tl-t3-upstream-check.service",
+	},
 	External: []string{"/usr/local/bin/ttyd"},
 	Checks: []Check{
 		{Unit: "tmux-api", Name: "tmux-api /health", URL: "http://127.0.0.1:7684/health", WantStatus: 200},
@@ -368,15 +370,6 @@ var Package = Manifest{
 		// The public-link visitor page (ADR-0041), served to people who are not
 		// signed in. A broken /s/ is a broken link for everyone holding one.
 		{Unit: "clipboard-upload", Name: "clipboard-upload serves the link page", URL: "http://127.0.0.1:7683/s/", WantStatus: 200},
-		// The T3 view (ADR-0044): a third view beside the Text view, which
-		// stays the default, so nobody's session depends on it. Advisory for
-		// the reason agent-api's probes are: a failure means this one view is
-		// down, and a revert would hold every later deploy of the lobby. The
-		// probe is the refusal, on a route that needs a credential: the
-		// environment descriptor answers anyone, because T3's apps read it
-		// before pairing (ADR-0045). With no credential at all the sidecar
-		// answers 401 before it asks tmux-api anything.
-		{Unit: "tl-t3-view", Name: "tl-t3-view refuses anonymous", URL: "http://127.0.0.1:7690/api/orchestration/shell", WantStatus: 401, Advisory: true},
 	},
 	Files: []File{
 		{Src: "bin/tmux-api", Dest: "/usr/local/bin/tmux-api", Mode: 0o755},
@@ -390,15 +383,6 @@ var Package = Manifest{
 		// it per session over stdio, so no unit runs it, and a new version
 		// reaches each session the next time it starts.
 		{Src: "bin/tl-browser", Dest: "/usr/local/bin/tl-browser", Mode: 0o755, Unmanaged: true},
-		// The T3 view's sidecar, one esbuild bundle node runs (ADR-0044). A
-		// File rather than part of the web tree beside it, so its unit
-		// watches it and a new sidecar restarts.
-		{Src: "bin/tl-t3-view.mjs", Dest: "/usr/lib/terminal-lobby/tl-t3-view/tl-t3-view.mjs", Mode: 0o644},
-		// The pin the T3 view was built from, which tl-t3-upstream-check
-		// compares with T3 Code's latest stable release (ADR-0045). Shipped so
-		// the check reads what is installed, not what master says.
-		{Src: "t3-view/T3_PIN", Dest: "/usr/lib/terminal-lobby/tl-t3-view/T3_PIN", Mode: 0o644},
-		{Src: "bin/tl-t3-upstream-check", Dest: "/usr/local/bin/tl-t3-upstream-check", Mode: 0o755},
 		// Invoked by ttyd per WebSocket, by sessions, and by tmux-api via sudo.
 		{Src: "devvm/tmux-attach.sh", Dest: "/usr/local/bin/tmux-attach.sh", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-attach", Dest: "/usr/local/bin/tmux-user-attach", Mode: 0o755, Unmanaged: true},
@@ -506,9 +490,6 @@ var Package = Manifest{
 		{Src: "devvm/clipboard-cleanup.service", Dest: "/etc/systemd/system/clipboard-cleanup.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.timer", Dest: "/etc/systemd/system/clipboard-cleanup.timer", Mode: 0o644},
 		{Src: "devvm/tl-session-watch.service", Dest: "/etc/systemd/system/tl-session-watch.service", Mode: 0o644},
-		{Src: "devvm/tl-t3-view.service", Dest: "/etc/systemd/system/tl-t3-view.service", Mode: 0o644},
-		{Src: "devvm/tl-t3-upstream-check.service", Dest: "/etc/systemd/system/tl-t3-upstream-check.service", Mode: 0o644},
-		{Src: "devvm/tl-t3-upstream-check.timer", Dest: "/etc/systemd/system/tl-t3-upstream-check.timer", Mode: 0o644},
 
 		// The grant every attach depends on. visudo -cf gates it, because a
 		// malformed grant locks every user out of every session.
@@ -532,12 +513,6 @@ var Package = Manifest{
 		// path under /usr/share is. Each Claude loads it at start, so a new
 		// version reaches a session the next time it starts.
 		{Src: "claude-plugins", Dest: "/usr/share/terminal-lobby/claude-plugins"},
-		// T3 Code's web client at the pin in t3-view/T3_PIN, with the embed
-		// patch (t3-view/scripts/build-web.sh). The sidecar reads it per
-		// request, so nothing restarts when it changes; its chunks are
-		// content-hashed, and T3 reloads once when a tab on the previous
-		// build asks for one that has gone.
-		{Src: "tl-t3-view-web", Dest: "/usr/lib/terminal-lobby/tl-t3-view/web"},
 	},
 	// ttyd watches the terminal server binary, which ttyd-devvm installs; that
 	// package restarts it when it upgrades. It is listed here so a change to the
@@ -587,18 +562,6 @@ var Package = Manifest{
 		{Name: "tl-session-watch", Files: []string{
 			"/usr/local/bin/tl-session-watch",
 			"/etc/systemd/system/tl-session-watch.service",
-		}},
-		{Name: "tl-t3-view", Files: []string{
-			"/usr/lib/terminal-lobby/tl-t3-view/tl-t3-view.mjs",
-			"/etc/systemd/system/tl-t3-view.service",
-		}},
-		// Like clipboard-cleanup.timer: a restart re-arms the timer, and the
-		// service it starts runs the binary and reads the pin fresh each day.
-		{Name: "tl-t3-upstream-check.timer", Files: []string{
-			"/usr/local/bin/tl-t3-upstream-check",
-			"/etc/systemd/system/tl-t3-upstream-check.service",
-			"/etc/systemd/system/tl-t3-upstream-check.timer",
-			"/usr/lib/terminal-lobby/tl-t3-view/T3_PIN",
 		}},
 	},
 }

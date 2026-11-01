@@ -348,11 +348,8 @@ func TestEveryStagedSourceDirectoryIsCopiedIntoTheStage(t *testing.T) {
 		if built {
 			continue
 		}
-		// One file copied at its own path also counts, for a file whose
-		// directory holds far more than the package should take: t3-view/T3_PIN
-		// sits beside the T3 view's sources and its generated node_modules.
-		staged := strings.Contains(build, `cp `+f.Src+` "$STAGE/`+f.Src+`"`)
-		for dir := filepath.Dir(f.Src); !staged && dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+		staged := false
+		for dir := filepath.Dir(f.Src); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
 			if strings.Contains(build, `cp -a `+dir+`/. "$STAGE/`+dir+`/"`) {
 				staged = true
 				break
@@ -398,11 +395,10 @@ func TestAgentAPIsChecksCannotDowngradeTheBox(t *testing.T) {
 }
 
 // The other side of the same rule. Advisory is for the services no person's
-// session depends on (agent-api, and the admin-only T3 view beside the
-// default Text view); a release that broke the terminal, the session list or
+// session depends on (agent-api); a release that broke the terminal, the session list or
 // the file browser must still revert, so nothing else may quietly acquire it.
 func TestEveryServiceAPersonUsesKeepsAGatingCheck(t *testing.T) {
-	advisoryOnly := map[string]bool{"agent-api": true, "tl-t3-view": true}
+	advisoryOnly := map[string]bool{"agent-api": true}
 	gating := map[string]bool{}
 	for _, c := range Package.Checks {
 		if !c.Advisory {
