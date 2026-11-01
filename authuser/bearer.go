@@ -46,8 +46,7 @@ package authuser
 // any terminal account on the box. So the owner must be root, which makes
 // issuing a machine credential an operator's act under sudo rather than a file
 // write any process can make. Both halves are checked on every read, and either
-// one failing means no credentials rather than an error. Device tokens follow a
-// different owner rule, and devices.go explains why.
+// one failing means no credentials rather than an error.
 //
 // What the tests pin, and what a reader should be able to rely on:
 //
@@ -331,8 +330,7 @@ func (g *Gate) resolveBearer(r *http.Request, token string, creds []bearerCred) 
 		// Admin drives whether the SPA offers the act-as picker. A bearer
 		// cannot act as anyone whatever account it resolves to, so reporting it
 		// as an administrator would advertise a control that could only fail.
-		Admin:  false,
-		Method: MethodToken,
+		Admin: false,
 	}, nil
 }
 
