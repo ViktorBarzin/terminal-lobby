@@ -136,6 +136,11 @@ func main() {
 	}
 	srv.Runner = NewRunner(srv.runTurn)
 
+	// The /mcp pass-through (mcp.go) and the T3 call counts /metrics serves.
+	srv.Metrics = telemetry.NewMetrics()
+	srv.T3 = newT3Client(os.Getenv, srv.Metrics)
+	log.Printf("agent-api: /mcp forwards to each caller's T3; T3 tokens in %s", t3TokenDir(os.Getenv))
+
 	// The agent rules live beside the delegations, in a directory only this
 	// account can write. Written once now as well as on every create, so a
 	// suspended conversation resumed before the next create finds the file.

@@ -110,6 +110,14 @@ LogsDirectoryMode=0700
 # first after a reboot and redirect or replace the file. Here only this
 # account can write it, and the conversations that read it run as this
 # account too.
+#
+# And t3/, the T3 Code token agent-api holds for each user whose caller uses
+# the /mcp pass-through: t3-token-<user>.json, 0600, in a directory the
+# service makes 0700 at startup. Each token acts as its user in T3 for 30
+# days and is renewed after 20. A token is minted by `sudo -n
+# /usr/local/bin/t3-mint <user>`, which needs this account's t3-mint grant;
+# without it /mcp answers 502 and /v1 is unaffected. TL_T3_HOSTS and
+# TL_T3_DOMAIN, from the conf files above, name each user's public T3 host.
 StateDirectory=agent-api
 StateDirectoryMode=0700
 
