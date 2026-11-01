@@ -167,6 +167,8 @@ type request struct {
 	// ctx, when set, is the request's context, so a test can hang up on a
 	// request that is still waiting.
 	ctx context.Context
+	// headers are sent as they are, for the MCP session headers.
+	headers map[string]string
 }
 
 func (h *harness) do(req request) *httptest.ResponseRecorder {
@@ -187,6 +189,9 @@ func (h *harness) do(req request) *httptest.ResponseRecorder {
 	}
 	if req.secret != "" {
 		r.Header.Set(authuser.SecretHeader, req.secret)
+	}
+	for k, v := range req.headers {
+		r.Header.Set(k, v)
 	}
 	w := httptest.NewRecorder()
 	h.handler.ServeHTTP(w, r)

@@ -7,8 +7,8 @@ package main
 // /v1 subtree in Routes, so a route added later is authenticated whether or
 // not its author remembered; and the trace is written by the wrapper around
 // every handler, from a record the handler fills in, so a handler cannot
-// forget to be recorded either. Only /health and /openapi.json sit outside,
-// and they sit outside in ONE place that is easy to read.
+// forget to be recorded either. Only /health, /openapi.json and /metrics sit
+// outside, and they sit outside in ONE place that is easy to read.
 
 import (
 	"encoding/json"
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/telemetry"
 )
 
 // maxBodyBytes bounds a request body. Every body here is a short JSON object;
@@ -123,6 +124,13 @@ type Server struct {
 	// DelegationCaps overrides defaultDelegationCaps field by field; a test
 	// shrinks it so a cap is reached in three requests rather than twenty.
 	DelegationCaps delegationCaps
+
+	// T3 forwards /mcp to the caller's user's T3 (mcp.go). Nil, /mcp
+	// answers 503.
+	T3 mcpForwarder
+	// Metrics is the Prometheus surface GET /metrics serves; the T3 client
+	// writes its call counts to it. Nil serves an empty scrape.
+	Metrics *telemetry.Metrics
 
 	// createMu holds a create's id check and the session it creates together.
 	createMu sync.Mutex
@@ -321,6 +329,14 @@ func (s *Server) Routes() http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/v1/", s.requireAuth(v1))
 
+	// The MCP pass-through (mcp.go) sits behind the same gate as /v1. It is
+	// its own mux because it answers in MCP's terms, not this API's.
+	mcp := http.NewServeMux()
+	mcp.HandleFunc("POST /mcp", s.mcpPost)
+	mcp.HandleFunc("DELETE /mcp", s.mcpDelete)
+	mcp.HandleFunc("GET /mcp", s.mcpGet)
+	root.Handle("/mcp", s.requireAuth(mcp))
+
 	// The two open routes. /health is what tl-apply probes after an install
 	// and what a monitor polls, so it authenticates nothing and allocates
 	// nothing. /openapi.json is open because a caller has to READ it before
@@ -335,6 +351,12 @@ func (s *Server) Routes() http.Handler {
 	root.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(openAPIWithModels(s.Models))
+	})
+	// /metrics is for Prometheus on the LAN and is open like tmux-api's: it
+	// holds call counts by OS user and tool name, no content. The public host
+	// routes exact paths and does not route this one.
+	root.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		s.Metrics.Handler().ServeHTTP(w, r)
 	})
 	return root
 }

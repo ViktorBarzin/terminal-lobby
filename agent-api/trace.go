@@ -47,6 +47,18 @@ type TraceEntry struct {
 	TaskID         string `json:"task_id,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	DelegationID   string `json:"delegation_id,omitempty"`
+	// The /mcp pass-through's own fields (mcp.go). MCPMethod is the JSON-RPC
+	// method, Tool the tool a tools/call named, ThreadID the T3 thread the
+	// call named or, for a launch, the one it made. Result is how the call
+	// ended, in t3client's vocabulary (ok, tool_error, rpc_error, http_error,
+	// unreachable, auth_error, timeout) plus "accepted" for a notification.
+	// Rewritten names what agent-api changed before forwarding: a caller's
+	// pin, or a capped wait. Request still holds the caller's own words.
+	MCPMethod string   `json:"mcp_method,omitempty"`
+	Tool      string   `json:"tool,omitempty"`
+	ThreadID  string   `json:"thread_id,omitempty"`
+	Result    string   `json:"result,omitempty"`
+	Rewritten []string `json:"rewritten,omitempty"`
 	// Event names what a successful write did — delegation.created, .sent,
 	// .undelivered, .done, .failed — so a Loki query can match one field
 	// rather than a verb and a status. Absent on reads and refusals.
