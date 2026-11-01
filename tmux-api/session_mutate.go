@@ -9,6 +9,7 @@ import (
 
 	"terminal-lobby/clipstore"
 	"terminal-lobby/slug"
+	"terminal-lobby/t3client"
 	"terminal-lobby/telemetry"
 )
 
@@ -23,6 +24,12 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 	}
 	osUser := resolveOSUser(w, r)
 	if osUser == "" {
+		return
+	}
+	// A T3 row's alias is not a tmux session: rename and archive go to the
+	// user's T3, and every tmux verb is refused (t3_routes.go).
+	if t3client.IsAlias(name) {
+		handleT3Session(w, r, osUser, name, parts[1:])
 		return
 	}
 	// A guest names the session's owner with ?owner=; from here on every verb
@@ -234,6 +241,12 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 	newName := strings.TrimSpace(body.Name)
 	if !sessionNameRe.MatchString(newName) {
 		http.Error(w, "invalid new name", http.StatusBadRequest)
+		return
+	}
+	// The shape of a T3 row's alias is the T3 routes', so a tmux session
+	// cannot take it.
+	if t3client.IsAlias(newName) {
+		http.Error(w, "that name is reserved for T3 sessions", http.StatusBadRequest)
 		return
 	}
 	if newName == oldName {

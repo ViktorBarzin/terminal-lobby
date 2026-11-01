@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	"terminal-lobby/slug"
+	"terminal-lobby/t3client"
 	"terminal-lobby/telemetry"
 )
 
@@ -68,7 +69,8 @@ func derivedNameFor(name, title string, taken map[string]bool) (string, bool) {
 		}
 	}
 	next := slug.Free(base, free)
-	if next == name {
+	// A T3 row's alias shape belongs to the T3 routes (t3_routes.go).
+	if next == name || t3client.IsAlias(next) {
 		return "", false
 	}
 	return next, true

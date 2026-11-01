@@ -34,3 +34,7 @@ replace terminal-lobby/spendstore => ../spendstore
 require terminal-lobby/clipstore v0.0.0
 
 replace terminal-lobby/clipstore => ../clipstore
+
+require terminal-lobby/t3client v0.0.0
+
+replace terminal-lobby/t3client => ../t3client

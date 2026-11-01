@@ -201,6 +201,15 @@ type Session struct {
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
+	// Backend is "t3" on a row that is a thread in the user's own T3 server
+	// rather than a tmux session (t3.go), and absent on every tmux row. A T3
+	// row's Name is a lobby alias; T3ThreadID is the thread it stands for,
+	// URL opens it in T3's web client on the user's host, and AppURL in the
+	// T3 app. All four are omitempty, so a tmux row's wire shape is unchanged.
+	Backend    string `json:"backend,omitempty"`
+	T3ThreadID string `json:"t3ThreadId,omitempty"`
+	URL        string `json:"url,omitempty"`
+	AppURL     string `json:"appUrl,omitempty"`
 }
 
 // Background counts what a session is waiting on, by kind, so the sidebar can

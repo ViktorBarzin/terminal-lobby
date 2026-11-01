@@ -76,6 +76,7 @@ type route struct {
 func serviceRoutes() []route {
 	return []route{
 		{"/sessions", http.MethodGet, "/sessions", handleSessions},
+		{"/sessions/t3", http.MethodPost, "/sessions/t3", handleT3Create},
 		{"/new-commands", http.MethodGet, "/new-commands", handleNewCommands},
 		{"/pi-models", http.MethodGet, "/pi-models", handlePiModels},
 		{"/sessions/prewarm", http.MethodPost, "/sessions/prewarm", handlePrewarm},

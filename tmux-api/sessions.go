@@ -39,6 +39,9 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	// aged with it would be the one number on screen that lags the box it
 	// describes.
 	setMachineHeader(w)
+	// Keeps this user's T3 threads polled while they are looking (t3.go).
+	// Before the cache lookup: a cached answer is still someone asking.
+	t3PollerInstance.touch(osUser)
 
 	if body, ok := sessionsCacheInstance.get(osUser); ok {
 		w.Write(body)
@@ -173,6 +176,10 @@ func buildSessionsBody(osUser string) []byte {
 			result = append(result, s)
 		}
 	}
+
+	// The user's T3 threads, from the poller's last good result (t3.go). Never
+	// a T3 call here, so a slow T3 cannot hold the list up.
+	result = append(result, t3RowsFor(osUser)...)
 
 	// Preserve the historic "tmux down and nothing to show" signal.
 	if own == nil && len(result) == 0 {

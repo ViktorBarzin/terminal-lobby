@@ -32,6 +32,9 @@ on:
       # terminal-lobby/slug — both are bundled, so a fix there must rebuild.
       - "skillscan/**"
       - "slug/**"
+      # tmux-api replaces terminal-lobby/t3client, which reads each user's T3
+      # threads into the session list.
+      - "t3client/**"
       - "telemetry/**"
       - "devvm/tmux-attach.sh"
       - "devvm/tmux-user-attach"

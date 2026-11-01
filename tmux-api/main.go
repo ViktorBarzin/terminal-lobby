@@ -410,6 +410,12 @@ func main() {
 		log.Printf("internal token init failed (shared-attach kick recording disabled): %v", err)
 	}
 
+	// Each user's T3 threads in the session list, and the routes that
+	// start, rename and archive them (t3.go, t3wire.go).
+	t3PollerInstance = newT3Poller(t3ClientAPI{newT3Client(os.Getenv)})
+	t3PollerInstance.changed = func(u string) { sessionsCacheInstance.invalidate(u) }
+	t3DefaultUsers = parseT3DefaultUsers(os.Getenv("TL_T3_DEFAULT_USERS"))
+
 	registerRoutes(http.DefaultServeMux)
 
 	// Background Web Push sender (Notifications Part 2): a no-op unless a full
@@ -519,6 +525,9 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/pi-models", handlePiModels)
 	mux.HandleFunc("/sessions/prewarm", handlePrewarm)
 	mux.HandleFunc("/sessions/claim", handleClaim)
+	// New in T3 (t3_routes.go). Like /sessions/claim it shadows a tmux
+	// session of that name for POST only.
+	mux.HandleFunc("/sessions/t3", handleT3Create)
 	mux.HandleFunc("/sessions/", handleSessionByName)
 	mux.HandleFunc("/whoami", handleWhoami)
 	mux.HandleFunc("/restore", handleRestore)
@@ -617,6 +626,10 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		"osUser":    osUser,
 		"admin":     id.Admin,
 		"multiUser": id.MultiUser,
+		// Whether this user has a T3 server, and where their New starts
+		// Claude when their own setting does not say (t3_routes.go).
+		"t3":            t3PollerInstance.has(osUser),
+		"claudeBackend": claudeBackendFor(osUser),
 	}
 	if osUser != real {
 		body["realUser"] = real

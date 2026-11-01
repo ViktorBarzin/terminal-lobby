@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/t3client"
 )
 
 // accessVia names what authorized an access decision, for the audit line and
@@ -44,6 +45,11 @@ var errBadAccessRef = errors.New("invalid owner, session or caller")
 func sessionAccess(owner, name, caller string) (sessionAccessResult, error) {
 	if !sessionNameRe.MatchString(owner) || !sessionNameRe.MatchString(name) || !sessionNameRe.MatchString(caller) {
 		return sessionAccessResult{}, errBadAccessRef
+	}
+	// A T3 row has no terminal, and an attach under its name would create
+	// a tmux session that shadows it.
+	if t3client.IsAlias(name) {
+		return sessionAccessResult{}, nil
 	}
 	if owner == caller {
 		return sessionAccessResult{Mode: shareModeRW, Via: accessSelf}, nil
