@@ -95,6 +95,18 @@ func TestMCPIntegration(t *testing.T) {
 	}
 	t.Log("T3 lists the thread as approval-required in plan mode")
 
+	// Moving the thread to another model afterwards is pinned too.
+	w = rig.post(testToken, sid, toolCall(5, "t3_thread_configure",
+		fmt.Sprintf(`{"threadId":%q,"modelSelection":{"instanceId":"claudeAgent","model":"claude-fable-5"}}`, thread)))
+	itResult(t, w)
+	w = rig.post(testToken, sid, toolCall(6, "t3_thread_configure", fmt.Sprintf(`{"threadId":%q}`, thread)))
+	conf := itResult(t, w)
+	csel, _ := conf["modelSelection"].(map[string]any)
+	if csel["model"] != "claude-opus-5-5" || !strings.Contains(fmt.Sprint(csel["options"]), "effort value:high") {
+		t.Fatalf("after configure T3 holds %v", conf)
+	}
+	t.Logf("configure kept the pin: %v", csel)
+
 	if w := rig.h.do(request{method: "DELETE", path: "/mcp", token: testToken, headers: map[string]string{"Mcp-Session-Id": sid}}); w.Code != 204 {
 		t.Fatalf("DELETE: %d", w.Code)
 	}

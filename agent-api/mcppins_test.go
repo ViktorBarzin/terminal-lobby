@@ -298,3 +298,56 @@ func TestResolveMCPPin(t *testing.T) {
 		})
 	}
 }
+
+// t3_thread_configure changes a thread's model after launch. Its schema
+// (T3 v0.1.5) takes modelSelection only, and without one it is a read, so a
+// pin rewrites a selection the caller sent and never adds one.
+func TestPinConfigureArgs(t *testing.T) {
+	pin := callerPin{Model: "claude-opus-5-5", Effort: "high", PermissionMode: "bypassPermissions"}
+	for _, c := range []struct {
+		name    string
+		pin     callerPin
+		in      string
+		want    string
+		changed []string
+	}{
+		{"a read stays a read", pin, `{"threadId":"t"}`, `{"threadId":"t"}`, nil},
+		{"a model change is pinned", pin,
+			`{"threadId":"t","modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5"}}`,
+			`{"threadId":"t","modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5-5","options":[{"id":"effort","value":"high"}]}}`,
+			[]string{"modelSelection"}},
+		{"an effort change is pinned", callerPin{Effort: "high"},
+			`{"modelSelection":{"instanceId":"claudeAgent","model":"m","options":[{"id":"effort","value":"max"}]}}`,
+			`{"modelSelection":{"instanceId":"claudeAgent","model":"m","options":[{"id":"effort","value":"high"}]}}`,
+			[]string{"modelSelection"}},
+		{"a permission pin adds no mode the tool does not take", callerPin{PermissionMode: "bypassPermissions"},
+			`{"modelSelection":{"instanceId":"claudeAgent","model":"m"}}`,
+			`{"modelSelection":{"instanceId":"claudeAgent","model":"m"}}`, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := args(t, c.in)
+			changed := pinConfigureArgs(a, c.pin)
+			got, _ := json.Marshal(a)
+			if !jsonEqual(t, got, []byte(c.want)) {
+				t.Errorf("args\n got %s\nwant %s", got, c.want)
+			}
+			if !reflect.DeepEqual(changed, c.changed) {
+				t.Errorf("changed %v, want %v", changed, c.changed)
+			}
+		})
+	}
+}
+
+func TestRewriteMCPBodyPinsConfigure(t *testing.T) {
+	pin := &callerPin{Model: "claude-opus-5-5"}
+	in := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"t3_thread_configure","arguments":{"threadId":"t","modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5"}}}}`
+	got, changed := rewriteMCPBody([]byte(in), pin, 300000)
+	want := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"t3_thread_configure","arguments":{"threadId":"t","modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5-5"}}}}`
+	if !jsonEqual(t, got, []byte(want)) || !reflect.DeepEqual(changed, []string{"modelSelection"}) {
+		t.Fatalf("got %s %v", got, changed)
+	}
+	read := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"t3_thread_configure","arguments":{"threadId":"t"}}}`
+	if got, changed := rewriteMCPBody([]byte(read), pin, 300000); string(got) != read || changed != nil {
+		t.Fatalf("a read was rewritten: %s %v", got, changed)
+	}
+}

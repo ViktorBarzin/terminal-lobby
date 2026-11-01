@@ -590,3 +590,25 @@ func TestMCPInheritPinRunsTheBoxDefault(t *testing.T) {
 		t.Fatalf("T3 got %v", sel)
 	}
 }
+
+// A pinned caller cannot move a thread off its pinned model after launch.
+func TestMCPPinsConfigure(t *testing.T) {
+	rig := newMCPRig(t)
+	rig.h.srv.Models = models{Default: "claude-opus-5-5", DefaultEffort: "high"}
+	rig.h.srv.CallerPins = map[string]callerPin{testActor: {Model: pinInherit, Effort: pinInherit, PermissionMode: "bypassPermissions"}}
+	sid := rig.initialize(testToken)
+	rig.post(testToken, sid, toolCall(1, "t3_thread_configure",
+		`{"threadId":"thread-a","modelSelection":{"instanceId":"claudeAgent","model":"claude-opus-5"}}`))
+	call := rig.wizard.toolCalls()[0]
+	sel, _ := call.Args["modelSelection"].(map[string]any)
+	if call.Name != "t3_thread_configure" || sel["model"] != "claude-opus-5-5" || fmt.Sprint(sel["options"]) != "[map[id:effort value:high]]" {
+		t.Fatalf("T3 got %s %v", call.Name, call.Args)
+	}
+	if _, has := call.Args["runtimeMode"]; has {
+		t.Fatalf("configure was sent a runtimeMode it does not take: %v", call.Args)
+	}
+	e := rig.mcpTrace()[2]
+	if e.Tool != "t3_thread_configure" || e.ThreadID != "thread-a" || strings.Join(e.Rewritten, ",") != "modelSelection" {
+		t.Fatalf("trace %+v", e)
+	}
+}

@@ -8,7 +8,9 @@ package main
 //   - A caller's pin (TL_CALLER_PINS, pins.go) applies to t3_thread_launch the
 //     way it applies to POST /v1/conversations: the pinned values replace what
 //     the caller sent, including nothing. T3 names the settings differently, so
-//     a pin is translated (launchModes below has the map).
+//     a pin is translated (launchModes below has the map). The model and
+//     effort pins also apply to t3_thread_configure, which can change a
+//     thread's model after launch.
 //   - A wait is capped at maxWaitSeconds, the same ceiling ?wait= has on /v1.
 //     T3 waits ten minutes by default and up to an hour, and a request held
 //     that long is cut by the edge (330 s) or this server's write deadline
@@ -102,6 +104,23 @@ func pinLaunchArgs(a map[string]any, pin callerPin) []string {
 		}
 	}
 	return changed
+}
+
+// pinConfigureArgs applies a caller's pin to t3_thread_configure arguments,
+// so a pinned thread cannot be moved to another model after launch. The tool
+// takes modelSelection and nothing else (T3 v0.1.5: "Permission modes stay"),
+// and without one it only reads, so only a selection the caller sent is
+// rewritten; the permission pin has nothing to act on here.
+func pinConfigureArgs(a map[string]any, pin callerPin) []string {
+	cur, present := a["modelSelection"]
+	if !present || cur == nil {
+		return nil
+	}
+	if sel, ok := pinSelection(cur, pin); ok && !sameJSON(cur, sel) {
+		a["modelSelection"] = sel
+		return []string{"modelSelection"}
+	}
+	return nil
 }
 
 // pinSelection is the modelSelection a pin asks for, built from the caller's
@@ -234,8 +253,13 @@ func rewriteMCPBody(body []byte, pin *callerPin, capMs int64) ([]byte, []string)
 	}
 
 	var changed []string
-	if name == "t3_thread_launch" && pin != nil {
-		changed = append(changed, pinLaunchArgs(a, *pin)...)
+	if pin != nil {
+		switch name {
+		case "t3_thread_launch":
+			changed = append(changed, pinLaunchArgs(a, *pin)...)
+		case "t3_thread_configure":
+			changed = append(changed, pinConfigureArgs(a, *pin)...)
+		}
 	}
 	changed = append(changed, capWaitArgs(name, a, capMs)...)
 	if len(changed) == 0 {
