@@ -48,36 +48,37 @@ func (c *Client) ListThreads(ctx context.Context, user string) ([]Thread, error)
 	var all []Thread
 	err := c.pages(ctx, user, "t3_thread_list", map[string]any{
 		"allProjects": true, "settled": false, "includeSubagents": false, "limit": 100,
-	}, func(raw json.RawMessage) (string, error) {
+	}, func(raw json.RawMessage) (*int, error) {
 		var page struct {
 			Threads    []Thread `json:"threads"`
-			NextCursor *string  `json:"nextCursor"`
+			NextCursor *int     `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(raw, &page); err != nil {
-			return "", fmt.Errorf("t3client: t3_thread_list: %w", err)
+			return nil, fmt.Errorf("t3client: t3_thread_list: %w", err)
 		}
 		for _, t := range page.Threads {
 			if t.RelationshipToParent != "subagent" {
 				all = append(all, t)
 			}
 		}
-		return deref(page.NextCursor), nil
+		return page.NextCursor, nil
 	})
 	return all, err
 }
 
-// pages calls a cursor-paged tool until nextCursor is empty. each decodes a
-// page and returns its nextCursor.
-func (c *Client) pages(ctx context.Context, user, tool string, args map[string]any, each func(json.RawMessage) (string, error)) error {
-	seen := map[string]bool{}
-	cursor := ""
+// pages calls a cursor-paged tool until nextCursor is null. T3 sends the
+// cursor as a non-negative integer offset. each decodes a page and returns
+// its nextCursor.
+func (c *Client) pages(ctx context.Context, user, tool string, args map[string]any, each func(json.RawMessage) (*int, error)) error {
+	seen := map[int]bool{}
+	var cursor *int
 	for i := 0; i < maxPages; i++ {
 		a := make(map[string]any, len(args)+1)
 		for k, v := range args {
 			a[k] = v
 		}
-		if cursor != "" {
-			a["cursor"] = cursor
+		if cursor != nil {
+			a["cursor"] = *cursor
 		}
 		raw, err := c.Call(ctx, user, tool, a)
 		if err != nil {
@@ -87,13 +88,13 @@ func (c *Client) pages(ctx context.Context, user, tool string, args map[string]a
 		if err != nil {
 			return err
 		}
-		if next == "" {
+		if next == nil {
 			return nil
 		}
-		if seen[next] {
-			return fmt.Errorf("t3client: %s returned cursor %q twice", tool, next)
+		if seen[*next] {
+			return fmt.Errorf("t3client: %s returned cursor %d twice", tool, *next)
 		}
-		seen[next] = true
+		seen[*next] = true
 		cursor = next
 	}
 	return fmt.Errorf("t3client: %s has more than %d pages", tool, maxPages)
@@ -310,16 +311,16 @@ type Project struct {
 // ListProjects returns every project.
 func (c *Client) ListProjects(ctx context.Context, user string) ([]Project, error) {
 	var all []Project
-	err := c.pages(ctx, user, "t3_project_list", map[string]any{"limit": 100}, func(raw json.RawMessage) (string, error) {
+	err := c.pages(ctx, user, "t3_project_list", map[string]any{"limit": 100}, func(raw json.RawMessage) (*int, error) {
 		var page struct {
 			Projects   []Project `json:"projects"`
-			NextCursor *string   `json:"nextCursor"`
+			NextCursor *int      `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(raw, &page); err != nil {
-			return "", fmt.Errorf("t3client: t3_project_list: %w", err)
+			return nil, fmt.Errorf("t3client: t3_project_list: %w", err)
 		}
 		all = append(all, page.Projects...)
-		return deref(page.NextCursor), nil
+		return page.NextCursor, nil
 	})
 	return all, err
 }
