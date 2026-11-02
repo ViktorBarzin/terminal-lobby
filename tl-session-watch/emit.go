@@ -39,6 +39,9 @@ func Line(f Finding) string {
 	if f.Error != "" {
 		fields = append(fields, "error="+logfmtValue(f.Error))
 	}
+	if f.Kind == KindServerDied {
+		fields = append(fields, "before="+strconv.Itoa(f.Before))
+	}
 	if f.Kind == KindRebooted {
 		fields = append(fields,
 			"before="+strconv.Itoa(f.Before),

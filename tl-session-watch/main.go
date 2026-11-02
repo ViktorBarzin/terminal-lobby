@@ -41,7 +41,7 @@ func main() {
 		addr = flag.String("health-addr", "127.0.0.1:7689",
 			"loopback address for /health, which reports stale once ticks stop")
 		tmuxPersist = flag.String("tmux-persist", "/usr/local/bin/tmux-persist",
-			"what restores a session the pane memory cap killed; empty disables the automatic resume")
+			"what restores a session the pane memory cap killed, or a user's sessions after their tmux server died; empty disables both")
 		resumeEvery = flag.Duration("resume-every", time.Hour,
 			"a session is resumed automatically at most once in this window; a second cap kill inside it is left dead")
 	)
@@ -82,6 +82,13 @@ func main() {
 		}
 	}
 
+	// Restoring after a whole server dies needs no kernel records, only the
+	// session diff, so it is on whenever tmux-persist is (serverrestore.go).
+	var servers *ServerRestorer
+	if *tmuxPersist != "" && !*once {
+		servers = NewServerRestorer(*resumeEvery)
+	}
+
 	tick := func() {
 		// Kill records first, so a session that vanished this tick can be
 		// matched to a kill written a moment before it went.
@@ -116,6 +123,23 @@ func main() {
 			// and no alert rule selects it.
 			log.Println(Line(f))
 		}
+		restoring := map[string]bool{}
+		if servers != nil {
+			users, notes := servers.Decide(findings, snaps, now)
+			for _, n := range notes {
+				log.Println(Line(n))
+			}
+			for _, u := range users {
+				restoring[u] = true
+				go func(u string) {
+					f := Finding{Kind: KindServerRestored, User: u}
+					if err := runServerRestore(*tmuxPersist, u, now); err != nil {
+						f.Kind, f.Error = KindServerRestoreFailed, err.Error()
+					}
+					log.Println(Line(f))
+				}(u)
+			}
+		}
 		if kills != nil {
 			acts, notes := resumer.Decide(findings, now)
 			for _, n := range notes {
@@ -124,6 +148,10 @@ func main() {
 			// In the background: a restore waits on tmux and the disk, and the
 			// heartbeat must not wait with it.
 			for _, a := range acts {
+				// The server restore brings this session back with the rest.
+				if restoring[a.User] {
+					continue
+				}
 				go func(a ResumeAction) {
 					f := Finding{Kind: KindSessionResumed, User: a.User, Session: a.Session}
 					if err := runResume(*tmuxPersist, a); err != nil {

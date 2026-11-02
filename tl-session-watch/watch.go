@@ -103,6 +103,15 @@ const (
 	// KindResumeFailed: the resume was attempted and tmux-persist refused or
 	// failed. Error says why.
 	KindResumeFailed Kind = "resume_failed"
+	// KindServerDied: a user's whole tmux server went down, taking Before
+	// sessions with it (serverrestore.go).
+	KindServerDied Kind = "server_died"
+	// KindServerRestored: tmux-persist restored that user's sessions after
+	// their server died. Logged, never alerted.
+	KindServerRestored Kind = "server_restored"
+	// KindServerRestoreFailed: the restore after a server death failed. Error
+	// says why.
+	KindServerRestoreFailed Kind = "server_restore_failed"
 )
 
 // Finding is one thing worth a journal line.
