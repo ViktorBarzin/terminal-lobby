@@ -40,5 +40,11 @@ export default defineConfig({
     // sends it through Vite's resolver, which reads "module" (the ESM build)
     // the way the production build already does.
     server: { deps: { inline: ["@panzoom/panzoom"] } },
+    // Node 25 and later define a global localStorage of their own, which is
+    // undefined unless --localstorage-file is given, and it hides jsdom's.
+    // Node 26 became LTS on 2026-10-28, CI's `lts/*` picked it up, and from
+    // then every release failed with hundreds of "Cannot read properties of
+    // undefined (reading 'clear')". Node 24 accepts the flag too.
+    poolOptions: { forks: { execArgv: ["--no-experimental-webstorage"] } },
   },
 });
