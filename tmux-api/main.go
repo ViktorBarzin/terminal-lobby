@@ -382,16 +382,6 @@ func killTmuxSession(osUser, name string) error {
 }
 
 func main() {
-	// CLI mode (not the HTTP service): `tmux-api sanitize-resurrect
-	// [archive...]` strips terminal query replies from tmux-resurrect's
-	// saved pane contents before they are replayed into a pty — wired as
-	// @resurrect-hook-pre-restore-all by devvm/setup-user-persistence.sh.
-	// It lives inside this binary so the per-user hook needs no extra
-	// deployed artifact (sanitize.go has the full rationale).
-	if len(os.Args) > 1 && os.Args[1] == "sanitize-resurrect" {
-		os.Exit(runSanitizeResurrect(os.Args[2:], os.Stderr))
-	}
-
 	// One-shot: seed the global project store from existing per-user layouts
 	// the first time the service starts after this feature ships. Non-fatal —
 	// the service must come up even if migration hits a snag.
