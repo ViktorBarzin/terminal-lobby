@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Provision tmux session persistence (tpm + tmux-resurrect + tmux-continuum)
-# for one OS user, so their sessions auto-save and auto-restore when a fresh
-# tmux server starts (e.g. after a reboot). Idempotent — safe to re-run.
+# Provision tmux session snapshots (tpm + tmux-resurrect + tmux-continuum)
+# for one OS user, so their sessions are saved every 5 minutes. Restoring is
+# tmux-persist's job, not continuum's (see the block below). Idempotent — safe
+# to re-run.
 #
 # Run as root:   sudo ./setup-user-persistence.sh <os-user>
 #
 # Companion to tmux-user-attach: that script keeps a server alive across
-# ttyd restarts; this one brings sessions back after the server *does* die
-# (reboot / kill). Mirrors wizard's setup so every lobby user is equal.
+# ttyd restarts. Mirrors wizard's setup so every lobby user is equal.
 set -euo pipefail
 
 user="${1:?usage: setup-user-persistence.sh <os-user>}"
@@ -47,7 +47,12 @@ set -g @resurrect-capture-pane-contents 'on'
 # otherwise the attached terminal re-answers captured queries and the
 # answers land in the fresh shell as junk input (tmux-api sanitize.go).
 set -g @resurrect-hook-pre-restore-all '/usr/local/bin/tmux-api sanitize-resurrect'
-set -g @continuum-restore 'on'
+# Saves only. tmux-persist does the restoring (at boot, from the lobby, and
+# from tl-session-watch when a server dies) and resumes each conversation by
+# id. continuum's restore fired on every fresh server and relaunched each pane
+# with a new, empty claude, which raced tmux-persist and on 2026-11-02 left
+# all 13 of emo's sessions with no context.
+set -g @continuum-restore 'off'
 set -g @continuum-save-interval '5'
 run '~/.tmux/plugins/tpm/tpm'
 $end"
@@ -65,4 +70,4 @@ printf '%s\n' "$block" >> "$tmp"
 install -o "$user" -g "$group" -m 0644 "$tmp" "$conf"
 rm -f "$tmp"
 
-echo "==> Done. $user: resurrect+continuum active on next fresh tmux server."
+echo "==> Done. $user: resurrect+continuum saving on next fresh tmux server."
