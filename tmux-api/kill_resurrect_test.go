@@ -39,14 +39,12 @@ func killTranscript(t *testing.T, name, wrapperScript string) (*httptest.Respons
 	withTempLayoutStore(t)
 	withTempAssignmentStore(t)
 	transcript := withSudoStub(t, wrapperScript)
-	// Branching on the verb because the kill asks tmux TWICE now: once to check
-	// the session is there at all, and once to kill it. The first of those is
-	// what keeps a DELETE for a name nobody has from paying for a root snapshot
-	// (session_mutate.go killSession).
-	withTmuxStub(t, `case "$1" in
-  has-session) printf 'tmux-has-session\n' >> '`+transcript+`' ;;
-  *) printf 'tmux-kill-session\n' >> '`+transcript+`' ;;
-esac`)
+	// Each tmux verb goes into the transcript under its own name. The kill asks
+	// tmux several times: has-session first, which keeps a DELETE for a name
+	// nobody has from paying for a root snapshot (session_mutate.go
+	// killSession), then the detach, the wait for clients to leave, and the
+	// kill itself (killTmuxSession).
+	withTmuxStub(t, `printf 'tmux-%s\n' "$1" >> '`+transcript+`'`)
 
 	rec := httptest.NewRecorder()
 	handleSessionByName(rec, sessionReq(http.MethodDelete, "/sessions/"+name, "", "alice"))
@@ -101,6 +99,8 @@ func TestKillSnapshotsBeforeItKills(t *testing.T) {
 		"tmux-has-session",
 		"-n", restoreWrapper, osSelf, "save",
 		"-n", restoreWrapper, osSelf, "list",
+		"tmux-detach-client",
+		"tmux-list-clients",
 		"tmux-kill-session",
 		"-n", persistForgetWrapper, osSelf, "qa-undo",
 		"",

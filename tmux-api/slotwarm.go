@@ -127,8 +127,8 @@ var runWarm = func(osUser string, w warmRequest) error {
 }
 
 var killSlot = func(osUser, name string) {
-	if out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput(); err != nil {
-		log.Printf("slots: dropping %s for %s: %v (%s)", name, osUser, err, strings.TrimSpace(string(out)))
+	if err := killTmuxSession(osUser, name); err != nil {
+		log.Printf("slots: dropping %s for %s: %v", name, osUser, err)
 	}
 }
 

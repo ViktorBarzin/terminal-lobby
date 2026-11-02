@@ -262,9 +262,8 @@ func reapSpeculativeSlots(now time.Time) {
 			if age < speculativeTTL {
 				continue
 			}
-			out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
-			if err != nil {
-				log.Printf("prewarm: reaping %s for %s: %v (%s)", name, osUser, err, strings.TrimSpace(string(out)))
+			if err := killTmuxSession(osUser, name); err != nil {
+				log.Printf("prewarm: reaping %s for %s: %v", name, osUser, err)
 				continue
 			}
 			log.Printf("prewarm: reaped %s for %s (unclaimed for %s)", name, osUser, age.Round(time.Second))

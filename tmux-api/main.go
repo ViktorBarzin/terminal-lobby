@@ -361,9 +361,24 @@ func exactPane(name string) string { return "=" + name + ":" }
 // pass one (newcommands.go's attach probe, dirs.go's dirlist wrapper) build
 // their own argv for a different binary and do not come through here.
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
+	return tmuxInjector().Command(osUser, args...)
+}
+
+func tmuxInjector() *sessionio.Injector {
 	in := sessionio.NewInjector(selfUser)
 	in.Binary, in.Sudo = tmuxBinary, sudoBinary
-	return in.Command(osUser, args...)
+	return in
+}
+
+// killTmuxSession is the only way this service destroys a tmux session. It
+// detaches the session's terminals and waits for them to leave before the
+// kill, because tmux 3.4 segfaults the whole server when a focus event arrives
+// from a client whose session was just destroyed. On 2026-11-01 that took all
+// 13 of emo's sessions. sessionio.Injector.KillSession has the details. The
+// error carries tmux's own message, so callers can still match "can't find
+// session".
+func killTmuxSession(osUser, name string) error {
+	return tmuxInjector().KillSession(osUser, name)
 }
 
 func main() {

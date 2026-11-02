@@ -909,15 +909,54 @@ func (in *Injector) NewSession(spec NewSessionSpec) error {
 
 // KillSession destroys a session and everything running in it.
 //
-// This is the only irreversible verb in the package, and since the T3 bridge
-// was removed (ADR-0029) it has no production caller: it was there so that
-// deleting a bridged thread could destroy the tmux session behind it. It stays
-// as the counterpart to NewSession on the same seam, covered by this package's
-// own tests. A process merely exiting is not a kill and must not reach here.
+// This is the only irreversible verb in the package. tmux-api routes every
+// kill through it (killTmuxSession), and agent-api uses it to end a
+// conversation. A process merely exiting is not a kill and must not reach here.
+//
+// Every terminal attached to the session is detached first, and the kill waits
+// for those terminals to leave. tmux 3.4 (and master as of 2026-11-02) handles a
+// focus event with `c->session->curw` and no NULL check (tty-keys.c), and
+// kill-session leaves each attached client with c->session == NULL until its
+// process exits. A browser terminal sends focus-in whenever its tab or iframe
+// gains focus, so one landing in that gap segfaults the server and takes every
+// other session of that user with it. That is what happened to emo's 13
+// sessions on 2026-11-01. A detached client still has its session until it is
+// gone, so the gap no longer exists once the clients have left.
+//
+// If a client has not left after killDetachWait, the kill goes ahead anyway.
+// A session the user asked to destroy should not survive because a terminal is
+// slow to exit.
 func (in *Injector) KillSession(osUser, session string) error {
+	in.detachClients(osUser, session)
 	out, err := in.Command(osUser, "kill-session", "-t", exactSession(session)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("kill-session %s: %v: %s", session, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// killDetachWait bounds how long KillSession waits for detached terminals to
+// leave. A detached tmux client exits within milliseconds; this only matters
+// when one is wedged.
+var killDetachWait = 2 * time.Second
+
+// detachClients detaches every terminal attached to session and waits until
+// none is left, or killDetachWait passes. Errors are ignored: a session that is
+// already gone has no clients, and kill-session reports that case itself.
+func (in *Injector) detachClients(osUser, session string) {
+	target := exactSession(session)
+	if err := in.Command(osUser, "detach-client", "-s", target).Run(); err != nil {
+		return
+	}
+	deadline := time.Now().Add(killDetachWait)
+	for {
+		out, err := in.Command(osUser, "list-clients", "-t", target, "-F", "#{client_name}").Output()
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

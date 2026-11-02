@@ -168,14 +168,13 @@ func killSession(w http.ResponseWriter, osUser, name, guest string) {
 	// (links_transcript.go).
 	noteLinkTranscriptsBeforeKill(osUser)
 	title := titleStoreInstance.get(osUser, name)
-	out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
-	if err != nil {
-		msg := string(out)
+	if err := killTmuxSession(osUser, name); err != nil {
+		msg := err.Error()
 		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") {
 			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
-		log.Printf("kill-session %s as %s failed: %v: %s", name, osUser, err, msg)
+		log.Printf("kill-session %s as %s failed: %v", name, osUser, err)
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
 		return
 	}
