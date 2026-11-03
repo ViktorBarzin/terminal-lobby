@@ -135,6 +135,12 @@ export interface Session {
    *  Watchers deliberately do not move it. Absent from a server that predates
    *  the field, in which case no time is shown rather than a misleading one. */
   lastDrive?: number;
+  /** When the person last sent the session's Claude a message (tmux-api
+   *  `lastPrompt`, unix seconds). What the card's time and the "active" order
+   *  read where it is there; a finished turn and a resume do not move it.
+   *  Absent for a shell and for a Claude nobody has prompted since the field
+   *  existed, which fall back to `lastDrive`. */
+  lastPrompt?: number;
   created: number;
   /** "" when no live Claude. */
   state?: ClaudeState | "";

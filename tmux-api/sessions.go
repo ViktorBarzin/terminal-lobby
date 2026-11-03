@@ -327,8 +327,11 @@ func parseSessions(out []byte) []Session {
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.
-			Summary:   parts[summaryColumn],
-			PaneTitle: parts[listFields-1],
+			Summary: parts[summaryColumn],
+			// Lenient for the reason @last_activity is: EMPTY until the
+			// person's next prompt or session-events' next rebuild.
+			LastPrompt: parseEpoch(parts[lastPromptColumn]),
+			PaneTitle:  parts[listFields-1],
 		})
 		// Read off the two fields it depends on once the record holds both,
 		// so the rule stays callerOf's alone (origin.go).
@@ -397,4 +400,13 @@ func dropStalePiFields(sessions []Session) {
 		}
 		sessions[i].PiModel, sessions[i].PiThinking, sessions[i].PiLevels = "", "", ""
 	}
+}
+
+// parseEpoch reads a unix-second option, 0 for an unset or malformed one.
+func parseEpoch(v string) int64 {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }

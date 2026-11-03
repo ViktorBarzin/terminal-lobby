@@ -101,6 +101,14 @@ const (
 	// "last used" time and suspends on it, in place of the read-write attach
 	// that made opening a session count as using it.
 	OptionLastActivity = "@last_activity"
+	// OptionLastPrompt is the unix second the person last sent the session's
+	// Claude a message: a prompt typed in the terminal or sent from the lobby,
+	// a slash command included, and nothing the harness sent itself. Written
+	// by session-events on the prompt's row, and after a restart from the
+	// newest prompt in the rebuilt log. The lobby's sidebar shows it as the
+	// session's time. Unlike OptionLastActivity, a finished turn and a resume
+	// do not move it, so it is never what the suspend sweep reads.
+	OptionLastPrompt = "@last_prompt"
 	// OptionOrigin says what created the session: "user" when a person asked
 	// for it, a Caller's name when agent-api made it for that Caller (see
 	// CallerOf), absent when nothing said. terminal-lobby's tmux-api reads it

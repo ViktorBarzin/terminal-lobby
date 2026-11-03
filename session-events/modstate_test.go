@@ -43,7 +43,7 @@ func writeKeys(w stampWrite) string {
 func TestStampPromptRunsAndTurnEndIsDone(t *testing.T) {
 	var s stampState
 	w := s.step(promptRow(), stampNow)
-	if got := writeKeys(w); got != "@claude_state=running @last_activity=1790900000" {
+	if got := writeKeys(w); got != "@claude_state=running @last_activity=1790900000 @last_prompt=1790900000" {
 		t.Fatalf("prompt writes %q", got)
 	}
 	w = s.step(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent, Answer: "all done;"}, stampNow)
@@ -400,5 +400,37 @@ func TestStampFlushInFullSetsAndUnsetsEveryOption(t *testing.T) {
 	}
 	if got := writeKeys(s.flush(true)); got != "-@claude_ask -@claude_bg -@claude_tool @claude_state=done" {
 		t.Fatalf("full = %q", got)
+	}
+}
+
+// The sidebar's time is the person's last message, so only their prompts move
+// @last_prompt: typed, sent from the lobby, or a slash command picked there.
+// A background task's notification opens a turn too, and a finished turn is
+// activity, but neither is something the person wrote.
+func TestStampLastPromptIsOnlyThePersons(t *testing.T) {
+	row := func(origin string) sessionio.ModEvent {
+		ev := promptRow()
+		if origin != "" {
+			ev.Origin = json.RawMessage(origin)
+		}
+		return ev
+	}
+	for origin, want := range map[string]string{
+		"": "1790900000",
+		`{"kind":"plugin","name":"terminal-lobby","asUser":true}`: "1790900000",
+		`{"kind":"plugin","name":"terminal-lobby"}`:               "1790900000",
+		`{"kind":"task-notification","producer":"session-task"}`:  "",
+	} {
+		var s stampState
+		w := s.step(row(origin), stampNow)
+		if got := w.set[sessionio.OptionLastPrompt]; got != want {
+			t.Errorf("origin %q: @last_prompt = %q, want %q", origin, got, want)
+		}
+	}
+	var s stampState
+	s.step(promptRow(), stampNow)
+	w := s.step(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent, Answer: "done"}, stampNow.Add(time.Minute))
+	if _, ok := w.set[sessionio.OptionLastPrompt]; ok {
+		t.Fatalf("a finished turn moved @last_prompt: %v", w.set)
 	}
 }

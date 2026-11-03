@@ -293,9 +293,21 @@ is replaced, never claimed, because it would hand out the old mod.
 _Avoid_: pool session, warm session, spare session, shell (a plain shell is a
 different kind of session)
 
+**Last message**:
+When the person last sent a Session's Claude a message: a prompt typed in the
+terminal or sent from the lobby, a slash command included, and nothing the
+harness sent itself, such as a background task's notification. The relative time
+the sidebar shows and the "active" order sorts by, since 2026-11-03. Kept in
+`@last_prompt`, written by session-events on the prompt and again from the
+rebuilt log after a restart. A finished turn and a resume do not move it. A
+Session without one, a shell or a Claude nobody has written to since, shows its
+**Last driven** time instead.
+_Avoid_: last active
+
 **Last driven**:
-When a Session was last used. The relative time the sidebar shows, and the answer
-to "has anyone touched this today". For a Session whose Claude reports its own
+When a Session was last used, and the answer to "has anyone touched this today".
+What the suspend sweep times; the sidebar showed it until 2026-11-03 and still
+does for a Session with no **Last message**. For a Session whose Claude reports its own
 activity it is the later of the last prompt a person sent and the last turn that
 finished, stamped by the Claude hook in `@last_activity`; opening or reading the
 Session does not move it. Before 2026-09-28 it was the newest moment a

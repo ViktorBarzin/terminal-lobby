@@ -49,6 +49,7 @@ import { guestKill, guestRetitle, removeShare } from "../lib/shares-api";
 import { toasts } from "../store/toast";
 import { openShare } from "../store/share-dialog";
 import { openInApp, openInBrowser, openT3 } from "../lib/t3-open";
+import { lastActiveAt } from "../logic/order.logic";
 import { T3Glyph } from "./Icons";
 
 /**
@@ -463,7 +464,10 @@ export const SessionCard: Component<{
     // opened the session to WATCH it. No stamp yet — a server predating the
     // field — shows nothing, which beats showing a number that means something
     // else.
-    return s().lastDrive ? relativeTime(s().lastDrive!) : "";
+    // The person's last message where there is one (2026-11-03): a finished
+    // turn and a resume move lastDrive, so it read as a time nobody wrote.
+    const at = lastActiveAt(s());
+    return s().lastPrompt || s().lastDrive ? relativeTime(at) : "";
   };
 
   // ---- activation ----

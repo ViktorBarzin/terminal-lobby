@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -152,5 +153,28 @@ func TestCompactionEdgeCatchesUpFromTheTranscript(t *testing.T) {
 	}
 	if !marker || !receipt {
 		t.Errorf("compaction marker %v, receipt %v; want both", marker, receipt)
+	}
+}
+
+// A restart leaves @last_prompt as the last process wrote it, or unset on a
+// session that predates it. The rebuilt log knows when the person last wrote,
+// so the rebuild stamps it (2026-11-03).
+func TestARebuildStampsTheLastPrompt(t *testing.T) {
+	defer func(w time.Duration) { replayWait = w }(replayWait)
+	replayWait = 200 * time.Millisecond
+	rg, opts := writableRegistry(t, nil)
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", CWD: "/w", Transcript: compactedTranscript(t, rg), Model: "claude-opus-5-5"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply(historyAfterCompaction("a2"))
+	want := strconv.FormatInt(time.Date(2026, 10, 5, 10, 0, 3, 0, time.UTC).Unix(), 10)
+	if got, _ := opts.Option("wizard", "demo", sessionio.OptionLastPrompt); got != want {
+		t.Fatalf("@last_prompt = %q, want %s (the second prompt)", got, want)
+	}
+	// A log rebuilt from the mod's untimed history leaves it alone.
+	rg2, opts2 := writableRegistry(t, map[string]string{sessionio.OptionLastPrompt: "1790000000"})
+	rg2.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", CWD: "/w", Model: "claude-opus-5-5"})
+	rg2.mods.conn("wizard", "demo").apply(historyAfterCompactionRunning("", true))
+	if got, _ := opts2.Option("wizard", "demo", sessionio.OptionLastPrompt); got != "1790000000" {
+		t.Fatalf("an untimed rebuild moved @last_prompt to %q", got)
 	}
 }

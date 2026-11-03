@@ -139,6 +139,18 @@ describe("sorting by last active", () => {
     expect(names(sortSessions(list, "active"))).toEqual(["no-stamp", "driven"]);
   });
 
+  // "Active" orders by what the card prints, which is the person's last
+  // message where there is one (2026-11-03).
+  it("orders by the person's last message where there is one", () => {
+    expect(lastActiveAt(sess("x", { created: 400, lastDrive: 900, lastPrompt: 600 }))).toBe(600);
+    const list = [
+      sess("resumed", { created: 100, lastDrive: 900, lastPrompt: 200 }),
+      sess("wrote", { created: 100, lastDrive: 500, lastPrompt: 500 }),
+      sess("shell", { created: 100, lastDrive: 300 }),
+    ];
+    expect(names(sortSessions(list, "active"))).toEqual(["wrote", "shell", "resumed"]);
+  });
+
   it("breaks a tie by creation time, then by name", () => {
     const list = [
       sess("b", { created: 100, lastDrive: 500 }),

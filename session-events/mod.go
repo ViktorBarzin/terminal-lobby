@@ -832,6 +832,15 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 				fs.Feed(sessionio.ModEvent{Type: sessionio.ModModelEvent, T: ev.T, Model: model})
 			}
 			c.mu.Lock()
+			// The rebuilt log knows when the person last wrote, which a
+			// session that predates @last_prompt, or one whose options were
+			// lost with its tmux server, has nowhere else to get. An untimed
+			// rebuild says nothing and leaves the stamp as it is.
+			if at := fs.LastPromptAt() / 1000; at > c.st.prompt {
+				var w stampWrite
+				c.st.stampPrompt(&w, at)
+				merged = mergeWrites(merged, w)
+			}
 			rebuilt = c.historyOwed
 			c.historyOwed, c.historyChunks = false, 0
 			// A 0.3.0 mod's snapshot ends in its level, which may come in

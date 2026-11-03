@@ -207,6 +207,15 @@ describe("session card — the last-active time obeys the pref", () => {
 
   // A call site that forgets to pass it hides the time. That is the safe
   // direction for a setting whose default is off.
+  // The time is when the person last wrote to the session's Claude. A finished
+  // turn or a resume moves lastDrive and not this (2026-11-03).
+  it("shows when the person last wrote, over the last-used time", () => {
+    const wrote = Math.floor(Date.now() / 1000) - 3 * 3600;
+    const { container, unmount } = card(sess({ lastPrompt: wrote }), true);
+    expect(timeText(container)).toBe("3h ago");
+    unmount();
+  });
+
   it("hides it when no pref is supplied at all", () => {
     const { container, unmount } = card(sess(), undefined);
     expect(timeText(container)).toBe("");

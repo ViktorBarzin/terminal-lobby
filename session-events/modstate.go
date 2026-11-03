@@ -23,6 +23,8 @@ import (
 //	@claude_reply    "<epoch> <text>" of the reply that ended the last turn
 //	@claude_notice   "<epoch> <text>" of the newest PushNotification
 //	@last_activity   epoch seconds of the last prompt or finished turn
+//	@last_prompt     epoch seconds of the person's last prompt, for the sidebar
+//	                 (new with the mod's origins: the hooks wrote no such thing)
 //	@tl_summary      the mod's one-line summary, for tmux-api's auto-title
 //	                 (new with the mod: the hooks had nothing to write here)
 //
@@ -35,6 +37,7 @@ const (
 	optReply    = "@claude_reply"
 	optNotice   = "@claude_notice"
 	optActivity = "@last_activity"
+	optPrompt   = sessionio.OptionLastPrompt
 )
 
 // replyCap bounds the reply and notice texts, as the hook script did.
@@ -85,6 +88,8 @@ type stampState struct {
 	reply, notice stampNote
 	// activity is the epoch second @last_activity was last stamped with.
 	activity int64
+	// prompt is the epoch second @last_prompt was last stamped with.
+	prompt int64
 }
 
 // stampNote is a reply or notice text and its time in ms.
@@ -200,6 +205,9 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 			s.turnOpen, s.tool = true, ""
 			s.state = sessionio.StateRunning
 			s.stampActivity(&w, now.Unix())
+			if sessionio.PersonOrigin(ev.Origin) {
+				s.stampPrompt(&w, now.Unix())
+			}
 			break
 		}
 		for _, bl := range blocksOf(ev.Message.Content) {
@@ -353,6 +361,12 @@ func (s *stampState) apply(ev sessionio.ModEvent, now time.Time) stampWrite {
 func (s *stampState) stampActivity(w *stampWrite, epoch int64) {
 	s.activity = epoch
 	w.put(optActivity, strconv.FormatInt(epoch, 10))
+}
+
+// stampPrompt puts @last_prompt.
+func (s *stampState) stampPrompt(w *stampWrite, epoch int64) {
+	s.prompt = epoch
+	w.put(optPrompt, strconv.FormatInt(epoch, 10))
 }
 
 // open is the dialogs waiting on a person that have a body to show, oldest

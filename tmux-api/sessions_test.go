@@ -125,8 +125,9 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 
 // spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
 // activityColumn, the pane's working directory at cwdColumn, @claude_notice at
-// noticeColumn, @claude_reply at replyColumn, @tl_browser at browserColumn and
-// @tl_summary at summaryColumn, the last six columns before pane_title,
+// noticeColumn, @claude_reply at replyColumn, @tl_browser at browserColumn,
+// @tl_summary at summaryColumn and @last_prompt at lastPromptColumn, the last
+// seven columns before pane_title,
 // spliced for the reason rowCreated gives. EMPTY is what every session reports
 // until its Claude next sees a prompt or finishes a turn, the directory is
 // left empty, as a dead pane reports it, and so are the notice, the reply, the
@@ -135,9 +136,9 @@ func spliceActivity(cols []string, activity string) string {
 	if len(cols) < activityColumn {
 		return strings.Join(cols, listSep)
 	}
-	out := make([]string, 0, len(cols)+6)
+	out := make([]string, 0, len(cols)+7)
 	out = append(out, cols[:activityColumn]...)
-	out = append(out, activity, "", "", "", "", "")
+	out = append(out, activity, "", "", "", "", "", "")
 	out = append(out, cols[activityColumn:]...)
 	return strings.Join(out, listSep)
 }
@@ -869,7 +870,41 @@ func TestSummaryColumnSitsBeforePaneTitle(t *testing.T) {
 	if cols[summaryColumn] != "#{"+sessionio.OptionSummary+"}" {
 		t.Fatalf("column %d is %q, want #{%s}", summaryColumn, cols[summaryColumn], sessionio.OptionSummary)
 	}
-	if summaryColumn != listFields-2 {
-		t.Fatalf("summaryColumn %d, want the last column before pane_title (%d)", summaryColumn, listFields-2)
+	if summaryColumn != lastPromptColumn-1 {
+		t.Fatalf("summaryColumn %d, want the column before @last_prompt (%d)", summaryColumn, lastPromptColumn-1)
+	}
+}
+
+func TestLastPromptColumnSitsBeforePaneTitle(t *testing.T) {
+	cols := strings.Split(tmuxListFmt, listSep)
+	if cols[lastPromptColumn] != "#{"+sessionio.OptionLastPrompt+"}" {
+		t.Fatalf("column %d is %q, want #{%s}", lastPromptColumn, cols[lastPromptColumn], sessionio.OptionLastPrompt)
+	}
+	if lastPromptColumn != listFields-2 {
+		t.Fatalf("lastPromptColumn %d, want the last column before pane_title (%d)", lastPromptColumn, listFields-2)
+	}
+}
+
+// The sidebar shows when the person last wrote (sessionio.OptionLastPrompt),
+// on the wire as lastPrompt, and absent where nobody has: a shell, or a Claude
+// not prompted since the option existed.
+func TestParseSessionsReadsTheLastPrompt(t *testing.T) {
+	line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "done", "4242", "claude", "", "t")
+	cols := strings.Split(line, listSep)
+	cols[lastPromptColumn] = "1800000040"
+	got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows, want 1", len(got))
+	}
+	if got[0].LastPrompt != 1800000040 || got[0].PaneTitle != "t" {
+		t.Fatalf("LastPrompt %d, PaneTitle %q", got[0].LastPrompt, got[0].PaneTitle)
+	}
+	b, _ := json.Marshal(got[0])
+	if !strings.Contains(string(b), `"lastPrompt":1800000040`) {
+		t.Fatalf("lastPrompt is not on the wire: %s", b)
+	}
+	b, _ = json.Marshal(Session{Name: "x"})
+	if strings.Contains(string(b), "lastPrompt") {
+		t.Fatalf("an unset lastPrompt reached the wire: %s", b)
 	}
 }

@@ -64,7 +64,10 @@ export const SESSION_ORDER_TEXT: Record<
 };
 
 /**
- * When a human last had hands on this session.
+ * When a human last had hands on this session: when they last wrote to its
+ * Claude (`lastPrompt`) where there is a record of it, which is also what the
+ * card prints (2026-11-03). A finished turn or a resume moves `lastDrive` and
+ * not that, so a session Claude was woken in reads as its last message.
  *
  * `lastDrive`, never `lastActivity`. tmux bumps `#{session_activity}` on ANY
  * attach, a read-only one included (tmux-api `lastdrive.go`, measured
@@ -79,7 +82,7 @@ export const SESSION_ORDER_TEXT: Record<
  * sends no stamp at all, and without this every one of its sessions would tie.
  */
 export function lastActiveAt(s: Session): number {
-  return s.lastDrive || s.created;
+  return s.lastPrompt || s.lastDrive || s.created;
 }
 
 /** Newest first, with a deterministic tail so the list cannot jitter. */

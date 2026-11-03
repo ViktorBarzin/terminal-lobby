@@ -33,6 +33,12 @@ type Session struct {
 	// session's Claude has done either. Folded into LastDrive before anything
 	// reads the list, so it is not on the wire itself.
 	ActivityAt int64 `json:"-"`
+	// LastPrompt is @last_prompt (sessionio.OptionLastPrompt): when the person
+	// last sent the session's Claude a message, which is what the sidebar
+	// shows and orders "active" by. Absent for a session nobody has prompted
+	// since the option existed, and for a shell; the sidebar falls back to
+	// LastDrive then. The suspend sweep never reads it.
+	LastPrompt int64 `json:"lastPrompt,omitempty"`
 	// AgentOwner and AgentLastTurn are agent-api's @agent_owner and
 	// @agent_last_turn: the Caller that opened this conversation over HTTP and
 	// the unix second agent-api last ran a turn in it. Only the suspend sweep

@@ -616,6 +616,29 @@ func fromLobby(origin json.RawMessage) bool {
 	return json.Unmarshal(origin, &o) == nil && o.Kind == "plugin" && o.Name == lobbyPlugin
 }
 
+// PersonOrigin reports whether a prompt row's origin is a person's: none, for
+// one typed in the terminal, or the lobby's mod, which submits what a person
+// sent from a browser (asUser) and the slash commands they pick there. A
+// background task's notification and anything another plugin submits are not.
+func PersonOrigin(origin json.RawMessage) bool {
+	return len(origin) == 0 || fromLobby(origin)
+}
+
+// LastPromptAt is the time, in ms, of the newest main-thread prompt in the log
+// that carries one, or 0. A log rebuilt from the mod's history has no times
+// and says nothing.
+func (f *FileSource) LastPromptAt() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.logbuf) - 1; i >= 0; i-- {
+		e := f.logbuf[i]
+		if e.Kind == KindUser && !e.Sidechain && !e.Steer && e.At > 0 {
+			return e.At
+		}
+	}
+	return 0
+}
+
 // QueueSent records a prompt the lobby has just handed the mod (command id)
 // as waiting, when a turn is running. Claude holds such a prompt until the
 // session is idle and the mod reports it only then (Claude Code 2.1.289,
