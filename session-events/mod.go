@@ -749,10 +749,13 @@ var replaySlots = make(chan struct{}, 3)
 
 // rebuildLog fills a log that has none from an owed history's final chunk:
 // the transcript up to the row the mod named, which holds the whole
-// conversation, or the mod's own history when the mod named none (before
-// 0.4.0) or the file never reached it (ADR-0036).
+// conversation. A mod names none when its Claude has stored no row since it
+// started (resumed and not prompted since, or a mod before 0.4.0), and then an
+// idle session's whole file is replayed, since the mod's own history carries
+// no timestamps. That history is the fallback for a running turn with no row
+// named, and for a file that never reached the row (ADR-0036).
 func rebuildLog(name string, fs *sessionio.FileSource, final sessionio.ModEvent, msgs []sessionio.ModHistoryMessage) {
-	if final.Last != "" {
+	if final.Last != "" || !final.Running {
 		replaySlots <- struct{}{}
 		err := fs.ReplayTranscript(final.Last, final.Running, replayWait)
 		<-replaySlots

@@ -265,3 +265,56 @@ func TestACommandRecordAfterItsOwnPromptIsNotASecondPrompt(t *testing.T) {
 		t.Fatalf("prompts = %s, want first,/compact,/compact (the lobby's one once, the typed one once)", got)
 	}
 }
+
+// A mod names no row when its Claude has stored none since it started: one
+// resumed after a tmux server died and not prompted since, or a mod before
+// 0.4.0. The plain history has no timestamps, so every rebuild on a
+// session-events restart left such a session's messages without a time. An
+// idle Claude has written all of its transcript, so the whole file is the
+// conversation.
+func TestModReplayWithoutABarrierReadsTheWholeFileWhenIdle(t *testing.T) {
+	p := writeModTranscript(t,
+		tPrompt("u1", "first"), tReply("a1", "m1", "one", "end_turn"),
+		tCompact("c1"),
+		tPrompt("u2", "second"), tReply("a2", "m2", "two", "end_turn"),
+	)
+	fs := NewModSource("s", p, nil)
+	if err := fs.ReplayTranscript("", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := fs.Replay(0)
+	if g := strings.Join(prompts(got), ","); g != "first,second" {
+		t.Fatalf("prompts = %s", g)
+	}
+	for _, e := range got {
+		if e.Kind == KindUser && e.At == 0 {
+			t.Errorf("prompt %q has no time", e.Body)
+		}
+	}
+	if fs.TurnOpen() {
+		t.Error("an idle session's last turn is open")
+	}
+	// Rows from here on come live, and a live copy of a replayed one is dropped.
+	fs.Feed(ModEvent{Type: ModRowEvent, UUID: "a2", Door: "response", Message: &ModMessage{
+		Type: "assistant", Role: "assistant", Content: json.RawMessage(`[{"type":"text","text":"two"}]`)}})
+	if n := countKind(fs.Replay(0), KindText); n != 2 {
+		t.Fatalf("%d text rows after a live copy of a replayed row, want 2", n)
+	}
+}
+
+// Without a barrier there is nothing to say where a running turn's file has
+// got to, so a running session keeps the mod's history. So does a file with
+// no conversation in it, which is what a fresh /clear leaves.
+func TestModReplayWithoutABarrierFallsBack(t *testing.T) {
+	running := NewModSource("s", writeModTranscript(t, tPrompt("u1", "first")), nil)
+	if err := running.ReplayTranscript("", true, 0); err == nil {
+		t.Fatal("replayed a running turn with no barrier")
+	}
+	if n := len(running.Replay(0)); n != 0 {
+		t.Fatalf("a refused replay left %d events", n)
+	}
+	empty := NewModSource("s", writeModTranscript(t, tEnqueue("x")), nil)
+	if err := empty.ReplayTranscript("", false, 0); err == nil {
+		t.Fatal("replayed a file holding no conversation")
+	}
+}

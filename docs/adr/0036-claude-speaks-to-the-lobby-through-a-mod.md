@@ -55,8 +55,15 @@ and session-events replays the transcript through the Normalizer up to exactly
 that row (`FileSource.ReplayTranscript`). Rows stored after it arrive live, and
 a live copy of a replayed row is dropped by uuid. Claude writes the transcript
 in batches every 100 ms (2.1.289), so the replay waits up to 2 s for that row
-to reach the file. When it never does, the read fails, or the mod is older and
-names no row, the log is rebuilt from the mod's history as before. Up to three
+to reach the file. A mod names no row when its Claude has stored none since it
+started: one resumed and not prompted since, or a mod older than 0.4.0. Since
+2026-11-03 an idle session in that state is replayed to the end of its file,
+which an idle Claude has finished writing. Until then it fell back to the mod's
+history, and because that history has no timestamps, every session-events
+restart left those sessions' messages without a send time in the Text view.
+When the row never reaches the file, the read fails, the file holds no
+conversation, or a turn is running with no row named, the log is rebuilt from
+the mod's history as before. Up to three
 replays run at once; the largest transcript on the box (39 MB) took about 1.5 s
 of CPU and kept 6 to 13 MB of log. The log stays empty until the rebuild, so a
 reader attached early holds nothing that would make the rebuild look like a

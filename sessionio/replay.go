@@ -37,6 +37,14 @@ var (
 // to reach the file. running says whether the mod reports a main turn in
 // flight; when it does not, the last turn is closed.
 //
+// With no `last`, an idle session is replayed to the end of its file. A mod
+// names no row when its Claude has stored none since it started (resumed and
+// not prompted since, or a mod before 0.4.0), and the plain history it falls
+// back to has no timestamps, so a restart left every such session's messages
+// without a time (measured 2026-11-03). An idle Claude has written all of its
+// transcript, so the file is the whole conversation. A running one has not,
+// and without a barrier nothing says how far its file has got.
+//
 // On error the log is untouched, so the caller can fall back to the mod's own
 // history without drawing anything twice.
 func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Duration) error {
@@ -47,7 +55,13 @@ func (f *FileSource) ReplayTranscript(last string, running bool, wait time.Durat
 	if path == "" {
 		return errNoTranscript
 	}
-	recs, err := f.readToBarrier(path, last, wait)
+	var recs []Record
+	var err error
+	if last == "" && !running {
+		recs, err = f.readWhole(path)
+	} else {
+		recs, err = f.readToBarrier(path, last, wait)
+	}
 	if err != nil {
 		return err
 	}
@@ -149,6 +163,32 @@ func (f *FileSource) readToBarrier(path, last string, wait time.Duration) ([]Rec
 		}
 		time.Sleep(replayPoll)
 	}
+}
+
+// readWhole reads every record in the transcript, for an idle session whose
+// mod named no barrier. A file with no main-thread prompt or reply in it (a
+// /clear's fresh one) is not a conversation, and the caller falls back.
+func (f *FileSource) readWhole(path string) ([]Record, error) {
+	lines, _, err := f.reader.ReadFrom(path, 0)
+	if err != nil {
+		return nil, err
+	}
+	var recs []Record
+	talk := false
+	for _, ln := range lines {
+		rec, ok := DecodeRecord([]byte(ln))
+		if !ok {
+			continue
+		}
+		recs = append(recs, rec)
+		if !rec.IsSidechain && (rec.Type == RecordUser || rec.Type == RecordAssistant) {
+			talk = true
+		}
+	}
+	if !talk {
+		return nil, errNoBarrier
+	}
+	return recs, nil
 }
 
 // commandRowsAfter is the run of a local command's rows (its caveat, its

@@ -33,10 +33,14 @@ func compactedTranscript(t *testing.T, rg *registry) string {
 
 // What the mod's history holds for that transcript: from the summary on.
 func historyAfterCompaction(last string) []sessionio.ModEvent {
+	return historyAfterCompactionRunning(last, false)
+}
+
+func historyAfterCompactionRunning(last string, running bool) []sessionio.ModEvent {
 	return []sessionio.ModEvent{
 		{Type: sessionio.ModHistoryEvent, More: true, Messages: []sessionio.ModHistoryMessage{
 			{Role: "user", Text: "This session is being continued from a previous conversation."}}},
-		{Type: sessionio.ModHistoryEvent, Last: last, Messages: []sessionio.ModHistoryMessage{
+		{Type: sessionio.ModHistoryEvent, Last: last, Running: running, Messages: []sessionio.ModHistoryMessage{
 			{Role: "user", Text: "second"}, {Role: "assistant", Text: "two"}}},
 	}
 }
@@ -56,12 +60,16 @@ func TestHistoryRebuild(t *testing.T) {
 	replayWait = 200 * time.Millisecond
 	for _, tc := range []struct {
 		name, last string
+		running    bool
 		want       string
 	}{
-		{"a barrier the transcript holds replays the whole conversation", "a2", "first|second"},
-		{"no barrier, from a mod before 0.4.0, keeps the mod's history", "",
+		{"a barrier the transcript holds replays the whole conversation", "a2", false, "first|second"},
+		// A Claude resumed and not prompted since names no row, and the mod's
+		// history has no timestamps (2026-11-03).
+		{"no barrier from an idle Claude replays the whole file", "", false, "first|second"},
+		{"no barrier while a turn runs keeps the mod's history", "", true,
 			"This session is being continued from a previous conversation.|second"},
-		{"a barrier the file never reaches falls back to the mod's history", "nope",
+		{"a barrier the file never reaches falls back to the mod's history", "nope", false,
 			"This session is being continued from a previous conversation.|second"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,12 +80,12 @@ func TestHistoryRebuild(t *testing.T) {
 			if n := len(fs.Replay(0)); n != 0 {
 				t.Fatalf("%d events before the history; a reader holding them would be handed the rebuild as a gap", n)
 			}
-			c.apply(historyAfterCompaction(tc.last))
+			c.apply(historyAfterCompactionRunning(tc.last, tc.running))
 			if got := userBodies(fs); got != tc.want {
 				t.Fatalf("prompts = %q, want %q", got, tc.want)
 			}
 			// The mod resends a batch whose POST outlived its fetch cap.
-			c.apply(historyAfterCompaction(tc.last))
+			c.apply(historyAfterCompactionRunning(tc.last, tc.running))
 			if got := userBodies(fs); got != tc.want {
 				t.Fatalf("after a resent history, prompts = %q", got)
 			}
