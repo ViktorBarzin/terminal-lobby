@@ -230,6 +230,17 @@ describe("session card — the last-active time obeys the pref", () => {
     unmount();
   });
 
+  // The working timer counts from the person's last message, which the server
+  // knows, rather than from when this tab saw the session start working, which
+  // a reload, a question answered or a second device each restarted
+  // (2026-11-03).
+  it("counts a running session's timer from the person's last message", () => {
+    const wrote = Math.floor(Date.now() / 1000) - 95;
+    const { container, unmount } = card(sess({ state: "running", lastPrompt: wrote }), false);
+    expect(timeText(container)).toBe("1:35");
+    unmount();
+  });
+
   it("renders no empty time element when there is nothing to say", () => {
     // An empty span would still take a flex gap in the row.
     const { container, unmount } = card(sess(), false);

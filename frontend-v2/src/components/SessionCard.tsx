@@ -454,7 +454,11 @@ export const SessionCard: Component<{
     if (killing()) return "";
     if (s().state === "running") {
       props.tick();
-      const since = props.store.workingSince(s().name);
+      // From the person's last message, which the server keeps, where there
+      // is one (2026-11-03). This tab's own stamp of the session starting to
+      // work restarted on a reload, on a question answered, and on every
+      // device that had not seen the turn begin, so it read short of it.
+      const since = s().lastPrompt ? s().lastPrompt! * 1000 : props.store.workingSince(s().name);
       return since ? formatWorking(Date.now() - since) : "working";
     }
     if (!props.showLastActive?.()) return "";
