@@ -2101,6 +2101,30 @@ label.tl-set-row-label {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* The bubble and, under it, when it was sent. The stack takes the bubble's
+   84% and its shrinking, so a sender's name or a spinner beside it still
+   squeezes the bubble rather than pushing it onto a line of its own. */
+.tl-user-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+  max-width: 84%;
+}
+.tl-user-stack > .tl-bubble-user {
+  max-width: 100%;
+}
+/* Small and muted, so it reads as a caption, as a chat app's does. The end
+   padding lines it up with the bubble's rounded corner rather than its edge. */
+.tl-user-time {
+  margin-top: 3px;
+  padding-inline-end: 10px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  user-select: none;
+}
 /* A queued prompt: the reader's own message that has not left yet, drawn where
    it will land as a dashed outline of the bubble it will become. They were
    chips in the composer until 2026-09-24. Keyed on the row's `data-queued`

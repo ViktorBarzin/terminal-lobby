@@ -874,6 +874,10 @@ src/
                          as dashed ghost bubbles. What the open turn is doing
                          shows on the live work group at the end, not on a
                          row of its own
+    message-time.logic.ts
+                         PURE: when a message was sent, as a chat app says it
+                         under the bubble ("14:05", "Yesterday 14:05", "Mon
+                         14:05", "12 Oct 14:05")
     QueuedGhost.tsx      One queued prompt's ghost row, and cancelling it: a
                          sideways swipe, a press and hold that offers Cancel,
                          or a × with a mouse. session-events drops the prompt

@@ -73,6 +73,7 @@ import { NO_STREAM, streamBody, type StreamState } from "../store/stream";
 import { BrowserCard, type BrowserCardHost } from "./BrowserCard";
 import { QueuedEditRow, QueuedGhost, type QueuedEditActions } from "./QueuedGhost";
 import type { OpenQueuedEdit } from "../store/drafts";
+import { messageTime, messageTimeFull, msUntilMidnight } from "./message-time.logic";
 
 const USER_COLLAPSE_CHARS = 600;
 
@@ -84,6 +85,38 @@ const planToolId = (row: TimelineRow): string | undefined =>
 const SendingSpinner: Component = () => (
   <span class="tl-sending" role="status" aria-label="Sending" title="Sending" />
 );
+
+/**
+ * The clock the user rows' times are worked out against. It only has to move
+ * at midnight, when "14:05" becomes "Yesterday 14:05", so it is one timer for
+ * the whole page, started by the first row that shows a time. A sleeping
+ * laptop fires it late, on wake, which is when the reader looks again anyway.
+ */
+const [dayClock, setDayClock] = createSignal(Date.now());
+let dayClockArmed = false;
+function armDayClock() {
+  if (dayClockArmed) return;
+  dayClockArmed = true;
+  const tick = () => {
+    setDayClock(Date.now());
+    setTimeout(tick, msUntilMidnight(Date.now()) + 1000);
+  };
+  setTimeout(tick, msUntilMidnight(Date.now()) + 1000);
+}
+
+/** When a message was sent, small and muted under its bubble, as a chat app does. */
+const SentAt: Component<{ at: number }> = (props) => {
+  armDayClock();
+  return (
+    <time
+      class="tl-user-time"
+      datetime={new Date(props.at).toISOString()}
+      title={messageTimeFull(props.at)}
+    >
+      {messageTime(props.at, Math.max(dayClock(), Date.now()))}
+    </time>
+  );
+};
 
 const UserRowView: Component<{
   row: UserRow;
@@ -124,30 +157,34 @@ const UserRowView: Component<{
           </span>
         )}
       </Show>
-      <div class="tl-bubble-user" data-who={props.sender?.color}>
-        {/* Still a <pre>: the message's own whitespace is significant, and an
-            <img>/<button> is phrasing content, so substituting a path in place
-            costs the surrounding text nothing. */}
-        <pre class="tl-user-text">
-          <MessageSegments
-            segments={shown()}
-            me={props.me ?? ""}
-            session={props.session}
-            record={props.row.record}
-            onOpen={props.onOpenPreview}
-          />
-          {long() && !open() ? "…" : ""}
-        </pre>
-        <Show when={long()}>
-          <button
-            type="button"
-            class="tl-linkbtn"
-            data-scroll-anchor-ignore
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open() ? "Show less" : "Show more"}
-          </button>
-        </Show>
+      <div class="tl-user-stack">
+        <div class="tl-bubble-user" data-who={props.sender?.color}>
+          {/* Still a <pre>: the message's own whitespace is significant, and an
+              <img>/<button> is phrasing content, so substituting a path in place
+              costs the surrounding text nothing. */}
+          <pre class="tl-user-text">
+            <MessageSegments
+              segments={shown()}
+              me={props.me ?? ""}
+              session={props.session}
+              record={props.row.record}
+              onOpen={props.onOpenPreview}
+            />
+            {long() && !open() ? "…" : ""}
+          </pre>
+          <Show when={long()}>
+            <button
+              type="button"
+              class="tl-linkbtn"
+              data-scroll-anchor-ignore
+              onClick={() => setOpen((v) => !v)}
+            >
+              {open() ? "Show less" : "Show more"}
+            </button>
+          </Show>
+        </div>
+        {/* Not while it is still sending: it has not been sent yet. */}
+        <Show when={!props.row.sending && props.row.at}>{(at) => <SentAt at={at()} />}</Show>
       </div>
     </div>
   );
