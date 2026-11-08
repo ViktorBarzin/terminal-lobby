@@ -18,12 +18,15 @@
 //   TL_BROWSER_IDLE_FREEZE_MS     idle time before Frozen (default 10 min)
 //   TL_BROWSER_FROZEN_CLOSE_MS    frozen time before the host closes (default 2 h)
 //   TL_BROWSER_CONTROL_LAPSE_MS   time without input before control lapses (default 10 min)
+//   TL_BROWSER_COOKIE_PUSH_MS     how often logins are sent to the user's hub while
+//                                 the browser is live (default 5 min; ADR-0047)
 
 import os from "node:os";
 import { createConnection } from "@playwright/mcp";
 import { summarize } from "./lib/activity.mjs";
 import { BrowserSession, sandboxed, storageStatePath, VIEWPORT } from "./lib/browser.mjs";
 import { Control } from "./lib/control.mjs";
+import { CookiePusher } from "./lib/cookiepush.mjs";
 import { CursorBoard } from "./lib/cursor.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
@@ -59,6 +62,14 @@ function ms(name, fallback) {
 const FREEZE_MS = ms("TL_BROWSER_IDLE_FREEZE_MS", 10 * 60_000);
 const CLOSE_MS = ms("TL_BROWSER_FROZEN_CLOSE_MS", 2 * 60 * 60_000);
 const LAPSE_MS = ms("TL_BROWSER_CONTROL_LAPSE_MS", 10 * 60_000);
+const COOKIE_PUSH_MS = ms("TL_BROWSER_COOKIE_PUSH_MS", 5 * 60_000);
+/**
+ * How long closing waits for a last cookie push, alongside Chrome's own close
+ * (5 s at most) and inside the launcher's 5 s before SIGKILL.
+ */
+const CLOSE_PUSH_MS = 4000;
+/** Reading the jar is a local CDP call; one slower than this is skipped. */
+const CLOSE_READ_MS = 500;
 /** Often enough to hit the shortest timer closely, never busier than 20 ms. */
 const TICK_MS = Math.min(
   5000,
@@ -81,6 +92,16 @@ const mcpConfig = {
     contextOptions: { viewport: VIEWPORT },
   },
 };
+
+/**
+ * @template T
+ * @param {Promise<T>} p
+ * @param {number} limit
+ * @returns {Promise<T | undefined>} p's value, or undefined once limit ms pass
+ */
+function within(p, limit) {
+  return Promise.race([p, new Promise((r) => setTimeout(() => r(undefined), limit).unref())]);
+}
 
 /** @param {unknown} err */
 function log(err) {
@@ -142,6 +163,9 @@ async function serve() {
   const idle = new IdleClock({ freezeMs: FREEZE_MS, closeMs: CLOSE_MS });
   /** @type {BrowserSession | null} */
   let session = null;
+  /** sends the browser's logins to the user's hub, if they have one (ADR-0047) */
+  const cookies = new CookiePusher({ home: os.homedir(), log });
+  let chromeGone = false;
   /** @type {Promise<import("playwright-core").BrowserContext> | null} */
   let launching = null;
   let closing = false;
@@ -239,6 +263,21 @@ async function serve() {
   });
 
   setInterval(tick, TICK_MS).unref();
+  setInterval(() => {
+    if (!closing && idle.state === "live") void pushCookies("periodic");
+  }, COOKIE_PUSH_MS).unref();
+
+  /**
+   * Sends the browser's logins to the user's hub. Never called while Chrome
+   * is stopped: a CDP call to a frozen Chrome would hang.
+   * @param {string} reason
+   * @returns {Promise<{ sent: number } | null>}
+   */
+  function pushCookies(reason) {
+    if (!session || chromeGone) return Promise.resolve(null);
+    const { context } = session;
+    return cookies.push(reason, () => context.cookies());
+  }
 
   /** @returns {Promise<import("playwright-core").BrowserContext>} */
   async function launch() {
@@ -299,6 +338,7 @@ async function serve() {
               viewers.sendFrame(v, { t: "frame", tab, ...frame });
         },
         onDisconnected: () => {
+          chromeGone = true;
           log("Chrome went away");
           void closeWhenSettled();
         },
@@ -315,6 +355,19 @@ async function serve() {
       log(`viewer socket: ${err instanceof Error ? err.message : String(err)}`);
     }
     return s.context;
+  }
+
+  /**
+   * Freezes the browser the idle clock just marked frozen, after one last
+   * cookie push while Chrome can still answer. Something that woke it in the
+   * meantime wins.
+   */
+  async function freeze() {
+    await pushCookies("freeze");
+    if (closing || !session || idle.state !== "frozen") return;
+    session.freeze();
+    void tmux.setState("frozen");
+    viewers.broadcast({ t: "state", state: "frozen" });
   }
 
   /** Wakes a frozen browser. Safe to call when it is live. */
@@ -343,11 +396,8 @@ async function serve() {
     }
     const busy = gate.inFlight > 0 || control.holder !== null || viewers.anySubscribed();
     const due = idle.check(busy);
-    if (due === "freeze") {
-      session.freeze();
-      void tmux.setState("frozen");
-      viewers.broadcast({ t: "state", state: "frozen" });
-    } else if (due === "close") {
+    if (due === "freeze") void freeze();
+    else if (due === "close") {
       log("closing a browser left frozen");
       void shutdown(0);
     }
@@ -658,7 +708,17 @@ async function serve() {
     viewers.broadcast({ t: "state", state: "closed" });
     tmux.clearSync();
     await viewers.close();
-    if (session) await session.close();
+    if (session) {
+      // A last push, best effort: the jar is read before Chrome is told to
+      // close, and the push gets no more time than the close itself may
+      // take. A frozen browser pushed before it froze.
+      const jar =
+        idle.state === "live" && !chromeGone
+          ? await within(session.context.cookies().catch(() => undefined), CLOSE_READ_MS)
+          : undefined;
+      const last = jar ? cookies.push("close", async () => jar) : undefined;
+      await Promise.all([session.close(), last && within(last, CLOSE_PUSH_MS)]);
+    }
     process.exit(code);
   }
 }

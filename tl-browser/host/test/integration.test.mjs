@@ -4,7 +4,16 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -93,10 +102,12 @@ function procState(pid) {
  * and gets it through the MCP handshake.
  * @param {import("node:test").TestContext} t
  * @param {Record<string, string>} env
+ * @param {(home: string) => void} [setup] prepares the host's HOME before it starts
  */
-async function startHost(t, env) {
+async function startHost(t, env, setup) {
   const tmp = mkdtempSync(path.join(tmpdir(), "tl-browser-it-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  setup?.(tmp);
   const child = spawn(process.execPath, [host], {
     env: {
       PATH: process.env.PATH,
@@ -764,4 +775,134 @@ test("a person's clipboard goes into the page and comes back out", {
   });
   assert.notEqual(pasted.isError, true, JSON.stringify(pasted));
   assert.match(resultText(pasted), /pasted text\\nline two/, "the page saw a paste event");
+});
+
+/**
+ * A stand-in for the user's hub, which also serves the page the agent opens,
+ * and the hub.json pointing a host's HOME at it.
+ * @param {import("node:test").TestContext} t
+ */
+async function stubHub(t) {
+  /** @type {{ auth: string | undefined, cookies: { name: string, domain: string }[] }[]} */
+  const posts = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => {
+      body += d;
+    });
+    req.on("end", () => {
+      if (req.method === "POST" && req.url === "/api/cookies") {
+        posts.push({ auth: req.headers.authorization, cookies: JSON.parse(body).cookies });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ accepted: 1, skipped: 0, rejected: 0, snapshot_cookies: 1 }));
+      } else if (req.method === "GET" && req.url === "/api/snapshot") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ cookies: [{ name: "from-hub" }], origins: [] }));
+      } else {
+        // The page the agent opens: its own cookie is for a bare address,
+        // which stays in this browser.
+        res.writeHead(200, { "content-type": "text/html", "set-cookie": "here=1; Max-Age=3600" });
+        res.end("<title>Login page</title>");
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+  t.after(() => server.close());
+  const addr = server.address();
+  assert.ok(addr && typeof addr === "object");
+  const base = `http://127.0.0.1:${addr.port}`;
+  /** @param {string} home */
+  const configure = (home) => {
+    mkdirSync(path.join(home, ".config", "chrome-hub"), { recursive: true });
+    writeFileSync(
+      path.join(home, ".config", "chrome-hub", "hub.json"),
+      JSON.stringify({
+        user: "tester",
+        snapshot_url: `${base}/api/snapshot`,
+        cookies_url: `${base}/api/cookies`,
+        read_token: "read-tok",
+        write_token: "write-tok",
+      }),
+      { mode: 0o600 },
+    );
+  };
+  return { posts, base, configure };
+}
+
+/** A login the person typed lands as a cookie on a real site. */
+const ADD_LOGIN = `async (page) => {
+  await page.context().addCookies([{
+    name: "login", value: "s3cret", domain: ".example.com", path: "/",
+    expires: Math.floor(Date.now() / 1000) + 3600,
+  }]);
+}`;
+
+/**
+ * @param {() => boolean} done
+ * @param {number} [ms]
+ */
+async function until(done, ms = 10_000) {
+  for (let waited = 0; waited < ms && !done(); waited += 100)
+    await new Promise((r) => setTimeout(r, 100));
+}
+
+test("logins go to the user's hub before the browser freezes", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: 90_000,
+}, async (t) => {
+  const { posts, base, configure } = await stubHub(t);
+  let home = "";
+  const env = { TL_BROWSER_IDLE_FREEZE_MS: "1500" };
+  const { child, exited, callTool } = await startHost(t, env, (dir) => {
+    home = dir;
+    configure(dir);
+  });
+
+  const nav = await callTool("browser_navigate", { url: `${base}/login` });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+  const login = await callTool("browser_run_code_unsafe", { code: ADD_LOGIN });
+  assert.notEqual(login.isError, true, JSON.stringify(login));
+
+  await until(() => posts.length > 0);
+  assert.equal(posts.length, 1, "one push, on the way to frozen");
+  assert.equal(posts[0].auth, "Bearer write-tok");
+  assert.deepEqual(
+    posts[0].cookies.map((c) => `${c.name}@${c.domain}`),
+    ["login@.example.com"],
+  );
+
+  const snap = path.join(home, ".cache", "playwright-shared-storage-state.json");
+  await until(() => existsSync(snap));
+  assert.deepEqual(JSON.parse(readFileSync(snap, "utf8")).cookies, [{ name: "from-hub" }]);
+  assert.equal(statSync(snap).mode & 0o777, 0o600);
+
+  // Frozen after the push, and closing while frozen sends nothing more.
+  const chrome = treePids(child.pid).filter((pid) => pid !== child.pid);
+  await until(() => chrome.some((pid) => procState(pid) === "T"));
+  assert.ok(chrome.some((pid) => procState(pid) === "T"), "Chrome is stopped");
+  child.stdin.end();
+  assert.equal(await exited, 0);
+  assert.equal(posts.length, 1);
+});
+
+test("closing a live browser sends the logins it has not sent", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: 90_000,
+}, async (t) => {
+  const { posts, base, configure } = await stubHub(t);
+  const { child, exited, callTool } = await startHost(t, {}, configure);
+  const nav = await callTool("browser_navigate", { url: `${base}/login` });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+  const login = await callTool("browser_run_code_unsafe", { code: ADD_LOGIN });
+  assert.notEqual(login.isError, true, JSON.stringify(login));
+  assert.equal(posts.length, 0, "nothing is sent before a freeze, a close or the 5 minutes");
+
+  const started = Date.now();
+  child.kill("SIGTERM");
+  assert.equal(await exited, 0);
+  assert.ok(Date.now() - started < 5000, "inside the launcher's 5 s before SIGKILL");
+  assert.deepEqual(
+    posts.map((p) => p.cookies.map((c) => c.name)),
+    [["login"]],
+  );
 });

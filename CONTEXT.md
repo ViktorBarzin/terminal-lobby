@@ -1599,6 +1599,13 @@ agent and a person in **Control** move the same cursor; there is never one per
 person.
 _Avoid_: pointer (the viewer's own), agent cursor, mouse
 
+**Hub** (of a user's logins):
+The cluster Chrome that holds one user's logins. Every browser of that user
+starts from its cookies, and a **Session browser** sends back the logins it
+picks up, so a login made in one browser reaches the others. A user without a
+hub has browsers that only start from the cookies they were given (ADR-0047).
+_Avoid_: master (the older name for Viktor's), cookie store, profile
+
 **Frozen** (session browser):
 A **Session browser** the agent left open but has not used for ten minutes,
 paused so it costs no processor time. Its pages are kept; the next agent

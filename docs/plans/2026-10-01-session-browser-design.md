@@ -130,7 +130,12 @@ the box runs today. It:
 - serves a unix socket at `$XDG_RUNTIME_DIR/tl-browser/<session_id>.sock`, mode
   0600, speaking the viewer protocol below;
 - records its state on the tmux session as `@tl_browser` (`live` or `frozen`)
-  and `@tl_browser_sock`, and clears both when it exits.
+  and `@tl_browser_sock`, and clears both when it exits;
+- sends the logins the browser picks up to the user's hub, when the user has
+  one (`~/.config/chrome-hub/hub.json`), and refreshes the local snapshot from
+  the hub afterwards. Added 2026-11-08 by
+  [ADR-0047](../adr/0047-a-session-browser-sends-its-logins-to-the-users-hub.md);
+  see "Logins go back to the hub" under Lifecycle.
 
 ### session-events, the relay
 
@@ -378,6 +383,27 @@ input, and the launcher stops the host.
 Freezing sends SIGSTOP to Chrome's process group and SIGCONT to wake it. The
 host stays responsive, so it can wake Chrome before forwarding a call.
 
+### Logins go back to the hub
+
+Added 2026-11-08 by
+[ADR-0047](../adr/0047-a-session-browser-sends-its-logins-to-the-users-hub.md).
+When the user has a hub, the host sends the browser's cookies to it at three
+moments, and never while Chrome is stopped:
+
+| Moment | What happens |
+|---|---|
+| Live to Frozen | The host pushes first, then sends SIGSTOP. Something that wakes the browser during the push wins, and the freeze is dropped |
+| Every 5 minutes while Live | A push, which sends nothing when no cookie changed |
+| Closing a Live browser | The cookies are read before Chrome is told to close, and the push runs alongside the close for at most 4 seconds, inside the launcher's 5 seconds before SIGKILL |
+
+A push sends only persistent, unexpired cookies that changed since the
+session's last accepted push, and leaves out `viktorbarzin.me` and its
+subdomains, `*.lan`, `localhost` and bare IP addresses. After the hub accepts
+it, the host replaces `~/.cache/playwright-shared-storage-state.json` with the
+hub's merged snapshot under the same `flock` the hourly refresh takes, so the
+next session browser on the box starts with the new login. Without a
+`hub.json` none of this runs.
+
 A **Browsing run** is what the card records. It starts at the first
 `mcp__playwright__*` tool use in a turn and ends when the turn ends or the
 browser closes. The text view derives runs from the transcript, which already
@@ -434,6 +460,10 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
 - The storage-state snapshot carries Viktor's logged-in cookies today, as it
   does for the current shared server. That does not change here. A rw share is
   already a grant to run as the owner.
+- Since ADR-0047 the host also sends new logins to the owner's hub. A login an
+  rw guest makes while in control goes there too: the host is not told whether
+  a viewer is the owner, so it cannot skip those. ADR-0047 lists this as an
+  open question.
 
 ## The lobby
 
