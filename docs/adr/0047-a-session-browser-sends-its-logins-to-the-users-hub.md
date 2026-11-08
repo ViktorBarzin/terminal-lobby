@@ -1,6 +1,7 @@
 # A session browser sends its logins to the user's hub
 
-Status: accepted 2026-11-08. Extends
+Status: accepted 2026-11-08, amended the same day to send the whole pushable
+set on every push. Extends
 [ADR-0035](0035-each-session-gets-its-own-browser-started-on-first-use.md).
 
 A session browser starts with the user's cookies from
@@ -24,8 +25,9 @@ the hub's interface.
 | When | Just before the browser freezes; every 5 minutes while it is live (`TL_BROWSER_COOKIE_PUSH_MS`); once more on close, best effort |
 | Never | While the browser is frozen. Freezing is SIGSTOP of Chrome, so any call into the browser would hang until it woke |
 | Which cookies | Persistent and unexpired (`expires > now`), and not for `viktorbarzin.me` or its subdomains, `*.lan`, `localhost` or `*.localhost`, or a bare IP address |
-| How many | Only cookies new or changed since this session's last accepted push, keyed by name, domain, path and partition, compared on value and expiry. Nothing changed means no request |
-| Size | Batches of at most 3000 cookies and about 1.9 MB, under the hub's 3000 and 2 MB limits |
+| Whether to push | Only when a cookie is new or changed since this session's last accepted push, keyed by name, domain, path and partition, compared on value and expiry. Nothing changed means no request |
+| How many | Every pushable cookie the browser holds, changed or not. The hub lets a push replace a site's cookies only when it carries every cookie the hub holds live for that site (skip reason `site_incomplete`), so a push of the changed cookies alone could never replace an older login with a re-login |
+| Size | Batches of at most 3000 cookies and about 1.9 MB, under the hub's 3000 and 2 MB limits. Cookies are grouped by registrable site first (the hub's `site_of` rule: two labels, or three under a two-letter country code with a generic second level such as `co.uk`), and a site's cookies always travel in one batch. Only a single site larger than one batch is split |
 | After a push | Fetch the hub's merged snapshot with the read token and replace the local snapshot file atomically (temporary file, rename, mode 0600) while holding `flock` on `<snapshot>.lock`, the lock the hourly refresh also takes |
 | Failures | Logged and swallowed. A refused batch is not marked sent, so it goes again next time |
 | Logs | Counts and HTTP statuses only. Never a cookie value, a token or a URL |
@@ -54,14 +56,15 @@ best effort because the shutdown budget belongs to closing Chrome cleanly.
 ### How it was checked
 
 - Unit tests (`test/cookiepush.test.mjs`) against a stand-in hub: the domain
-  and expiry filter, change detection including partitioned cookies, batching
-  of 3500 cookies, a 500 answer retried next time, an unreachable hub, and the
+  and expiry filter, change detection including partitioned cookies, a single
+  changed cookie sending the whole pushable set, batching of 3500 cookies,
+  batches that never split a site, a 500 answer retried next time, an unreachable hub, and the
   snapshot write waiting for a `flock(1)` holder.
 - Integration tests (`test/integration.test.mjs`) drive real headless Chrome
   through the host: a cookie set on `.example.com` reaches the stand-in hub
   before the browser freezes, a cookie for the page's own `127.0.0.1` does
   not, the local snapshot is rewritten, and a live browser closed with SIGTERM
-  sends its unsent cookies and exits inside 5 seconds.
+  sends its cookies and exits inside 5 seconds.
 
 ## Open questions
 

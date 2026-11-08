@@ -17,6 +17,7 @@ import {
   CookiePusher,
   pushable,
   readHubConfig,
+  siteOf,
   writeSnapshot,
 } from "../lib/cookiepush.mjs";
 
@@ -204,7 +205,7 @@ test("a push sends changed cookies once, then refreshes the snapshot", async (t)
   assert.equal(posts.length, 1);
   assert.equal(gets.length, 1);
 
-  // A new value, a new expiry and a new cookie go; the unchanged one does not.
+  // A new value, a new expiry or a new cookie each trigger a push.
   jar = [
     cookie({ value: "v2" }),
     cookie({ name: "other", expires: LATER + 10 }),
@@ -217,10 +218,11 @@ test("a push sends changed cookies once, then refreshes the snapshot", async (t)
     ["sid=v2", "other=v1", "third=v1"],
   );
   jar = [cookie({ value: "v2" }), cookie({ name: "other", expires: LATER + 99 })];
-  await pusher.push("periodic", read);
+  assert.deepEqual(await pusher.push("periodic", read), { sent: 2 });
   assert.deepEqual(
     posts[2].body.cookies.map((c) => c.name),
-    ["other"],
+    ["sid", "other"],
+    "the unchanged cookie goes too: the hub replaces a site only from a complete set",
   );
 
   // The log has counts, never a value or a token.
@@ -240,7 +242,34 @@ test("a cookie in another partition is its own cookie", async (t) => {
     cookie({ partitionKey: "https://top.example" }),
   ]);
   assert.equal(posts.length, 2);
-  assert.deepEqual(posts[1].body.cookies, [cookie({ partitionKey: "https://top.example" })]);
+  assert.deepEqual(posts[1].body.cookies, [
+    cookie({}),
+    cookie({ partitionKey: "https://top.example" }),
+  ]);
+});
+
+test("one changed cookie sends every pushable cookie the browser holds", async (t) => {
+  const home = tempHome(t);
+  const { posts, hub } = await stubHub(t);
+  writeHub(home, hub);
+  const pusher = new CookiePusher({ home, log: () => {}, now: () => NOW });
+  const jar = [
+    cookie({ name: "sid", domain: ".example.com" }),
+    cookie({ name: "csrf", domain: "www.example.com" }),
+    cookie({ name: "login", domain: ".shop.co.uk" }),
+    cookie({ name: "lan", domain: "router.lan" }),
+    cookie({ name: "tmp", expires: -1 }),
+  ];
+  await pusher.push("periodic", async () => jar);
+  assert.equal(posts.length, 1);
+
+  jar[0] = cookie({ name: "sid", domain: ".example.com", value: "relogin", expires: LATER + 50 });
+  assert.deepEqual(await pusher.push("freeze", async () => jar), { sent: 3 });
+  assert.equal(posts.length, 2, "one request");
+  assert.deepEqual(
+    posts[1].body.cookies.map((c) => `${c.name}=${c.value}`),
+    ["sid=relogin", "csrf=v1", "login=v1"],
+  );
 });
 
 test("a refused push is retried next time and the snapshot is left alone", async (t) => {
@@ -309,6 +338,42 @@ test("a large jar goes in batches under the hub's limits", async (t) => {
     posts.reduce((n, p) => n + p.body.cookies.length, 0),
     3500,
   );
+});
+
+test("a batch never splits a site's cookies", async (t) => {
+  const home = tempHome(t);
+  const { posts, hub } = await stubHub(t);
+  writeHub(home, hub);
+  const pusher = new CookiePusher({ home, log: () => {}, now: () => NOW });
+  // Interleaved, so batching in jar order would cut both sites in two.
+  /** @type {Cookie[]} */
+  const jar = [];
+  for (let i = 0; i < 1600; i++) {
+    jar.push(cookie({ name: `a${i}`, domain: i % 2 ? ".a.example" : "www.a.example" }));
+    jar.push(cookie({ name: `b${i}`, domain: i % 2 ? ".b.co.uk" : "x.b.co.uk" }));
+  }
+  jar.push(cookie({ name: "small", domain: ".c.example" }));
+  assert.deepEqual(await pusher.push("periodic", async () => jar), { sent: 3201 });
+  assert.equal(posts.length, 2);
+  /** @type {Map<string, Set<number>>} */
+  const where = new Map();
+  posts.forEach((p, i) => {
+    assert.ok(p.body.cookies.length <= 3000);
+    for (const c of p.body.cookies) {
+      const site = c.domain.split(".").slice(c.domain.endsWith(".co.uk") ? -3 : -2).join(".");
+      where.set(site, (where.get(site) ?? new Set()).add(i));
+    }
+  });
+  assert.deepEqual([...where.keys()].sort(), ["a.example", "b.co.uk", "c.example"]);
+  for (const [site, batches] of where) assert.equal(batches.size, 1, `${site} in one request`);
+});
+
+test("siteOf matches the hub's registrable site", () => {
+  assert.equal(siteOf(".accounts.google.com"), "google.com");
+  assert.equal(siteOf("www.amazon.co.uk"), "amazon.co.uk");
+  assert.equal(siteOf(".Example.COM"), "example.com");
+  assert.equal(siteOf("shop.example.de"), "example.de");
+  assert.equal(siteOf("example.com"), "example.com");
 });
 
 test("writeSnapshot waits for the flock(1) the refresh script holds", async (t) => {

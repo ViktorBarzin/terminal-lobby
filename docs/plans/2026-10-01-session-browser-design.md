@@ -396,9 +396,12 @@ moments, and never while Chrome is stopped:
 | Every 5 minutes while Live | A push, which sends nothing when no cookie changed |
 | Closing a Live browser | The cookies are read before Chrome is told to close, and the push runs alongside the close for at most 4 seconds, inside the launcher's 5 seconds before SIGKILL |
 
-A push sends only persistent, unexpired cookies that changed since the
-session's last accepted push, and leaves out `viktorbarzin.me` and its
-subdomains, `*.lan`, `localhost` and bare IP addresses. After the hub accepts
+A push happens only when a cookie changed since the session's last accepted
+push, and then sends every persistent, unexpired cookie the browser holds,
+leaving out `viktorbarzin.me` and its subdomains, `*.lan`, `localhost` and bare
+IP addresses. The whole set goes because the hub replaces a site's cookies only
+from a push that carries all of that site's live cookies, and a site's cookies
+are never split across batches. After the hub accepts
 it, the host replaces `~/.cache/playwright-shared-storage-state.json` with the
 hub's merged snapshot under the same `flock` the hourly refresh takes, so the
 next session browser on the box starts with the new login. Without a

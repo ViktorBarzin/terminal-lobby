@@ -3,6 +3,11 @@
 // browser of the same user gets them. The hub does all merging; this side
 // only decides what is worth sending and when nothing changed.
 //
+// A push carries every pushable cookie the browser holds, not only the ones
+// that changed: the hub lets a push replace a site's cookies only when it
+// carries every cookie the hub holds live for that site, so a re-login sent
+// on its own would look like a signed-out browser and be skipped.
+//
 // The hub is optional. Without ~/.config/chrome-hub/hub.json, or with one
 // that cannot be read, nothing here does anything and nothing is logged.
 // Every failure is logged as a count or a status and swallowed: a hub that is
@@ -121,28 +126,63 @@ function stampOf(c) {
   return `${c.expires}|${c.value}`;
 }
 
+const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu", "ltd", "plc"]);
+
 /**
- * Splits cookies into request bodies the hub accepts.
+ * The registrable site a cookie domain belongs to (amazon.co.uk, google.com),
+ * by the same approximation of the public suffix list as the hub's site_of()
+ * in infra stacks/chrome-service/files/broker/cookie_merge.py.
+ * @param {string} domain
+ * @returns {string}
+ */
+export function siteOf(domain) {
+  const labels = domain.replace(/^\.+/, "").toLowerCase().split(".");
+  const n = labels.length;
+  if (n >= 3 && labels[n - 1].length === 2 && SECOND_LEVEL.has(labels[n - 2]))
+    return labels.slice(-3).join(".");
+  return labels.slice(-2).join(".");
+}
+
+/**
+ * Splits cookies into request bodies the hub accepts, keeping each site's
+ * cookies in one body so the hub sees the site's whole set. A single site too
+ * large for one body is split, since nothing else can carry it.
  * @param {Cookie[]} cookies
  * @returns {Cookie[][]}
  */
 function batches(cookies) {
+  /** @type {Map<string, Cookie[]>} */
+  const bySite = new Map();
+  for (const c of cookies) {
+    const site = siteOf(c.domain);
+    const group = bySite.get(site);
+    if (group) group.push(c);
+    else bySite.set(site, [c]);
+  }
   /** @type {Cookie[][]} */
   const out = [];
   /** @type {Cookie[]} */
   let cur = [];
   let bytes = 0;
-  for (const c of cookies) {
-    const size = Buffer.byteLength(JSON.stringify(c)) + 1;
-    if (cur.length > 0 && (cur.length >= MAX_BATCH || bytes + size > MAX_BODY_BYTES)) {
-      out.push(cur);
-      cur = [];
-      bytes = 0;
-    }
-    cur.push(c);
-    bytes += size;
+  const flush = () => {
+    if (cur.length > 0) out.push(cur);
+    cur = [];
+    bytes = 0;
+  };
+  for (const group of bySite.values()) {
+    const sizes = group.map((c) => Buffer.byteLength(JSON.stringify(c)) + 1);
+    const groupBytes = sizes.reduce((a, b) => a + b, 0);
+    const fits = group.length <= MAX_BATCH && groupBytes <= MAX_BODY_BYTES;
+    if (fits && (cur.length + group.length > MAX_BATCH || bytes + groupBytes > MAX_BODY_BYTES))
+      flush();
+    group.forEach((c, i) => {
+      if (cur.length >= MAX_BATCH || (cur.length > 0 && bytes + sizes[i] > MAX_BODY_BYTES))
+        flush();
+      cur.push(c);
+      bytes += sizes[i];
+    });
   }
-  if (cur.length > 0) out.push(cur);
+  flush();
   return out;
 }
 
@@ -209,8 +249,9 @@ export class CookiePusher {
   }
 
   /**
-   * Sends what changed since this session's last push, then refreshes the
-   * local snapshot from the hub. A push asked for while one runs joins it.
+   * When anything changed since this session's last push, sends every
+   * pushable cookie, then refreshes the local snapshot from the hub. A push
+   * asked for while one runs joins it.
    * @param {string} reason for the log: "periodic", "freeze", "close"
    * @param {() => Promise<Cookie[]>} read the browser's cookies, called at
    *   most once and before anything else is awaited
@@ -233,11 +274,10 @@ export class CookiePusher {
     if (!hub) return null;
     try {
       const all = pushable(await read(), this.#now());
-      const changed = all.filter((c) => this.#sent.get(keyOf(c)) !== stampOf(c));
-      if (changed.length === 0) return { sent: 0 };
+      if (all.every((c) => this.#sent.get(keyOf(c)) === stampOf(c))) return { sent: 0 };
       /** @type {{ accepted: number, skipped: number, rejected: number }} */
       const totals = { accepted: 0, skipped: 0, rejected: 0 };
-      for (const batch of batches(changed)) {
+      for (const batch of batches(all)) {
         const res = await fetch(hub.cookiesUrl, {
           method: "POST",
           headers: {
@@ -254,11 +294,11 @@ export class CookiePusher {
         for (const c of batch) this.#sent.set(keyOf(c), stampOf(c));
       }
       this.#log(
-        `cookie push (${reason}): sent ${changed.length}, accepted ${totals.accepted}, ` +
+        `cookie push (${reason}): sent ${all.length}, accepted ${totals.accepted}, ` +
           `skipped ${totals.skipped}, rejected ${totals.rejected}`,
       );
       await this.#refresh(hub);
-      return { sent: changed.length };
+      return { sent: all.length };
     } catch (err) {
       this.#log(`cookie push (${reason}) failed: ${describe(err)}`);
       return null;
