@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -79,6 +80,48 @@ type Config struct {
 	// means no credentials exist and the bearer path is unavailable. See
 	// bearer.go.
 	BearerTokensPath string
+
+	// PersonHeader names the header carrying the caller's Person id, the
+	// Authentik hashed user id product analytics names a person by
+	// (docs/adr/0048-usage-events-reach-the-event-pipeline.md). TL_PERSON_HEADER;
+	// empty means DefaultPersonHeader. It is read for analytics only and
+	// decides nothing about access.
+	PersonHeader string
+}
+
+// DefaultPersonHeader is where Authentik's proxy outpost puts the user's
+// hashed id, and Traefik's forward-auth replaces whatever the client sent.
+const DefaultPersonHeader = "X-Authentik-Uid"
+
+// PersonHeaderName is the configured Person header, or the default.
+func (c Config) PersonHeaderName() string {
+	if c.PersonHeader == "" {
+		return DefaultPersonHeader
+	}
+	return c.PersonHeader
+}
+
+// personIDRe bounds a Person id before it is handed on. Authentik's is 64 hex
+// characters.
+var personIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+// person reads the caller's Person id off r, or "" when there is none or it is
+// not an id shape.
+func (g *Gate) person(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get(g.Config.PersonHeaderName()))
+	if !personIDRe.MatchString(v) {
+		return ""
+	}
+	return v
+}
+
+// withPerson fills in the caller's Person id and reports it.
+func (g *Gate) withPerson(r *http.Request, id Identity) Identity {
+	id.Person = g.person(r)
+	if id.Person != "" && g.OnPerson != nil {
+		g.OnPerson(id.RealOSUser, id.Person)
+	}
+	return id
 }
 
 // Header is the identity header's configured name, or the compiled default
@@ -109,6 +152,7 @@ func ConfigFromEnv() Config {
 		ProxySecret:      os.Getenv("TL_PROXY_SECRET"),
 		MultiUser:        strings.TrimSpace(os.Getenv("TL_MULTI_USER")),
 		BearerTokensPath: strings.TrimSpace(os.Getenv("TL_BEARER_TOKENS")),
+		PersonHeader:     strings.TrimSpace(os.Getenv("TL_PERSON_HEADER")),
 	}
 }
 
@@ -128,6 +172,9 @@ type Identity struct {
 	MultiUser bool
 	// Admin reports whether RealOSUser administers this box.
 	Admin bool
+	// Person is RealOSUser's Person id from the proxy (Config.PersonHeader),
+	// or "". Analytics only.
+	Person string
 }
 
 // Resolve answers the whole question for one request.
@@ -174,7 +221,7 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 			}
 			return Identity{}, ErrNotAdmin
 		}
-		return out, nil
+		return g.withPerson(r, out), nil
 	}
 
 	// The map is keyed on the LOCAL part: proxies emit either "alice" or
@@ -208,7 +255,7 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 		return Identity{}, err
 	}
 	out.OSUser = eff
-	return out, nil
+	return g.withPerson(r, out), nil
 }
 
 // checkSecret compares the shared secret in constant time. Unset means the

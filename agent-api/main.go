@@ -65,6 +65,9 @@ var (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
+	// JSON log lines and error reports (docs/adr/0048-usage-events-reach-the-event-pipeline.md).
+	// agent-api emits no usage events, so it forwards none.
+	telemetry.Start("agent-api", buildID, nil)
 	validateOpenAPI()
 	modelList := loadModels(os.Getenv("TL_MANAGED_SETTINGS"))
 
@@ -193,7 +196,7 @@ func main() {
 	go timing.Run(nil)
 
 	server := &http.Server{
-		Handler: timing.Wrap(srv.Routes()),
+		Handler: timing.Wrap(telemetry.ReportPanics(srv.Routes())),
 		// A turn is watched by a background goroutine, never by a request.
 		// The one thing a handler may do for minutes is WAIT on that
 		// goroutine, when a caller asks with ?wait= (wait.go), so the write

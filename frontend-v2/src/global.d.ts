@@ -17,6 +17,9 @@ declare const __TL_BUILD__: string;
 // reach them — the viewport sync, the paste routine, the overlays' focus
 // handback — sit above the mounted session and hold no reference to it.
 interface Window {
+  // Rybbit's script (src/telemetry/analytics.ts, ADR-0048), once it has loaded
+  // on the production host.
+  rybbit?: { identify(id: string): void; clearUserId(): void };
   __tlThemes?: string[];
   __tlApplyTheme?: (theme: string) => void;
   __tlThemeLive?: (theme: string) => void;

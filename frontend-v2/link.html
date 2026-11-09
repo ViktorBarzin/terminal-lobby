@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0d1117" />
     <meta name="color-scheme" content="dark light" />
+    <!-- No analytics on a public link (ADR-0048): the address carries the
+         link's bearer token in its fragment, and a replay records the shared
+         conversation. This tag keeps the edge injection plugin from adding
+         the script instead. -->
+    <meta name="analytics" content="sdk" />
     <!-- A shared terminal is nobody's business to index, and the URL holds no
          token by the time anything could read it (the page moves it off the
          address bar), but say so anyway. -->

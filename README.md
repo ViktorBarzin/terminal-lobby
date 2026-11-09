@@ -53,6 +53,12 @@ Everything lives in `/etc/terminal-lobby.conf`. Your own settings go in
 | `TL_MULTI_USER` | `auto` | `auto` (multi-user when `/etc/ttyd-user-map` exists), `on`, `off` |
 | `TL_BIND` | `127.0.0.1`, from the shipped conffile and compiled in | listen address for the services and ttyd; widen to `0.0.0.0` when the proxy is on another host, and set the secret in the same change. `ttyd.service` marks both `EnvironmentFile` lines optional, so a box with no conffile falls to the same loopback default |
 
+Product analytics and error reports are off unless configured:
+`TELEMETRY_WRITE_KEY`, `TELEMETRY_HOST`, `TELEMETRY_ENVIRONMENT=production`
+and `SENTRY_DSN`, described in the shipped `/etc/terminal-lobby.conf` and in
+[docs/adr/0048-usage-events-reach-the-event-pipeline.md](docs/adr/0048-usage-events-reach-the-event-pipeline.md).
+The services write their log lines as JSON with OpenTelemetry field names.
+
 Any proxy that emits a username header works. Authentik sets
 `X-Authentik-Username`; oauth2-proxy, Caddy, Cloudflare Access and Tailscale
 set `X-Forwarded-User`.

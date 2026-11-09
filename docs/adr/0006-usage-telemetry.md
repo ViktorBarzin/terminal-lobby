@@ -323,3 +323,19 @@ recorded untagged.
 
 System sessions (`test`, unstamped, reserved names) are still dropped by
 tmux-api, and a Caller's sessions still raise no push.
+
+## Amendment, 2026-11-09: person events also go to the Event pipeline
+
+[ADR-0048](0048-usage-events-reach-the-event-pipeline.md) joins this record
+to the homelab telemetry standard (infra ADR-0041). Nothing above changes:
+every event is still a `TLEVENT` line in the journal, the dashboard still
+reads them, and this catalog still decides which names exist. In addition,
+the 78 names a person causes are sent as Product events to Rybbit, under the
+caller's Authentik hashed user id. Diagnostics, sweeps, timings and errors
+stay in the journal only.
+
+Two things a reader of the journal will notice. The services' ordinary log
+lines are JSON with OpenTelemetry field names now, while `TLEVENT` and
+`TLDIAG` lines keep their `2006/01/02 15:04:05 TLEVENT {...}` shape, so the
+queries above work unchanged. And adding an event now has a fourth step:
+deciding whether it belongs in `telemetry/product.go`'s forwarded list.

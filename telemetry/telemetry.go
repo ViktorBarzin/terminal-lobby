@@ -27,6 +27,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -71,10 +72,27 @@ const CallerAttr = "tl.caller"
 // tests capture instead.
 type Writer interface{ Write(line string) }
 
-// LogWriter writes through the standard logger, i.e. to the service's journal.
+// LogWriter writes to the service's journal in the standard logger's text
+// format, "2006/01/02 15:04:05 TLEVENT {...}".
+//
+// Start gives it a logger of its own on stderr, because the services then send
+// their ordinary log lines through the telemetry library's JSON handler
+// (slog.SetDefault redirects the default logger there). An event line wrapped
+// inside a JSON log record would no longer start with the marker the
+// dashboard's queries strip, so these lines keep the shape they have always
+// had. Before Start, and in tests, it writes through the standard logger.
 type LogWriter struct{}
 
-func (LogWriter) Write(line string) { log.Print(line) }
+// journal is LogWriter's own logger once Start has set one.
+var journal atomic.Pointer[log.Logger]
+
+func (LogWriter) Write(line string) {
+	if l := journal.Load(); l != nil {
+		l.Print(line)
+		return
+	}
+	log.Print(line)
+}
 
 // Emitter stamps events with the resource fields of one service.
 //
@@ -91,14 +109,27 @@ type Emitter struct {
 	known   func(string) bool
 	limit   func(key string) int
 
-	// mu guards drop and caller and nothing else. Every other field is
+	// mu guards drop, caller and product and nothing else. Every other field is
 	// written once by New or NewDiag and only read afterwards, so none of them
 	// needs a lock; the two rules are installed after construction by a
 	// service that is already serving requests from many goroutines, which
 	// makes them the only mutable state here.
-	mu     sync.RWMutex
-	drop   func(osUser, session string) bool
-	caller func(osUser, session string) string
+	mu      sync.RWMutex
+	drop    func(osUser, session string) bool
+	caller  func(osUser, session string) string
+	product *Product
+}
+
+// SetProduct makes the Emitter also send the events a person causes to the
+// Event pipeline as Product events (product.go). Nil sends none. Installed on
+// the usage emitter only: diagnostics are Ops telemetry.
+func (e *Emitter) SetProduct(p *Product) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.product = p
 }
 
 // New builds an Emitter for a service. version is the deployed build id, so a
@@ -234,6 +265,10 @@ func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
 		return
 	}
 	e.out.Write(e.marker + " " + string(payload))
+	e.mu.RLock()
+	product := e.product
+	e.mu.RUnlock()
+	product.forward(e.service, name, osUser, bounded)
 }
 
 // bound truncates oversized strings and caps the attribute count, choosing

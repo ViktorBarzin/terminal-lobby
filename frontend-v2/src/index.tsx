@@ -16,6 +16,7 @@ import { logBuildId } from "./deploy/healer";
 import { startDiagnostics } from "./telemetry/diag";
 import { recordMeasurement } from "./diagnostics/connection";
 import { prefetchTerminalChunk } from "./lib/prefetch";
+import { loadAnalytics } from "./telemetry/analytics";
 
 // Build-id marker (inventory Cat.10): logs `terminal-lobby build: <id>` and
 // stamps documentElement.dataset.tlBuild. Emitting the marker literal is what
@@ -27,6 +28,9 @@ logBuildId();
 // during boot is still recorded; the measurement core itself was installed by
 // the inlined script in <head>, ahead of every module here.
 startDiagnostics();
+
+// Pageviews and replay (ADR-0048), on the production host only.
+if (typeof window !== "undefined") loadAnalytics(document, window.location.hostname, window);
 
 // Auto-track same-origin lobby/session requests for the slow-request toast.
 installSlowRequestTracking();

@@ -116,6 +116,12 @@ type Gate struct {
 	// no report.
 	OnActAs func(realOSUser, osUser, method, path string)
 
+	// OnPerson reports the Person id the proxy sent for a request that
+	// resolved, keyed by the caller's own OS user, so a service can name the
+	// person in its Product events. Called on every such request; nil means
+	// no report. Never fired for a bearer credential, which names a program.
+	OnPerson func(realOSUser, person string)
+
 	// countAdminReads is a test seam: the admin list is re-read per request by
 	// design, but re-reading it twice within one is not, and nothing else can
 	// observe the difference.

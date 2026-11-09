@@ -492,6 +492,10 @@ func main() {
 			"tl.to": target, "tl.kind": reason,
 		})
 	}
+	// The telemetry standard (docs/adr/0048-usage-events-reach-the-event-pipeline.md):
+	// JSON log lines, Product events and error reports.
+	product, _ := telemetry.Start("tmux-api", buildID, events)
+	actAsGate.OnPerson = product.LearnPerson
 	actAsGate.Configure("tmux-api", addr)
 	if a := os.Getenv("TMUX_API_ADDR"); a != "" {
 		addr = a
@@ -499,7 +503,7 @@ func main() {
 	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
 	timing.Metrics = metrics
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(http.DefaultServeMux))))
 }
 
 // registerRoutes attaches every surface this service serves to mux. This is the
@@ -645,6 +649,11 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	if osUser != real {
 		body["realUser"] = real
+	}
+	// The caller's Person id (ADR-0048), so the page can name the person to
+	// Rybbit. Always the real caller's, also while acting as someone else.
+	if id.Person != "" {
+		body["person"] = id.Person
 	}
 	json.NewEncoder(w).Encode(body)
 }

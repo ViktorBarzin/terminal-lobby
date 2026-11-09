@@ -431,11 +431,16 @@ func main() {
 	root.HandleFunc("POST /hooks/claimed", localhostOnly(peerOwnsClaim(handleClaimed(rg))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
+	// The telemetry standard (docs/adr/0048-usage-events-reach-the-event-pipeline.md):
+	// JSON log lines, Product events and error reports.
+	product, stopTelemetry := telemetry.Start("session-events", buildID, events)
+	defer stopTelemetry()
+	actAsGate.OnPerson = product.LearnPerson
 	actAsGate.Configure("session-events", *addr)
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	go timing.Run(ctx.Done())
-	srv := &http.Server{Handler: timing.Wrap(root)}
+	srv := &http.Server{Handler: timing.Wrap(telemetry.ReportPanics(root))}
 	log.Printf("session-events listening on %s (%s; usermap=%s, homeBase=%s)", ln.Addr(), from, *mapPath, *homeBase)
 	if err := serveUntil(ctx, srv, ln, shutdownGrace); err != nil {
 		log.Fatal(err)

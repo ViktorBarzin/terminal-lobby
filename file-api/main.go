@@ -19,6 +19,8 @@ import (
 	"os"
 	"os/user"
 	"strings"
+
+	"terminal-lobby/telemetry"
 )
 
 // listenAddr — :7686, the next free port after clipboard-upload (:7683),
@@ -84,6 +86,11 @@ func main() {
 			addr = net.JoinHostPort(b, port)
 		}
 	}
+	// The telemetry standard (docs/adr/0048-usage-events-reach-the-event-pipeline.md):
+	// JSON log lines, Product events and error reports. Here, after the privop
+	// dispatch, so a privileged child's stdout stays its JSON envelope.
+	product, _ := telemetry.Start("file-api", buildID, events)
+	actAsGate.OnPerson = product.LearnPerson
 	actAsGate.Configure("file-api", addr)
 	if a := os.Getenv("FILE_API_ADDR"); a != "" {
 		addr = a
@@ -91,5 +98,5 @@ func main() {
 	log.Printf("file-api listening on %s (homeBase=%s, selfUser=%s)",
 		addr, homeBase, selfUser)
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(http.DefaultServeMux))))
 }

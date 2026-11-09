@@ -321,6 +321,10 @@ export interface Whoami {
   /** Where this user's New starts Claude when their own setting
    *  (`session.claudeBackend`) is unset: TL_T3_DEFAULT_USERS on the box. */
   claudeBackend?: ClaudeBackend;
+  /** The CALLER's Person id, the Authentik hashed user id the proxy sends
+   *  (ADR-0048), handed to Rybbit by `telemetry/analytics.ts`. Absent on a box
+   *  whose proxy sends none. */
+  person?: string;
 }
 
 export const LAYOUT_VERSION = 1;

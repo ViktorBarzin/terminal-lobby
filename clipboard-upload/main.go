@@ -116,6 +116,10 @@ func main() {
 			addr = net.JoinHostPort(b, port)
 		}
 	}
+	// The telemetry standard (docs/adr/0048-usage-events-reach-the-event-pipeline.md):
+	// JSON log lines, Product events and error reports.
+	product, _ := telemetry.Start("clipboard-upload", buildID, events)
+	actAsGate.OnPerson = product.LearnPerson
 	actAsGate.Configure("clipboard-upload", addr)
 	if a := os.Getenv("CLIPBOARD_UPLOAD_ADDR"); a != "" {
 		addr = a
@@ -124,7 +128,7 @@ func main() {
 	// The public-asset dispatcher rides ahead of the mux (see
 	// withPublicAssets); every existing route falls through untouched.
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(withPublicAssets(http.DefaultServeMux))))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(withPublicAssets(http.DefaultServeMux)))))
 }
 
 // actAsGate resolves every request: the proxy secret, the identity header, the

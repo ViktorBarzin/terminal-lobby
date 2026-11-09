@@ -217,3 +217,32 @@ func TestWhoamiOmitsRealUserWhenNotActingAs(t *testing.T) {
 		t.Fatalf("admin = %v for a non-admin, want false", got["admin"])
 	}
 }
+
+// The Person id the proxy sent is the CALLER's, so the SPA can name the person
+// to Rybbit; acting as someone else does not change whose it is. No header, no
+// field, so a box without Authentik answers as it always has.
+func TestWhoamiCarriesTheCallersPersonID(t *testing.T) {
+	_, other := actAsFixture(t)
+	const uid = "5e1d0c9b8a7f6e5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e4"
+	r := projectsReq(http.MethodGet, "/whoami?as="+other, "", "adminauth")
+	r.Header.Set(authuser.DefaultPersonHeader, uid)
+	rec := httptest.NewRecorder()
+	handleWhoami(rec, r)
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode whoami: %v", err)
+	}
+	if got["person"] != uid {
+		t.Fatalf("person = %v, want the caller's id", got["person"])
+	}
+
+	rec = httptest.NewRecorder()
+	handleWhoami(rec, projectsReq(http.MethodGet, "/whoami", "", "otherauth"))
+	got = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode whoami: %v", err)
+	}
+	if _, present := got["person"]; present {
+		t.Fatalf("person = %v with no Person header", got["person"])
+	}
+}

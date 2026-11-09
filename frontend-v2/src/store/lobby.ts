@@ -72,6 +72,7 @@ import { lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
 import { lsGet, lsSet } from "../lib/storage";
 import { noteBirthNames } from "./keepalive";
+import { identifyPerson } from "../telemetry/analytics";
 
 export interface SelectedSession {
   name: string;
@@ -853,6 +854,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       try {
         gotWhoami = await api.whoami();
         setWhoami(gotWhoami);
+        if (typeof window !== "undefined") identifyPerson(gotWhoami.person, window);
       } catch (e) {
         if (seq < appliedSeq) return "failed";
         appliedSeq = seq;

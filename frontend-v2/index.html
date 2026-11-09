@@ -12,6 +12,9 @@
     />
     <meta name="theme-color" content="#0d1117" />
     <meta name="color-scheme" content="dark light" />
+    <!-- The lobby loads Rybbit itself (src/telemetry/analytics.ts, ADR-0048),
+         so the edge injection plugin leaves this page alone. -->
+    <meta name="analytics" content="sdk" />
     <!-- The UPDATE IDENTITY (ADR-0007): a fingerprint of this frontend's own
          content, stamped by deploy-v2.sh. A running page compares it against the
          served one to decide whether a real update exists — which is why a

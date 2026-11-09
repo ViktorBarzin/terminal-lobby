@@ -214,6 +214,23 @@ TL_T3_HOSTS=wizard=t3.viktorbarzin.me
 # Everyone else starts Claude in tmux and is offered "New in T3". A user listed
 # here who has no T3 server starts in tmux.
 TL_T3_DEFAULT_USERS=wizard
+
+# Product analytics and error reports (docs/adr/0048-usage-events-reach-the-
+# event-pipeline.md). All off unless set, and nothing leaves the box unless
+# TELEMETRY_ENVIRONMENT is production. With a Write key, the usage events a
+# person causes are also sent, in the Segment spec, to the Event pipeline at
+# TELEMETRY_HOST, which takes the base URL (the client appends /v1/batch).
+# SENTRY_DSN reports server errors and panics to a Sentry-compatible server.
+# The services write their log lines as JSON with OpenTelemetry field names
+# whatever is set here.
+#TELEMETRY_WRITE_KEY=
+#TELEMETRY_HOST=https://lobby.example.com/_t/e
+#TELEMETRY_ENVIRONMENT=production
+#SENTRY_DSN=
+
+# The header carrying the caller's analytics Person id. Authentik's outpost
+# sends the hashed user id here. Read for analytics only, never for access.
+#TL_PERSON_HEADER=X-Authentik-Uid
 `
 }
 

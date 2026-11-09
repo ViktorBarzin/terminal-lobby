@@ -11,7 +11,10 @@
 #
 #   docker run -p 7681:7681 -e TL_BASIC_AUTH=me:secret ...
 
-FROM golang:1.23-bookworm AS build
+# 1.25 because the services import the homelab telemetry library
+# (github.com/ViktorBarzin/telemetry/go), whose module needs it, and the
+# golang image sets GOTOOLCHAIN=local, so an older image cannot fetch it.
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 # Each service is its own module, so they are copied and built independently
 # rather than through one workspace.
