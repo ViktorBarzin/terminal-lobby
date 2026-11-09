@@ -16,7 +16,7 @@ where it is.
 
 | Question | Decision |
 |---|---|
-| Which events | 78 of the catalog's 126 names, the closed list in `telemetry/product.go`: things a person did, and real state changes. `claude.state_changed` is one: session-events emits it on a transition only, never on a repeated stamp |
+| Which events | 78 of the catalog's 126 names, the closed list in `telemetry/product.go`: things a person did, and real state changes. `claude.state_changed` is one: session-events emits it on a transition only, never on a repeated stamp, and a transition from `none` is not forwarded, because every live session's mod stamps its state afresh when session-events restarts (11 of the first 11 forwarded were that) |
 | Which do not | Diagnostics (ADR-0008), load and stream timings, sweeps (`session.grid_repinned`, `session.grid_sized`, `session.autonamed`), errors (`app.error`, `api.*`), the mod's lifecycle, the iOS tap-chain records, and `share.guest`, which fires per guest write. They are Ops telemetry and stay in the journal |
 | Whose | Nothing from a System session (the drop rule already keeps those out of the journal) and nothing tagged `tl.caller`: a Caller's turns are a program's work, not a person's |
 | How | The usage emitter forwards after it writes the journal line. One goroutine per service sends through the telemetry library (`github.com/ViktorBarzin/telemetry/go`), from a queue of 1,024; when the queue is full an event is dropped, so a request never waits on analytics |

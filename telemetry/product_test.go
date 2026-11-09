@@ -309,3 +309,17 @@ func TestAnonymousForIsStableAndPerUser(t *testing.T) {
 		t.Fatal("the id spells out the account name")
 	}
 }
+
+// When session-events restarts, every live Claude's mod says hello again and
+// its state is stamped from nothing, which the journal records as a
+// transition from "none". Measured on the first deploy: 11 of 11 forwarded
+// state changes were that, none of them something a session did.
+func TestAStateStampedFromNothingIsNotForwarded(t *testing.T) {
+	e, p, sink := newForwarding(t)
+	e.Emit("claude.state_changed", "wizard", Attrs{"tl.session": "w1", "tl.from": "none", "tl.to": "done"})
+	e.Emit("claude.state_changed", "wizard", Attrs{"tl.session": "w1", "tl.from": "running", "tl.to": "done"})
+	tracks := sink.of(p, "track")
+	if len(tracks) != 1 || tracks[0].props["from"] != "running" {
+		t.Fatalf("tracks = %+v, want only the real transition", tracks)
+	}
+}

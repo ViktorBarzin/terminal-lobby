@@ -126,6 +126,14 @@ var productNames = map[string]string{
 	"claude.state_set":     "claude.state_set",
 }
 
+// notAChange holds the forwarded events that are sometimes not what they say.
+// claude.state_changed from "none" is a Claude's state stamped afresh when its
+// mod says hello, which every live session does again each time session-events
+// restarts; the journal keeps it, the Product event would count deploys.
+var notAChange = map[string]func(Attrs) bool{
+	"claude.state_changed": func(a Attrs) bool { return a["tl.from"] == "none" },
+}
+
 // ProductName reports the Product event a catalog name is sent as, and
 // whether it is sent at all.
 func ProductName(name string) (string, bool) {
@@ -315,6 +323,9 @@ func (p *Product) forward(service, name, osUser string, attrs Attrs) {
 		return
 	}
 	if caller, _ := attrs[CallerAttr].(string); caller != "" {
+		return
+	}
+	if skip := notAChange[name]; skip != nil && skip(attrs) {
 		return
 	}
 	anon, _ := attrs[DeviceAttr].(string)
