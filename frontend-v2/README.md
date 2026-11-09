@@ -1243,6 +1243,7 @@ src/
   telemetry/stale.ts     Reports a Text view whose stream stopped delivering (text.stale)
   telemetry/device.ts    Per-installation id stamped on every event, mirrored to IndexedDB for sw.js
   telemetry/diag.ts      Typed seam onto the shared frontend/diag.js core (ADR-0008)
+  telemetry/analytics.ts Rybbit pageviews and replay on the production host, Person from /whoami (ADR-0048)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)
   theme/theme.ts         Live theme switch + xterm ITheme derivation
 public/                  sw.js (push-only — a fetch listener is FORBIDDEN),
