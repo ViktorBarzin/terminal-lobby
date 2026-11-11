@@ -25,7 +25,7 @@ import type { TerminalReport } from "../src/diagnostics/status";
 /** The props the last (and only) mounted terminal was handed. */
 interface TerminalProps {
   args?: string;
-  onGrid?: (cols: number, rows: number) => void;
+  onGrid?: (cols: number, rows: number, reason: GridClaimReason) => void;
   onConn?: (report: TerminalReport) => void;
 }
 const terminals: TerminalProps[] = [];
@@ -46,6 +46,7 @@ vi.mock("../src/lib/lobby-api", async (orig) => {
 
 import { SessionView } from "../src/components/SessionView";
 import { setSessionGrid } from "../src/lib/lobby-api";
+import type { GridClaimReason } from "../src/terminal/claim";
 import { resolvedWatchFor } from "../src/store/watchmode";
 
 /** Every EventSource the transcript store opened. */
@@ -86,6 +87,21 @@ afterEach(() => {
 const argsOf = (c: HTMLElement): string =>
   c.querySelector(".tl-terminal-native")?.getAttribute("data-tl-args") ?? "";
 
+/**
+ * The attach args with arg8 replaced by a fixed word.
+ *
+ * Every attach carries a client id now (lib/client-id.ts, ttyd arg 8), and it
+ * is random per mount, so the exact strings below would be unassertable
+ * without this. What each case is about is the slot ABOVE it — which is
+ * exactly what stays readable when the id is stood in for.
+ */
+const argsWithFixedId = (c: HTMLElement): string => {
+  const slots = new URLSearchParams(argsOf(c)).getAll("arg");
+  const last = slots.length - 1;
+  if (last >= 7 && /^[0-9a-f]{32}$/.test(slots[last]!)) slots[last] = "<id>";
+  return slots.map((v) => "arg=" + encodeURIComponent(v)).join("&");
+};
+
 describe("<SessionView> — a preloading mount", () => {
   it("attaches with the preload mode at arg5", () => {
     const { container } = render(() => (
@@ -93,12 +109,20 @@ describe("<SessionView> — a preloading mount", () => {
     ));
     // Position 5 is the attach mode, and the empty arg4 in front of it is the
     // owner slot: tmux-attach.sh reads a blank owner as "mine".
-    expect(argsOf(container)).toBe("arg=main&arg=default&arg=default&arg=&arg=pre");
+    expect(argsWithFixedId(container)).toBe(
+      "arg=main&arg=default&arg=default&arg=&arg=pre&arg=&arg=&arg=%3Cid%3E",
+    );
   });
 
   it("leaves an ordinary attach exactly as it was", () => {
     const { container } = render(() => <SessionView session="main" />);
-    expect(argsOf(container)).toBe("arg=main");
+    // No "pre" on arg5, which is the whole of what this case is about. The
+    // placeholders around it are arg8 being pushed into position, not a
+    // request for anything: the attach script reads every empty slot as
+    // absent, and 'default' as a command and a dir it ignores.
+    expect(argsWithFixedId(container)).toBe(
+      "arg=main&arg=default&arg=default&arg=&arg=&arg=&arg=&arg=%3Cid%3E",
+    );
   });
 
   // A watch attaches read-only, which calls PinGrid, and tmux-api/grid.go never
@@ -263,7 +287,7 @@ describe("<SessionView> — a preloading mount", () => {
 
   it("does not claim the grid while it is only a preload", () => {
     render(() => <SessionView session="main" preloading={() => true} visible={false} />);
-    terminals[0]?.onGrid?.(200, 50);
+    terminals[0]?.onGrid?.(200, 50, "fit");
     expect(setSessionGrid).not.toHaveBeenCalled();
   });
 
@@ -277,10 +301,13 @@ describe("<SessionView> — a preloading mount", () => {
 
     setPre(false);
     setVis(true);
-    terminals[0]?.onGrid?.(200, 50);
+    terminals[0]?.onGrid?.(200, 50, "fit");
 
     expect(setSessionGrid).toHaveBeenCalledTimes(1);
-    expect(setSessionGrid).toHaveBeenCalledWith("main", 200, 50);
+    // The reveal is a `shown` fit, and the id is this mount's own connection
+    // (lib/client-id.ts), which is what lets tmux-api promote THIS preload
+    // client rather than the first one it happens to find.
+    expect(setSessionGrid).toHaveBeenCalledWith("main", 200, 50, "fit", expect.stringMatching(/^[0-9a-f]{32}$/));
   });
 
   it("keeps the same terminal across the promotion, and stops calling itself a preload", () => {
@@ -303,7 +330,9 @@ describe("<SessionView> — a preloading mount", () => {
     // session parked off screen for 30 s used to come back as a preload client,
     // and tmux never sizes a window to one of those. The window then kept
     // whatever the last device to attach had left it at.
-    expect(argsOf(container)).toBe("arg=main");
+    expect(argsWithFixedId(container)).toBe(
+      "arg=main&arg=default&arg=default&arg=&arg=&arg=&arg=&arg=%3Cid%3E",
+    );
   });
 
   it("reports the attach landing and failing", () => {

@@ -44,12 +44,23 @@ import { render } from "@solidjs/testing-library";
  * this file needs — the grid claim a landed fit makes.
  */
 const native = vi.hoisted(() => ({
-  claim: null as null | ((cols: number, rows: number) => void),
+  /** The LAST mounted terminal's claim lever, which is every case with one
+   *  tile on screen. */
+  claim: null as null | ((cols: number, rows: number, reason?: string) => void),
+  /** One lever per mounted terminal, in mount order. A workspace has four
+   *  terminals up at once and each claims for its OWN session, so the cases
+   *  about per-tile ownership need to fire them one at a time. */
+  claimers: [] as ((cols: number, rows: number, reason?: string) => void)[],
 }));
 
 vi.mock("../src/components/TerminalNative", () => ({
-  TerminalNative: (props: { onGrid?: (cols: number, rows: number) => void }) => {
-    native.claim = (cols, rows) => props.onGrid?.(cols, rows);
+  TerminalNative: (props: {
+    onGrid?: (cols: number, rows: number, reason: string) => void;
+  }) => {
+    const fire = (cols: number, rows: number, reason?: string): void =>
+      props.onGrid?.(cols, rows, reason ?? "fit");
+    native.claim = fire;
+    native.claimers.push(fire);
     return <div class="tl-terminal-native" />;
   },
 }));
@@ -58,10 +69,24 @@ vi.mock("../src/components/TerminalNative", () => ({
  *  one export is replaced: a whole-module mock would take the session list and
  *  the layout with it. */
 const grids = vi.hoisted(() => [] as string[]);
+/** The per-connection client id each claim carried, in the same order. Two
+ *  tiles are two ttyd connections and two tmux clients, so two ids. */
+const clients = vi.hoisted(() => [] as string[]);
+/** And what made each claim, which is what tmux-api records on
+ *  `session.grid_claimed`. */
+const reasons = vi.hoisted(() => [] as string[]);
 vi.mock("../src/lib/lobby-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/lobby-api")>()),
-  setSessionGrid: async (name: string, cols: number, rows: number) => {
+  setSessionGrid: async (
+    name: string,
+    cols: number,
+    rows: number,
+    reason: string,
+    client: string,
+  ) => {
     grids.push(`${name} ${cols}x${rows}`);
+    clients.push(client);
+    reasons.push(reason);
   },
 }));
 
@@ -369,7 +394,10 @@ describe("every visible tile re-claims its grid when the visible set moves", () 
     vi.useFakeTimers();
     localStorage.clear();
     grids.length = 0;
+    clients.length = 0;
+    reasons.length = 0;
     native.claim = null;
+    native.claimers.length = 0;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -462,6 +490,93 @@ describe("every visible tile re-claims its grid when the visible set moves", () 
     // The boot fit is about to claim for the first time; inventing a size to
     // beat it there would pin the window to a guess.
     expect(grids).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One tile, one session, one claim
+// ---------------------------------------------------------------------------
+
+/**
+ * DECISION 11 OF THE PANE-OWNERSHIP DESIGN: every read-write tile claims its
+ * OWN session at its OWN tile size, and because one session has one tile, no
+ * two tiles can fight.
+ *
+ * That is the property worth pinning rather than asserting, because
+ * last-active-wins makes the cost of getting it wrong specific: four tiles on
+ * screen, each of them `beingRead`, and a claim that leaked from one to
+ * another would resize a neighbour's session every time the pointer crossed a
+ * tile. The gate that prevents it is not a rule in the shell at all — it is
+ * that each SessionView holds one session name and one client id, and each
+ * terminal's listeners are scoped to its own host element.
+ */
+describe("each tile of a workspace claims its own session", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    grids.length = 0;
+    clients.length = 0;
+    reasons.length = 0;
+    native.claim = null;
+    native.claimers.length = 0;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  /** Two tiles, side by side, both on screen, at different sizes. */
+  const two = (): void => {
+    const stamp = (): string => "auth\0deploy";
+    render(() => <SessionView session="qa-tile-auth" visible visibleSet={stamp} />);
+    render(() => <SessionView session="qa-tile-deploy" visible visibleSet={stamp} />);
+  };
+
+  it("sends each tile's own size against each tile's own session", () => {
+    two();
+    expect(native.claimers).toHaveLength(2);
+    native.claimers[0]?.(60, 40);
+    native.claimers[1]?.(120, 24);
+    expect(grids).toEqual(["qa-tile-auth 60x40", "qa-tile-deploy 120x24"]);
+  });
+
+  /** Which is also the case a shared id would break: two tmux clients under
+   *  one name and tmux-api resolving the wrong one. */
+  it("claims under a different client id per tile", () => {
+    two();
+    native.claimers[0]?.(60, 40);
+    native.claimers[1]?.(120, 24);
+    expect(clients).toHaveLength(2);
+    expect(clients[0]).toMatch(/^[0-9a-f]{32}$/);
+    expect(clients[0]).not.toBe(clients[1]);
+  });
+
+  /**
+   * A tile nobody has touched claims nothing. This is the pointer sweep: it
+   * lands on ONE host, so one tile hears it, and the three others sit still.
+   * Hanging the listener on the document instead would fire all four, and
+   * every `beingRead` gate would pass, because in a workspace they all are.
+   */
+  it("leaves the other tiles silent when one of them is touched", () => {
+    two();
+    native.claimers[0]?.(60, 40, "input");
+    expect(grids).toEqual(["qa-tile-auth 60x40"]);
+    expect(reasons).toEqual(["input"]);
+  });
+
+  /**
+   * An UNFOCUSED but visible tile still claims. Exactly one of four tiles
+   * holds the keyboard, and the other three are attached, fitted and read —
+   * so gating the claim on focus would leave three sessions at whatever size
+   * another device last left them.
+   */
+  it("claims for a visible tile that does not hold the keyboard", () => {
+    // No TileFocusContext around either view, which is the shape a tile that
+    // is not the selected one renders in: `focused()` is false and `onScreen`
+    // is true, and the claim rides `onScreen`.
+    two();
+    native.claimers[1]?.(120, 24, "fit");
+    expect(grids).toEqual(["qa-tile-deploy 120x24"]);
   });
 });
 

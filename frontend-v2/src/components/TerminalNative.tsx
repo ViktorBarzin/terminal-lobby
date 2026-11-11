@@ -31,6 +31,7 @@ import {
   type FitState,
   type HostBox,
 } from "../terminal/fit";
+import { leadingThrottle, type GridClaimReason } from "../terminal/claim";
 import { EMPTY_HELD, isHolding, type HeldState, type HeldVerdict } from "../terminal/held";
 import {
   NO_GESTURE,
@@ -154,6 +155,24 @@ const REFIT_DEBOUNCE_MS = 120;
 
 /** One watch-mode nudge per this long, however many keys (term.html:8303). */
 const WATCH_NUDGE_MS = 4000;
+
+/**
+ * One pointer-driven grid claim per this long, however many moves.
+ *
+ * 250 ms for three reasons. It is already `GRID_RECLAIM_MS` in SessionView, so
+ * there is one number to remember rather than two. A desktop mouse reports at
+ * roughly 100 Hz (the figure the drag code below measured), so it cuts a
+ * one-second sweep from 100 calls to 4. And it is short enough that the window
+ * comes back inside the same gesture, which is the whole point of claiming on
+ * a pointer move at all.
+ *
+ * The two dedupes downstream then collapse those 4 to at most one request:
+ * SessionView's quiet window swallows a repeat of the same grid, and its skip
+ * drops a claim for a window this device already matches. This throttle is
+ * what stops the pointer path spending that budget and starving the focus and
+ * keystroke paths of it.
+ */
+const POINTER_CLAIM_MS = 250;
 
 /**
  * One held-input message per this long, across all of them. term.html keeps
@@ -692,9 +711,8 @@ export const TerminalNative: Component<{
    */
   onAttention?: (kind: AttentionKind) => void;
   /**
-   * This terminal is the one being read, and this is the grid it is being read
-   * at. Fired on every landed fit, on a view coming back on screen even when it
-   * needed no fit, and when the terminal takes focus.
+   * This terminal is the one being read, this is the grid it is being read at,
+   * and this is what made it say so.
    *
    * The lobby turns it into "size the session's tmux window to me". That cannot
    * be `attachment.resize()`, which sets this client's pty and nothing else: a
@@ -702,11 +720,25 @@ export const TerminalNative: Component<{
    * resize, and switching back to a kept session is none of the three. See
    * `claimGrid` below for the whole argument.
    *
+   * SIX MOMENTS, which is last-active-wins as this component sees it. Nobody
+   * holds the window: the device touched most recently takes it, so every
+   * moment that means "a person is at this device" has to fire, and the losing
+   * device takes the window straight back by being used. Two of them are the
+   * machine moving (`fit`, `socket-open`), two are a person arriving (`focus`,
+   * `input`), one is the view changing what it is (`take-control`), and the
+   * last belongs to the caller (`visible-set`, which SessionView raises for a
+   * workspace tile whose box never changed).
+   *
+   * The reason travels to tmux-api and lands on `session.grid_claimed`, so a
+   * claim firing for the wrong cause is a wrong series rather than a wrong
+   * size — which is why it is a closed union (terminal/claim.ts) rather than a
+   * string.
+   *
    * WHICH session this is belongs to the caller, as with `onAttention` — and so
    * does whether this device may claim the grid at all, which is a Watch-mode
    * question this component cannot answer.
    */
-  onGrid?: (cols: number, rows: number) => void;
+  onGrid?: (cols: number, rows: number, reason: GridClaimReason) => void;
 }> = (props) => {
   let host: HTMLDivElement | undefined;
   let attachment: Attachment | null = null;
@@ -743,6 +775,25 @@ export const TerminalNative: Component<{
   // term.html's two toast clocks, kept apart for the reason HELD_SAY_MS gives.
   let nudgedAt = 0;
   let saidAt = 0;
+  /**
+   * The pointer's grid claim, rate-limited to one per POINTER_CLAIM_MS.
+   *
+   * At component scope rather than inside the mount body, so a terminal whose
+   * socket drops and comes back keeps one budget instead of getting a fresh
+   * one per attach.
+   */
+  const mayClaimForPointer = leadingThrottle(POINTER_CLAIM_MS);
+  /**
+   * A take-control is on its way: the watch effect below is about to reconnect
+   * read-write, and the claim the new socket makes is that, not an ordinary
+   * reconnect.
+   *
+   * A one-shot flag rather than reading `props.watch()` in `onAttach`, because
+   * by then the signal has already settled to false and every later reconnect
+   * of a driving terminal would read the same. Set where the intent is, read
+   * and cleared once where the claim is.
+   */
+  let takingControl = false;
 
   /**
    * Is the primary pointer a finger? Read ONCE, where term.html reads it once
@@ -1165,6 +1216,11 @@ export const TerminalNative: Component<{
         // the first real toggle would arrive looking exactly like this one.
         if (before === undefined || watching === before) return;
         if (!beingRead() || phaseNow === "ended") return;
+        // TAKE CONTROL is watching going false, and it is the one reconnect
+        // that is a person making a decision rather than a socket recovering.
+        // The claim itself still rides `onAttach` — there is no tmux client to
+        // claim for until the new socket lands — so all this does is name it.
+        takingControl = !watching;
         attachment?.reconnect();
       },
     ),
@@ -1394,7 +1450,7 @@ export const TerminalNative: Component<{
           // hook fires and a pinned window keeps whatever the last device to
           // attach left it at (tmux-api/grid_size.go). fit.ts is right that
           // there is no fit to run here; it is the tmux half that is missing.
-          if (type === "shown") claimGrid();
+          if (type === "shown") claimGrid("fit");
           return false;
         }
         try {
@@ -1423,7 +1479,7 @@ export const TerminalNative: Component<{
         // spare frame rather than a wrong one. Nothing goes out before the
         // socket exists: the boot size rides the handshake instead.
         attachment?.resize();
-        claimGrid();
+        claimGrid("fit");
         return true;
       };
 
@@ -1451,10 +1507,14 @@ export const TerminalNative: Component<{
        *
        * Nothing before the socket: with no attachment there is no tmux client
        * to speak for, and the boot size rides the handshake.
+       *
+       * THE ONE FUNNEL every claim in this component goes through, which is
+       * why the reason is threaded here rather than at the prop: six call
+       * sites, one place that can be wrong about what a claim costs.
        */
-      const claimGrid = (): void => {
+      const claimGrid = (reason: GridClaimReason): void => {
         if (disposed || !attachment) return;
-        props.onGrid?.(term.cols, term.rows);
+        props.onGrid?.(term.cols, term.rows, reason);
       };
 
       /**
@@ -2595,7 +2655,15 @@ export const TerminalNative: Component<{
           // reconnecting is someone else's window to lose: the phone reading
           // the same session would have its grid pulled to this desktop's size
           // by a socket nobody here is looking at.
-          if (beingRead()) claimGrid();
+          //
+          // A TAKE-CONTROL ARRIVES HERE TOO, and is worth telling apart. It is
+          // the same socket opening, but the cause is a person deciding to
+          // drive a session they were watching, and that is the one claim a
+          // read-write device makes having never claimed before. The flag the
+          // watch effect set is read and cleared here, so the reconnect after
+          // it reports itself honestly as a socket opening.
+          if (beingRead()) claimGrid(takingControl ? "take-control" : "socket-open");
+          takingControl = false;
         },
         onPhase: (phase, attempt) => {
           phaseNow = phase;
@@ -2640,6 +2708,23 @@ export const TerminalNative: Component<{
        */
       const send = (data: string): void => {
         cancelCoast();
+        // AND TYPING IS A CLAIM, which is the one last-active-wins needs most.
+        // Nobody holds the window, so a device that lost it gets it back by
+        // being used — and the first thing a person does with a terminal they
+        // have just lost is type into it. A desktop that already had focus and
+        // needs no fit gets no other moment at all.
+        //
+        // HERE rather than on `term.onData` (below), for two reasons. This
+        // choke point covers everything onData covers PLUS the bridges, so the
+        // soft keys, the palette and the Text composer's send-to-terminal all
+        // count as a person being here. And it excludes the compose mirror's
+        // own echo, which reaches onData with `mirrorEmitting` set and is this
+        // component talking to itself.
+        //
+        // No focus gate of its own: `send` is reachable only from the tile
+        // holding DOM focus or from the bridges, which `owns()` already gates
+        // on `ownsBridges && focused`.
+        claimGrid("input");
         a.send(data);
       };
 
@@ -2965,8 +3050,24 @@ export const TerminalNative: Component<{
        * cost it nothing. The page's other half of this listener, stripping its
        * own '● ' title prefix (:5777-5780), is the branch for a page with no
        * lobby to tell, and there is no native terminal outside the lobby.
+       *
+       * IT HAS A SECOND JOB NOW: the tab coming back is a focus, and it is the
+       * only arm that covers a tab hidden for LESS than the battery saver's
+       * 30 s. Past that the socket has gone and its reconnect claims on its
+       * own; inside it nothing refits, no `focusin` fires, and the window has
+       * very likely moved, because a hidden tab is exactly when another device
+       * takes it.
+       *
+       * `beingRead()` matters here where it does not for `focusin`. Every
+       * visited session stays mounted (store/keepalive.ts) and this is a
+       * DOCUMENT listener, so without the gate one tab switch would have every
+       * mounted terminal claim at once and the last to run would win a window
+       * nobody is looking at.
        */
-      const onVisibility = (): void => feedAttention({ type: "tab", tabHidden: document.hidden });
+      const onVisibility = (): void => {
+        feedAttention({ type: "tab", tabHidden: document.hidden });
+        if (!document.hidden && beingRead()) claimGrid("focus");
+      };
       document.addEventListener("visibilitychange", onVisibility);
 
       // MOUSE REPORTS, and anything else xterm hands over as bytes-in-a-string:
@@ -3659,8 +3760,38 @@ export const TerminalNative: Component<{
       //
       // `focusin` rather than `focus` because the element that takes it is
       // xterm's offscreen helper textarea, a descendant of the host.
-      const onHostFocusIn = (): void => claimGrid();
+      //
+      // No `beingRead()` gate here, and none is wanted: focus lands on one
+      // element in one document, so the tile that took it IS the one in front
+      // of the person. The browser window regaining focus while this terminal
+      // held the active element re-fires it too, which is the case a tab
+      // switch alone would miss.
+      const onHostFocusIn = (): void => claimGrid("focus");
       host.addEventListener("focusin", onHostFocusIn);
+
+      /**
+       * REACHING FOR THE MOUSE IS A CLAIM, and it is the cheapest way back to
+       * a window another device took: it happens before the person has decided
+       * what to type, so the terminal is already the right size by the time
+       * they click into it.
+       *
+       * HOST-SCOPED, which is the whole of what makes it right in a workspace.
+       * The document-capture `mousemove` further up fires for a move anywhere
+       * in the page and every mounted terminal has one, so hanging this there
+       * would have four tiles claim four sessions for a pointer sitting over
+       * one. `pointermove` rather than `mousemove` so a pen and a touch-drag
+       * count, matching what `focusin` and `paste` already do on this element.
+       *
+       * `beingRead()` because a mounted-but-hidden session still has a host in
+       * the document, and a pointer crossing the space a hidden tile occupies
+       * is nobody claiming anything.
+       */
+      const onHostPointerMove = (): void => {
+        if (!beingRead()) return;
+        if (!mayClaimForPointer()) return;
+        claimGrid("input");
+      };
+      host.addEventListener("pointermove", onHostPointerMove);
 
       // `ask` goes through attach.ts's `reportNow`, which re-fires the same
       // `onPhase` above rather than reading the ladder from out here, so the
@@ -3862,6 +3993,7 @@ export const TerminalNative: Component<{
         host?.removeEventListener("wheel", onHostWheel, true);
         host?.removeEventListener("paste", onPasteEvent, true);
         host?.removeEventListener("focusin", onHostFocusIn);
+        host?.removeEventListener("pointermove", onHostPointerMove);
         document.removeEventListener("visibilitychange", onVisibility);
         // The pinch's document listeners, which outlive this terminal's DOM and
         // would otherwise go on hit-testing against a host nobody can see. The

@@ -364,3 +364,102 @@ describe("buildTerminalArgs — arg5 is drive | watch | preload", () => {
     expect(() => buildTerminalArgs("foo", opts)).toThrow(/mutually exclusive/i);
   });
 });
+
+/**
+ * arg8 — which tmux client this connection is.
+ *
+ * The deepest slot there is, and the first one every attach carries rather
+ * than a branch: last-active-wins needs the id on every connection, because a
+ * device that cannot name its client cannot take the window. Everything above
+ * it is emitted as a placeholder to push it into position, which is the rule
+ * arg5 already established and the reason scripts/test_watch_mode_e2e.py
+ * exists (memory #9926, an arg dying at a boundary).
+ */
+describe("buildTerminalArgs — arg8 (the client id)", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+  const args = (u: string): string[] => new URLSearchParams(u).getAll("arg");
+
+  it("lands at arg8 with every slot above it filled in", () => {
+    expect(args(buildTerminalArgs("foo", { client: ID }))).toEqual([
+      "foo",
+      "default", // arg2, the inert command placeholder
+      "default", // arg3, a non-absolute dir the attach script ignores
+      "", // arg4, blank owner = mine
+      "", // arg5, no attach mode
+      "", // arg6, no model
+      "", // arg7, no effort
+      ID,
+    ]);
+  });
+
+  it("keeps the watch flag on arg5 with an id below it", () => {
+    const a = args(buildTerminalArgs("foo", { client: ID, watch: true }));
+    expect(a[4]).toBe("ro");
+    expect(a[7]).toBe(ID);
+  });
+
+  it("keeps the preload flag on arg5 with an id below it", () => {
+    const a = args(buildTerminalArgs("foo", { client: ID, preload: true }));
+    expect(a[4]).toBe("pre");
+    expect(a[7]).toBe(ID);
+  });
+
+  it("keeps an owner on arg4, a dir on arg3 and a command on arg2", () => {
+    expect(
+      args(buildTerminalArgs("foo", { client: ID, cmd: "codex", dir: "/srv/p", owner: "bob" })),
+    ).toEqual(["foo", "codex", "/srv/p", "bob", "", "", "", ID]);
+  });
+
+  it("keeps a model on arg6 and an effort on arg7", () => {
+    expect(
+      args(buildTerminalArgs("foo", { client: ID, model: "gpt-5.6-terra", effort: "high" })),
+    ).toEqual(["foo", "default", "default", "", "", "gpt-5.6-terra", "high", ID]);
+  });
+
+  it("still throws on watch and preload together, id or no id", () => {
+    expect(() => buildTerminalArgs("foo", { client: ID, watch: true, preload: true })).toThrow(
+      /mutually exclusive/i,
+    );
+  });
+
+  /**
+   * THE SHAPES THAT MUST NOT MOVE. Everything below predates arg8 and is
+   * checked byte-for-byte against what the branches emitted before it existed:
+   * a slot appearing or disappearing here is a shared attach that silently
+   * stops working, which is what the positional contract's red line is about.
+   */
+  it.each<{ label: string; opts: TerminalUrlOpts; want: string[] }>([
+    { label: "a bare attach", opts: {}, want: ["foo"] },
+    { label: "the default command, said out loud", opts: { cmd: "default" }, want: ["foo"] },
+    { label: "a command", opts: { cmd: "claude" }, want: ["foo", "claude"] },
+    { label: "a dir", opts: { dir: "/srv/p" }, want: ["foo", "default", "/srv/p"] },
+    {
+      label: "an owner",
+      opts: { owner: "bob" },
+      want: ["foo", "default", "default", "bob"],
+    },
+    { label: "a watch", opts: { watch: true }, want: ["foo", "default", "default", "", "ro"] },
+    {
+      label: "a preload",
+      opts: { preload: true },
+      want: ["foo", "default", "default", "", "pre"],
+    },
+    {
+      label: "a model",
+      opts: { model: "claude-opus-5" },
+      want: ["foo", "default", "default", "", "", "claude-opus-5"],
+    },
+    {
+      label: "an effort with no model",
+      opts: { effort: "max" },
+      want: ["foo", "default", "default", "", "", "", "max"],
+    },
+    {
+      label: "a watch with a model and an effort",
+      opts: { watch: true, model: "claude-opus-5", effort: "max" },
+      want: ["foo", "default", "default", "", "ro", "claude-opus-5", "max"],
+    },
+  ])("emits no empty slot for $label", ({ opts, want }) => {
+    expect(args(buildTerminalArgs("foo", opts))).toEqual(want);
+  });
+});

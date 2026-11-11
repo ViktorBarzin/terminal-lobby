@@ -197,6 +197,37 @@ describe("<SessionView> — the Watch toggle", () => {
       expect(opts?.watch).toBeFalsy();
     }
   });
+
+  /**
+   * THE CLIENT ID IS STABLE ACROSS EVERY REBUILD OF THE ARGS, and taking
+   * control is the rebuild most likely to break it: the args are built inside
+   * JSX, so Solid re-runs that expression whenever `watch()` or `preloading()`
+   * moves, and a mint written into that expression would hand out a fresh id
+   * per read. The record devvm/tmux-attach.sh wrote is keyed by id, so a
+   * second id means the claim names a client that never attached — and the
+   * fallback would hide it, since an unresolvable id is exactly what a
+   * pre-deploy socket looks like.
+   *
+   * Worth its own test because nothing else fails when it breaks. Claims go on
+   * working through the old preload-promotion path, and the only symptom is
+   * per-client resolution quietly never happening.
+   */
+  it("keeps one client id when the attach mode moves under it", async () => {
+    localStorage.setItem(WATCH_KEY_PREFIX + "main", "ro");
+    const { container } = render(() => <SessionView session="main" />);
+    await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
+
+    fireEvent.click(watchButton(container)); // take control
+    await waitFor(() => {
+      const calls = vi.mocked(terminalFrameArgs).mock.calls;
+      expect(calls.some(([, opts]) => opts?.watch !== true)).toBe(true);
+    });
+
+    const ids = vi.mocked(terminalFrameArgs).mock.calls.map(([, opts]) => opts?.client);
+    expect(ids.length).toBeGreaterThan(1);
+    expect(ids[0]).toMatch(/^[0-9a-f]{32}$/);
+    expect(new Set(ids).size, `every build must carry one id, saw ${JSON.stringify(ids)}`).toBe(1);
+  });
 });
 
 /**

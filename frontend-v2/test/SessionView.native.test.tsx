@@ -29,6 +29,7 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import type { TerminalReport } from "../src/diagnostics/status";
 
 /** The control object the stub hands up, and how often each lever was pulled. */
@@ -48,8 +49,10 @@ const native = vi.hoisted(() => ({
   active: null as null | (() => boolean | undefined),
   /** Fire the hand-up, standing in for attention.ts's `signal` action. */
   signal: null as null | ((kind: "bell" | "output") => void),
-  /** Fire a grid claim, standing in for a landed fit or a focus. */
-  claim: null as null | ((cols: number, rows: number) => void),
+  /** Fire a grid claim, standing in for a landed fit, a focus or a keystroke.
+   *  The reason defaults to "fit", the highest-volume one, so a case only
+   *  names it when the reason is what it is about. */
+  claim: null as null | ((cols: number, rows: number, reason?: GridClaimReason) => void),
   /**
    * Was the terminal handed a SIZE TO DRAW AT, as opposed to fitting its host?
    * The prop is read by presence rather than by value, because the answer must
@@ -66,7 +69,7 @@ vi.mock("../src/components/TerminalNative", () => ({
     args?: string;
     active?: boolean;
     onAttention?: (kind: "bell" | "output") => void;
-    onGrid?: (cols: number, rows: number) => void;
+    onGrid?: (cols: number, rows: number, reason: GridClaimReason) => void;
     onReady?: (control: {
       reconnect: () => void;
       ask: () => void;
@@ -78,7 +81,7 @@ vi.mock("../src/components/TerminalNative", () => ({
     native.active = () => props.active;
     native.args = () => props.args;
     native.signal = (kind) => props.onAttention?.(kind);
-    native.claim = (cols, rows) => props.onGrid?.(cols, rows);
+    native.claim = (cols, rows, reason) => props.onGrid?.(cols, rows, reason ?? "fit");
     if (native.readyOnMount) {
       props.onReady?.({
         reconnect: () => void native.retries++,
@@ -98,15 +101,29 @@ vi.mock("../src/components/TerminalNative", () => ({
  * with it.
  */
 const grids = vi.hoisted(() => [] as string[]);
+/** The whole POST body of every claim, for the cases that are about the two
+ *  fields the size does not carry: which client asked, and what made it ask. */
+const claims = vi.hoisted(
+  () => [] as { name: string; cols: number; rows: number; reason: string; client: string }[],
+);
 vi.mock("../src/lib/lobby-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/lobby-api")>()),
-  setSessionGrid: async (name: string, cols: number, rows: number) => {
+  setSessionGrid: async (
+    name: string,
+    cols: number,
+    rows: number,
+    reason: string,
+    client: string,
+  ) => {
     grids.push(`${name} ${cols}x${rows}`);
+    claims.push({ name, cols, rows, reason, client });
   },
 }));
 
 import { SessionView } from "../src/components/SessionView";
 import { WATCH_KEY_PREFIX } from "../src/store/watchmode";
+import type { GridClaimReason } from "../src/terminal/claim";
+import { CLIENT_ID_RE } from "../src/lib/client-id";
 
 /** The status surface a mounted view is handed, with both levers captured. */
 function statusProbe() {
@@ -146,6 +163,7 @@ afterEach(() => {
   native.toldASize = false;
   native.readyOnMount = true;
   grids.length = 0;
+  claims.length = 0;
   vi.useRealTimers();
   // The view mode persists per session (store/viewmode.ts), and these tests
   // switch views, so a name reused across files would inherit the deviation.
@@ -381,6 +399,193 @@ describe("the grid claim <SessionView> makes for the terminal", () => {
       "qa-grid-quiet 120x40",
       "qa-grid-quiet 120x40",
     ]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The fourth refusal: the window is already this size
+   * ---------------------------------------------------------------- */
+
+  /**
+   * LAST ACTIVE WINS MAKES THE CLAIM CHEAP AND CONSTANT, so the one worth not
+   * making is the one for a window that already matches. Under the old rule a
+   * claim was rare — a fit, a focus, a view switch — and the quiet window
+   * above was enough. Now a keystroke and a pointer move claim too, so the
+   * steady state of somebody working in a terminal they already own would be
+   * a POST every 1500 ms forever, each one an idempotent `switch-client` to
+   * the size the window has.
+   *
+   * The size it compares against is the POLLED one (`props.grid`, from the
+   * session list), which is why the quiet window stays: the poll is a 5 s
+   * interval, so for up to one poll after this device's own claim it is still
+   * reporting the old size and the skip cannot fire.
+   */
+  it("says nothing when the session's window is already this size", () => {
+    render(() => <SessionView session="qa-grid-match" grid={() => ({ cols: 231, rows: 62 })} />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual([]);
+  });
+
+  it("says it when the window is a different size", () => {
+    render(() => <SessionView session="qa-grid-differ" grid={() => ({ cols: 80, rows: 24 })} />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-differ 231x62"]);
+  });
+
+  it("says it when one dimension matches and the other does not", () => {
+    render(() => <SessionView session="qa-grid-half" grid={() => ({ cols: 231, rows: 24 })} />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-half 231x62"]);
+  });
+
+  /** A window nobody could measure is not a window that matches. The server
+   *  leaves `cols`/`rows` off a session it could not read, and skipping on
+   *  that would be a device declining to take a window it has no idea about. */
+  it("says it when nobody can say what size the window is", () => {
+    render(() => <SessionView session="qa-grid-unknown" grid={() => null} />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-unknown 231x62"]);
+  });
+
+  /** The same, for a view mounted with no grid accessor at all — every
+   *  non-workspace caller. */
+  it("says it when no grid accessor was passed", () => {
+    render(() => <SessionView session="qa-grid-noprop" />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-noprop 231x62"]);
+  });
+
+  /**
+   * THE SKIP HOLDS ONCE THE POLL HAS CAUGHT UP, which is the steady state of
+   * somebody working in a terminal they already own. The quiet window is out
+   * of the way here on purpose: two seconds have gone by, so the only thing
+   * left that can refuse this claim is the window already being the size.
+   */
+  it("goes on saying nothing once the window has settled at this size", () => {
+    vi.useFakeTimers();
+    const [grid, setGrid] = createSignal<{ cols: number; rows: number } | null>(null);
+    render(() => <SessionView session="qa-grid-settled" grid={grid} />);
+
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-settled 231x62"]);
+
+    setGrid({ cols: 231, rows: 62 }); // the poll catches up with our own claim
+    vi.advanceTimersByTime(2000); // and the quiet window is long over
+    native.claim?.(231, 62);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-settled 231x62"]);
+  });
+
+  /**
+   * ANOTHER DEVICE TAKING THE WINDOW RE-ARMS THIS ONE, which is decision 5 of
+   * the pane-ownership design: the loser is not demoted and gets no banner, it
+   * takes the window back the moment you touch it.
+   *
+   * The touch here lands 100 ms after this device's own claim, well inside the
+   * 1500 ms quiet window — and the size it wants is the size it last claimed,
+   * so without forgetting that claim the quiet window would swallow it. The
+   * person would press a key, watch nothing move, and press it again.
+   */
+  it("takes the window straight back after another device moved it", () => {
+    vi.useFakeTimers();
+    const [grid, setGrid] = createSignal<{ cols: number; rows: number } | null>(null);
+    render(() => <SessionView session="qa-grid-lost" grid={grid} />);
+
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-lost 231x62"]);
+
+    // A phone joins and takes it.
+    setGrid({ cols: 60, rows: 20 });
+    vi.advanceTimersByTime(100);
+    native.claim?.(231, 62, "input");
+
+    expect(grids).toEqual(["qa-grid-lost 231x62", "qa-grid-lost 231x62"]);
+    expect(claims[1]?.reason).toBe("input");
+  });
+
+  /** ...and the poll merely catching up with this device's OWN claim is not a
+   *  loss. Clearing on that would undo the dedupe for everybody. */
+  it("does not re-arm when the poll reports the size this device claimed", () => {
+    vi.useFakeTimers();
+    const [grid, setGrid] = createSignal<{ cols: number; rows: number } | null>(null);
+    render(() => <SessionView session="qa-grid-echo" grid={grid} />);
+
+    native.claim?.(120, 40);
+    setGrid({ cols: 120, rows: 40 });
+    vi.advanceTimersByTime(100);
+    native.claim?.(120, 40);
+
+    expect(grids).toEqual(["qa-grid-echo 120x40"]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * What the claim carries besides the size
+   * ---------------------------------------------------------------- */
+
+  /** The reason is what tmux-api records on `session.grid_claimed`, so it is
+   *  the difference between knowing the window moves and knowing why. */
+  it("passes the terminal's reason through to the wire", () => {
+    render(() => <SessionView session="qa-grid-reason" />);
+    native.claim?.(231, 62, "input");
+    native.claim?.(120, 40, "focus");
+    expect(claims.map((c) => c.reason)).toEqual(["input", "focus"]);
+  });
+
+  /** Its own reason, because nothing in the terminal caused it: the tiles
+   *  around this one moved and every visible tile says its size again. */
+  it("calls the visible-set re-claim what it is", () => {
+    vi.useFakeTimers();
+    const [stamp, setStamp] = createSignal("a");
+    render(() => <SessionView session="qa-grid-vs" visible visibleSet={stamp} />);
+    native.claim?.(60, 40, "fit");
+    vi.advanceTimersByTime(2000);
+    setStamp("b");
+    vi.advanceTimersByTime(250);
+    expect(claims.map((c) => c.reason)).toEqual(["fit", "visible-set"]);
+  });
+
+  /**
+   * WHICH TMUX CLIENT IS ASKING, and the round trip that is the only cheap
+   * guard on it. The id is minted here and consumed by a shell script the
+   * browser never sees, so if arg8 ever shifts position the record lands under
+   * the wrong key, tmux-api resolves nothing, and the fallback hides it —
+   * claims go on working through the preload-promotion path and nothing says
+   * per-client resolution has stopped. Holding the id in the args equal to the
+   * id in the POST catches the browser half of that.
+   */
+  it("claims under the same client id it attached with", () => {
+    render(() => <SessionView session="qa-grid-client" />);
+    native.claim?.(231, 62);
+    const sent = claims[0]?.client ?? "";
+    expect(sent).toMatch(CLIENT_ID_RE);
+    expect(new URLSearchParams(native.args?.() ?? "").getAll("arg")[7]).toBe(sent);
+  });
+
+  /** One id per mount, held for its life: the attach script rewrites the
+   *  record against the pty of every reconnect, so a second id would only
+   *  orphan the first. */
+  it("keeps one id across every claim it makes", () => {
+    render(() => <SessionView session="qa-grid-oneid" />);
+    native.claim?.(231, 62);
+    native.claim?.(120, 40);
+    expect(claims).toHaveLength(2);
+    expect(claims[0]?.client).toBe(claims[1]?.client);
+  });
+
+  /** Two views are two ttyd connections and two tmux clients, so they must
+   *  never claim under one name — which is the whole of per-tile ownership in
+   *  a workspace. */
+  it("gives two mounted views two different ids", () => {
+    render(() => <SessionView session="qa-grid-id-a" />);
+    const a = native.args?.() ?? "";
+    native.claim?.(231, 62);
+    render(() => <SessionView session="qa-grid-id-b" />);
+    const b = native.args?.() ?? "";
+    native.claim?.(231, 62);
+    const idOf = (u: string): string => new URLSearchParams(u).getAll("arg")[7] ?? "";
+    expect(idOf(a)).not.toBe("");
+    expect(idOf(a)).not.toBe(idOf(b));
+    expect(claims[0]?.client).toBe(idOf(a));
+    expect(claims[1]?.client).toBe(idOf(b));
   });
 });
 

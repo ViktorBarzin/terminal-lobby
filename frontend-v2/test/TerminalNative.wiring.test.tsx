@@ -473,7 +473,10 @@ interface Mounted {
   reports: TerminalReport[];
   /** Every attention signal handed up, in order (terminal/attention.ts). */
   attention: ("bell" | "output")[];
-  /** Every grid claim handed up, in order, as "COLSxROWS" (SessionView's onGrid). */
+  /** Every grid claim handed up, in order, as "COLSxROWS REASON" (SessionView's
+   *  onGrid). The reason is what tmux-api records on `session.grid_claimed`,
+   *  so a claim firing for the wrong cause is a wrong series rather than a
+   *  wrong size, and nothing but this would catch it. */
   grids: string[];
   /** The levers `onReady` handed up, which is what SessionView holds. */
   control(): { reconnect: () => void; ask: () => void; copy: () => void };
@@ -517,7 +520,7 @@ async function mount(
       // terminal that stays mounted and stays attached.
       active={active()}
       onAttention={(kind) => void attention.push(kind)}
-      onGrid={(cols, rows) => void grids.push(`${cols}x${rows}`)}
+      onGrid={(cols, rows, reason) => void grids.push(`${cols}x${rows} ${reason}`)}
       onConn={(report) => void reports.push(report)}
       onReady={(c) => void controls.push(c)}
     />
@@ -5770,6 +5773,19 @@ describe("claiming the grid for a pinned tmux window", () => {
     return el;
   };
 
+  /** The tab flipping, as the browser delivers it: `document.hidden` moves and
+   *  the event is QUEUED behind it, which is why the flag is set first. */
+  let tabHidden = false;
+  const flipTab = (to: boolean): void => {
+    tabHidden = to;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  beforeEach(() => {
+    tabHidden = false;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => tabHidden });
+  });
+  afterEach(() => void Reflect.deleteProperty(document, "hidden"));
+
   /**
    * THE BUG THIS EXISTS FOR. `fit.ts` reduces a `shown` with no debt to
    * `nothing`, and it is right to: the geometry on this side was already
@@ -5790,7 +5806,7 @@ describe("claiming the grid for a pinned tmux window", () => {
     expect(m.fit.fits).toBe(1);
     expect(resizes(m.socket())).toEqual([]);
     // And the part that was missing.
-    expect(m.grids).toEqual(["80x24"]);
+    expect(m.grids).toEqual(["80x24 fit"]);
   });
 
   /** A fit that DID land is the same statement, and makes it too. */
@@ -5810,7 +5826,7 @@ describe("claiming the grid for a pinned tmux window", () => {
     await settle();
 
     expect(m.fit.fits).toBe(2);
-    expect(m.grids).toEqual(["80x24"]);
+    expect(m.grids).toEqual(["80x24 fit"]);
   });
 
   /**
@@ -5846,7 +5862,7 @@ describe("claiming the grid for a pinned tmux window", () => {
     hostOf(m).dispatchEvent(new Event("focusin", { bubbles: true }));
     await settle();
 
-    expect(m.grids).toEqual(["80x24"]);
+    expect(m.grids).toEqual(["80x24 focus"]);
   });
 
   /**
@@ -5877,7 +5893,7 @@ describe("claiming the grid for a pinned tmux window", () => {
     m.socket().accept();
     await settle();
 
-    expect(m.grids).toEqual(["80x24"]);
+    expect(m.grids).toEqual(["80x24 socket-open"]);
   });
 
   /**
@@ -5890,6 +5906,131 @@ describe("claiming the grid for a pinned tmux window", () => {
     const m = await mount({ onScreen: false, active: false });
 
     m.socket().accept();
+    await settle();
+
+    expect(m.grids).toEqual([]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * LAST ACTIVE WINS: the two moments that are a person, not a socket
+   * ---------------------------------------------------------------- */
+
+  /**
+   * TYPING IS THE CLAIM THAT MATTERS MOST. Nobody holds the window under
+   * last-active-wins, so a device that lost it to a phone gets it back by
+   * being used — and the first thing a person does with a terminal they have
+   * just lost is type into it. Without this the window comes back only on the
+   * next fit or the next focus, and a desktop that already had focus gets
+   * neither.
+   *
+   * Hung on `send`, the pty-bound-string choke point, rather than on xterm's
+   * `onData`: `send` also carries the soft keys, the palette and the Text
+   * composer's send-to-terminal, and it excludes the compose mirror's own
+   * echo.
+   */
+  it("claims the grid on a keystroke", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    m.type("l");
+    await settle();
+
+    expect(m.grids).toEqual(["80x24 input"]);
+  });
+
+  /**
+   * MOVING THE POINTER OVER IT COUNTS TOO, and it is the cheapest way back:
+   * reaching for the mouse is what a person does before they have decided
+   * what to type, so the window is already the right size by the time they
+   * click.
+   */
+  it("claims the grid on a pointer move over the terminal", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    hostOf(m).dispatchEvent(new Event("pointermove", { bubbles: true }));
+    await settle();
+
+    expect(m.grids).toEqual(["80x24 input"]);
+  });
+
+  /**
+   * ...ONCE PER 250 ms, AND NO MORE. A desktop mouse reports at roughly
+   * 100 Hz, so an unthrottled sweep across a tile would be a hundred trips
+   * through the claim path for one gesture. Leading edge, so the first move
+   * of the sweep is the one that lands (terminal/claim.ts).
+   */
+  it("throttles a pointer sweep to one claim per quarter second", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+    const host = hostOf(m);
+
+    host.dispatchEvent(new Event("pointermove", { bubbles: true }));
+    for (let i = 0; i < 20; i++) {
+      vi.advanceTimersByTime(10);
+      host.dispatchEvent(new Event("pointermove", { bubbles: true }));
+    }
+    await settle();
+    expect(m.grids, "200 ms of moves is one claim").toEqual(["80x24 input"]);
+
+    vi.advanceTimersByTime(250);
+    host.dispatchEvent(new Event("pointermove", { bubbles: true }));
+    await settle();
+    expect(m.grids).toEqual(["80x24 input", "80x24 input"]);
+  });
+
+  /**
+   * A pointer resting over a tile that is not the one being read claims
+   * nothing. The listener is HOST-scoped rather than on the document for the
+   * same reason: in a workspace a document listener would run four handlers
+   * for a pointer sitting over one tile.
+   */
+  it("claims nothing from a pointer over a hidden session", async () => {
+    const m = await mount({ onScreen: false, active: false });
+    m.socket().accept();
+    await settle();
+    m.grids.length = 0;
+
+    hostOf(m).dispatchEvent(new Event("pointermove", { bubbles: true }));
+    await settle();
+
+    expect(m.grids).toEqual([]);
+  });
+
+  /**
+   * THE TAB COMING BACK is focus too. The battery saver drops a socket after
+   * 30 s off screen and the reconnect claims on its own, but a tab hidden for
+   * less than that comes back with its socket intact, nothing refits and no
+   * `focusin` fires — and meanwhile another device may well have taken the
+   * window, since a hidden tab is exactly when that happens.
+   */
+  it("claims the grid when the tab comes back", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    flipTab(true);
+    await settle();
+    expect(m.grids, "going away claims nothing").toEqual([]);
+
+    flipTab(false);
+    await settle();
+    expect(m.grids).toEqual(["80x24 focus"]);
+  });
+
+  /**
+   * ...for the session in front of the person alone. Every visited session
+   * stays mounted (store/keepalive.ts), so without the gate one tab switch
+   * would have every mounted terminal claim at once and the last one to run
+   * would win a window nobody is looking at.
+   */
+  it("claims nothing for a hidden session when the tab comes back", async () => {
+    const m = await mount({ onScreen: false, active: false });
+    m.socket().accept();
+    await settle();
+    m.grids.length = 0;
+
+    flipTab(true);
+    flipTab(false);
     await settle();
 
     expect(m.grids).toEqual([]);
@@ -6024,7 +6165,7 @@ describe("the attach mode changing under a live socket", () => {
         watch={watch}
         ownsBridges={opts.onScreen !== false}
         active={opts.active !== false}
-        onGrid={(cols, rows) => void grids.push(`${cols}x${rows}`)}
+        onGrid={(cols, rows, reason) => void grids.push(`${cols}x${rows} ${reason}`)}
       />
     ));
     await settle();
@@ -6076,7 +6217,10 @@ describe("the attach mode changing under a live socket", () => {
     expect(m.socketCount(), "the claim has to ride a NEW socket").toBe(2);
     await m.accept();
 
-    expect(m.grids).toEqual(["80x24"]);
+    // "take-control" rather than "socket-open": the socket is the mechanism,
+    // and the person pressing Take control is the cause. They are one event
+    // here and two everywhere else, and only the cause is worth counting.
+    expect(m.grids).toEqual(["80x24 take-control"]);
   });
 
   /**

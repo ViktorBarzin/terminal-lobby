@@ -18,6 +18,7 @@ import type {
   MachineTier,
 } from "../diagnostics/status";
 import { NET_HEADER, apiUrl } from "./config";
+import type { GridClaimReason } from "../terminal/claim";
 import {
   emptyLayout,
   emptyWorkspaces,
@@ -326,8 +327,8 @@ export async function setSessionTitle(name: string, title: string): Promise<void
 }
 
 /**
- * POST /api/sessions/{name}/grid {cols, rows} — the device reading this session
- * says what size it is, so a pinned tmux window can follow it.
+ * POST /api/sessions/{name}/grid {cols, rows, reason, client} — the device
+ * reading this session says what size it is, so its tmux window follows.
  *
  * WHY THIS EXISTS. tmux sizes a window from its clients, and a session any
  * read-only attach has pinned re-reads them on exactly three events: a client
@@ -339,21 +340,39 @@ export async function setSessionTitle(name: string, title: string): Promise<void
  * was the only fix, because a reload is an attach.
  *
  * A HINT, like `prewarm`: the server answers 204 whether it moved anything or
- * not, leaves an unpinned session to tmux, and refuses when nobody is driving.
- * Every failure here is swallowed. The terminal is readable either way — just
- * at the wrong width — so none of it is worth interrupting anyone for.
+ * not and refuses when nobody is driving. Every failure here is swallowed. The
+ * terminal is readable either way — just at the wrong width — so none of it is
+ * worth interrupting anyone for.
+ *
+ * WHICH CLIENT IS ASKING is `client`, the per-connection id this tab minted and
+ * sent as ttyd arg 8 (lib/client-id.ts). Until 2026-09-13 nothing carried it,
+ * and the gap was the reason the endpoint could only promote whichever preload
+ * client it happened to find: two devices of one person arrive behind one
+ * identity header, so the server could see that somebody wanted the window and
+ * never who. With the id it resolves the caller's own tmux client — through the
+ * record devvm/tmux-attach.sh wrote, validated against tmux's client list — and
+ * sizes an unpinned session with `switch-client` against exactly that one. An
+ * id that does not resolve falls back to the old behaviour rather than failing,
+ * so an older socket keeps working.
  *
  * NEVER CALL THIS WHILE WATCHING. A read-only client taking the size is the one
- * thing the pin exists to prevent, and the server cannot tell two devices of the
- * same person apart: they arrive with one identity header and neither carries
- * the tmux client it belongs to. The caller declining is what keeps the promise.
+ * thing the pin exists to prevent, and per-client resolution does not change
+ * that: a watcher naming itself accurately would take the window accurately.
+ * The caller declining is what keeps the promise, and tmux-api refuses a
+ * read-only client for the same reason if one ever asks.
  */
-export async function setSessionGrid(name: string, cols: number, rows: number): Promise<void> {
+export async function setSessionGrid(
+  name: string,
+  cols: number,
+  rows: number,
+  reason: GridClaimReason,
+  client: string,
+): Promise<void> {
   try {
     await req(`/sessions/${encodeURIComponent(name)}/grid`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cols, rows }),
+      body: JSON.stringify({ cols, rows, reason, client }),
     });
   } catch {
     /* best effort, see above */

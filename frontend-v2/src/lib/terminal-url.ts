@@ -2,7 +2,7 @@
  * ttyd terminal-attach URL builder — the `?arg=` positional contract, ported
  * VERBATIM (shape) from the vanilla frontend's `frameArgs()` (index.html). This
  * is red-line-class: ttyd's `-a` maps repeated `?arg=` params positionally to
- * $1..$7 in tmux-attach.sh, so dropping or reordering an arg silently breaks a
+ * $1..$8 in tmux-attach.sh, so dropping or reordering an arg silently breaks a
  * shared attach (memory #9926 — the 4th arg dying at the iframe boundary).
  *
  *   arg1  session name        (always)
@@ -16,11 +16,16 @@
  *         session's window — ADR-0026)
  *   arg6  model a NEW session launches on ("opus", "gpt-5.6-terra", …)
  *   arg7  effort a NEW session launches at ("max", "xhigh", …)
+ *   arg8  WHICH TMUX CLIENT this connection is, so a later size claim can name
+ *         it (lib/client-id.ts). The attach script records this connection's
+ *         pty against the id before it execs; tmux-api reads it back.
  *
  * A dir must land at arg3, an owner at arg4 and an attach mode at arg5, so
  * whenever a later arg is sent the earlier ones are emitted too ('default' as
  * the inert command placeholder, and an EMPTY owner at arg4 when watching your
- * own session — the attach script treats a blank owner as "mine").
+ * own session — the attach script treats a blank owner as "mine"). Every gate
+ * in that script reads an unrecognised value as no value, so an empty slot
+ * standing in for an absent model or effort costs nothing.
  * `tmux -A` ignores -c on a live session, so sending the dir on every attach is
  * harmless. Pure + base-parameterized so it is unit-testable and so a canary
  * deploy can retarget the ttyd origin without touching call sites.
@@ -72,6 +77,23 @@ export interface TerminalUrlOpts {
    */
   model?: string;
   effort?: string;
+  /**
+   * arg8 — WHICH TMUX CLIENT THIS CONNECTION IS, so a size claim can name one
+   * (lib/client-id.ts mints it; tmux-api/clientreg.go reads it back).
+   *
+   * Minted ONCE per terminal mount and held for its life, reconnects included:
+   * devvm/tmux-attach.sh rewrites the record against the pty of every attach,
+   * so the newest socket wins under one name and an id a claim carries still
+   * resolves. Minting it inside a call to this function would hand out a fresh
+   * id on every re-read of the args, and the args are re-read often — every
+   * reconnect reads them (terminal/attach.ts) and so does the liveness probe.
+   *
+   * OPTIONAL, and the whole point of that is the fallback. A socket opened
+   * before this shipped carries no id, an id the shell's gate refuses becomes
+   * no id, and both land on exactly the behaviour the endpoint had before:
+   * promote the single preload client, 409 when nobody is driving.
+   */
+  client?: string;
 }
 
 /**
@@ -79,7 +101,7 @@ export interface TerminalUrlOpts {
  *
  * There is no page URL in front of it: the terminal is drawn by this app in
  * this document, and these args go straight onto /token and /ws, which is where
- * `ttyd -a` maps them to $1..$7 (terminal/attach.ts, terminal/wire.ts).
+ * `ttyd -a` maps them to $1..$8 (terminal/attach.ts, terminal/wire.ts).
  *
  * They travelled out of band on the frame's NAME while the terminal was a
  * separate document, because the page URL was a cache key: with the session
@@ -102,76 +124,48 @@ export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): str
       "terminal attach: watch and preload are mutually exclusive (both ride arg5)",
     );
   }
-  // arg5 — the attach mode, resolved once so the two emit branches below cannot
-  // disagree about what position 5 holds.
+  // arg5 — the attach mode, resolved once so the slot list below cannot
+  // disagree with itself about what position 5 holds.
   const mode: "" | "ro" | "pre" = opts.watch ? "ro" : opts.preload ? "pre" : "";
-  let u = "arg=" + encodeURIComponent(name);
-  const cmd = opts.cmd && opts.cmd.length > 0 ? opts.cmd : "default";
-  const owner = opts.owner ?? "";
-  const dir = opts.dir ?? "";
-  const model = opts.model ?? "";
-  const effort = opts.effort ?? "";
-  if (model || effort) {
-    // The deepest slots there are, so EVERY earlier one is emitted, including
-    // the two that are usually absent. arg4 stays blank for your own session
-    // (tmux-attach.sh reads a blank owner as "mine") and arg5 carries the
-    // attach mode only when there is one, because MODE_RE takes ro/rw/pre and
-    // nothing else.
-    //
-    // arg6 is emitted whether or not a model was chosen, which is what keeps an
-    // effort on its own off $6: effort alone sends an EMPTY arg6 and lands at
-    // arg7. arg7 itself is only appended when there is an effort, so a model on
-    // its own stops at six args. Checked end-to-end in
-    // scripts/test_watch_mode_e2e.py
-    // (test_a_launch_model_cannot_push_the_watch_flag_off_arg5), which also
-    // pins that "ro" stays on $5 down this branch.
-    const tail = effort ? "&arg=" + encodeURIComponent(effort) : "";
-    return (
-      u +
-      "&arg=" +
-      encodeURIComponent(cmd) +
-      "&arg=" +
-      encodeURIComponent(dir || "default") +
-      "&arg=" +
-      encodeURIComponent(owner) +
-      "&arg=" +
-      mode +
-      "&arg=" +
-      encodeURIComponent(model) +
-      tail
-    );
-  }
-  if (mode) {
-    // Deepest slot: emit ALL of arg2..arg4 so the mode lands on $5. The owner
-    // slot is deliberately empty for your own session — tmux-attach.sh reads a
-    // blank arg4 as "mine", whereas a placeholder like 'default' would name an
-    // OS user that does not exist.
-    u +=
-      "&arg=" +
-      encodeURIComponent(cmd) +
-      "&arg=" +
-      encodeURIComponent(dir || "default") +
-      "&arg=" +
-      encodeURIComponent(owner) +
-      "&arg=" +
-      mode;
-  } else if (owner) {
-    // Foreign attach: owner MUST reach $4, so command + dir precede it as
-    // placeholders ('default' when absent — a non-absolute dir is ignored by
-    // the attach branch, which sources `-r` from the server).
-    u +=
-      "&arg=" +
-      encodeURIComponent(cmd) +
-      "&arg=" +
-      encodeURIComponent(dir || "default") +
-      "&arg=" +
-      encodeURIComponent(owner);
-  } else if (dir) {
-    u += "&arg=" + encodeURIComponent(cmd) + "&arg=" + encodeURIComponent(dir);
-  } else if (cmd !== "default") {
-    u += "&arg=" + encodeURIComponent(cmd);
-  }
-  return u;
+
+  /**
+   * THE EIGHT SLOTS, in order, empty where there is nothing to say.
+   *
+   * A list rather than the nest of "deepest slot present" branches this used
+   * to be. Each new arg rewrote the branch above it, and arg8 is carried by
+   * nearly every attach rather than a rare one, so the nest would have had to
+   * become the common path. The emitted string is unchanged for all seven
+   * shapes that predate arg8, which test/terminal-url.test.ts pins case by
+   * case — that equality is the point of the rewrite, not a side effect.
+   *
+   * `cmd` is empty rather than "default" here, so that a caller who asks for
+   * the default command explicitly emits the same single arg as one who asks
+   * for nothing. It becomes "default" below, as a placeholder, only when a
+   * deeper slot needs pushing into position.
+   */
+  const slots = [
+    name,
+    opts.cmd && opts.cmd !== "default" ? opts.cmd : "",
+    opts.dir ?? "",
+    opts.owner ?? "",
+    mode,
+    opts.model ?? "",
+    opts.effort ?? "",
+    opts.client ?? "",
+  ];
+  // Nothing below the deepest slot anyone asked for. The session name always
+  // survives: it is the attach.
+  while (slots.length > 1 && slots[slots.length - 1] === "") slots.pop();
+  // INTERIOR PLACEHOLDERS: a slot emitted only to push a deeper one into
+  // position. The command takes 'default' and the dir takes it too (the attach
+  // script ignores a non-absolute dir, and `tmux -A` ignores -c on a live
+  // session). The OWNER slot stays EMPTY, because tmux-attach.sh reads a blank
+  // arg4 as "mine" and a placeholder there would name an OS user that does not
+  // exist. Everything below arg4 is gated the same way and reads empty as
+  // absent, so none of them needs one either.
+  if (slots.length > 1 && slots[1] === "") slots[1] = "default";
+  if (slots.length > 2 && slots[2] === "") slots[2] = "default";
+  return slots.map((v) => "arg=" + encodeURIComponent(v)).join("&");
 }
 
 /** Config-bound arg list — {@link buildTerminalArgs} with the act-as owner

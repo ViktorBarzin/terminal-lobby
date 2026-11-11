@@ -206,6 +206,15 @@ src/
                          server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
+    client-id.ts         Mints WHICH TMUX CLIENT a connection is: 16 random
+                         bytes as lowercase hex, one per terminal mount, sent as
+                         ttyd arg 8 and carried in every grid claim. tmux sizes
+                         a window from its clients and an HTTP request names
+                         none, so without it tmux-api could see that somebody
+                         wanted the window and never who. Mirrored by
+                         CLIENT_ID_RE in devvm/tmux-attach.sh and clientIDRe in
+                         tmux-api/clientreg.go, and the charset is this narrow
+                         because the id becomes a file name
     file-api.ts          file-api client (list/read/write; maps 404/413/400).
                          contentUrl() re-exports the resolver below, so a read
                          of a clipboard-store path goes to clipboard-upload
@@ -328,6 +337,14 @@ src/
                          a second implementation; where a module knowingly
                          differs from it, the divergence is argued in a comment
                          at the site
+    claim.ts             PURE last-active-wins: the closed vocabulary of what
+                         made a device claim the session's window
+                         (GridClaimReason, mirroring tmux-api's
+                         gridClaimReasons), and the leading-edge throttle the
+                         pointer claim runs through. A desktop mouse reports at
+                         ~100 Hz, so a sweep across a tile is 100 claims without
+                         it; leading edge because the window has to come back
+                         on the first move, not a quarter second later
     keepfocus.ts         Whether a tap's compat mousedown may move focus. A tap
                          focuses the compose mirror at touchend; the mousedown
                          follows 10-44ms later and is hit-tested where the finger

@@ -48,6 +48,8 @@ import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { setSessionGrid } from "../lib/lobby-api";
+import { newClientId } from "../lib/client-id";
+import type { GridClaimReason } from "../terminal/claim";
 import { refocusTerminal } from "../keybindings/refocus";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 import type { BackgroundWork, SessionTool } from "../types/lobby";
@@ -186,12 +188,16 @@ export const SessionView: Component<{
    *  space around it; that is gone, and every terminal fits its own box while
    *  tmux draws its own presentation into any difference.
    *
-   *  It is kept because the grid CLAIM is its reader: under last-active-wins a
-   *  device takes the window whenever it is touched, and the one claim not
-   *  worth making is the one for a window this device already matches. The
-   *  comparison lands with the claim wiring; as of this commit the accessor has
-   *  no reader on this side. The server populates `cols`/`rows` either way
-   *  (tmux-api/sessions.go). */
+   *  THE CLAIM IS ITS READER. Under last-active-wins a device takes the window
+   *  whenever it is touched, which makes claims constant rather than rare, and
+   *  the one claim never worth making is the one for a window this device
+   *  already matches — so `claimGrid` skips on it. It is also how this view
+   *  learns it LOST the window, which is what re-arms the next touch.
+   *
+   *  POLLED, not pushed: the session list refreshes on a 5 s interval
+   *  (store/lobby.ts), so this lags this device's own claim by up to one poll
+   *  and the quiet window still has to carry that gap. The server populates
+   *  `cols`/`rows` either way (tmux-api/sessions.go). */
   grid?: () => SessionGrid | null;
   /** The user this tab is acting as ("" = an ordinary tab). A lens comes up
    *  WATCHING every session it opens, and the controls that type into the pty
@@ -568,6 +574,29 @@ export const SessionView: Component<{
    *  terminal whose own box did not change. */
   let lastGrid: { cols: number; rows: number } | null = null;
   /**
+   * WHICH TMUX CLIENT THIS VIEW IS, for the life of the mount.
+   *
+   * It has to reach two places and be the same string in both: ttyd arg 8, so
+   * devvm/tmux-attach.sh records this connection's pty under it, and the grid
+   * POST, so tmux-api can resolve the record back and size the window against
+   * exactly this client. An id in one and not the other resolves to nothing,
+   * and the fallback then hides it — claims keep working through the old
+   * preload-promotion path, and nothing reports that per-client resolution
+   * stopped.
+   *
+   * ONCE PER MOUNT, not per socket. The args are a live getter rebuilt
+   * whenever `watch()` or `preloading()` moves, and re-read on every reconnect
+   * and every liveness probe, so a mint inside that expression would hand out
+   * a fresh id per read. Per-mount is still unique per tab and per workspace
+   * tile, which is all decision 11 needs, and a reconnect simply rewrites the
+   * same record against the new pty.
+   *
+   * NOT the device id (telemetry/device.ts). That one is persisted and shared
+   * by every tab and every tile of this browser; two tiles claiming under one
+   * name is the thing per-tile ownership cannot have.
+   */
+  const clientId = newClientId();
+  /**
    * Point this session's tmux window at the device reading it.
    *
    * TWO REFUSALS, both of which have to be here rather than in the terminal or
@@ -585,8 +614,15 @@ export const SessionView: Component<{
    * Fire-and-forget past that: the client swallows its own failures, and a
    * window that did not move is a terminal at the wrong width rather than
    * anything to report.
+   *
+   * LAST ACTIVE WINS MADE IT CONSTANT, which is what the fourth refusal below
+   * is about. Until 2026-09-13 a claim was rare — a fit, a focus, a view
+   * switch — and the quiet window was the whole rate limit. Now a keystroke
+   * and a pointer move claim too, so a person working in a terminal they
+   * already own would post every 1500 ms forever, each one an idempotent
+   * `switch-client` to the size the window has.
    */
-  const claimGrid = (cols: number, rows: number): void => {
+  const claimGrid = (cols: number, rows: number, reason: GridClaimReason): void => {
     // Recorded BEFORE the refusals, because the refusals are about whether this
     // device may speak and this is a note of what the terminal measured. A tile
     // that starts watching and later drives has the right number to say without
@@ -601,13 +637,44 @@ export const SessionView: Component<{
     // this desktop's size for a session nobody here has opened (ADR-0026). The
     // claim that REVEALS this same terminal is the promotion.
     if (preloading()) return;
+    // A FOURTH REFUSAL: the window is already this size, so there is nothing
+    // to take. The size it compares against is the POLLED one, from the
+    // session list, which is why the quiet window below stays rather than
+    // being replaced by this. The poll is a 5 s interval (store/lobby.ts), so
+    // for up to one poll after this device's own claim it still reports the
+    // old size and this cannot fire; the quiet window is what bounds that gap.
+    //
+    // A window nobody could measure is not a window that matches. The server
+    // leaves cols/rows off a session it could not read, and skipping on that
+    // would be a device declining to take a window it knows nothing about.
+    const known = props.grid?.();
+    if (known && known.cols === cols && known.rows === rows) return;
     const grid = `${cols}x${rows}`;
     const now = Date.now();
     if (grid === claimedGrid && now - claimedAt < GRID_CLAIM_QUIET_MS) return;
     claimedGrid = grid;
     claimedAt = now;
-    void setSessionGrid(session, cols, rows);
+    void setSessionGrid(session, cols, rows, reason, clientId);
   };
+
+  /**
+   * ANOTHER DEVICE TOOK THE WINDOW, so this one may ask for it again at once.
+   *
+   * Decision 5 of the pane-ownership design says the loser is not demoted and
+   * gets no banner: it takes the window back the moment you touch it. Without
+   * this the first touch after a loss would be swallowed by the quiet window,
+   * because the size this device wants is the size it last claimed — so the
+   * person would press a key, see nothing move, and press it again.
+   *
+   * Only when the poll reports a size this view did NOT claim. Its own claim
+   * coming back is the poll catching up, and clearing on that would undo the
+   * dedupe entirely.
+   */
+  createEffect(() => {
+    const known = props.grid?.();
+    if (!known) return;
+    if (`${known.cols}x${known.rows}` !== claimedGrid) claimedGrid = "";
+  });
 
   /**
    * How long after the visible set moves this view says its size again.
@@ -660,7 +727,9 @@ export const SessionView: Component<{
     if (!shown) return;
     reclaimTimer = setTimeout(() => {
       const last = lastGrid;
-      if (last) claimGrid(last.cols, last.rows);
+      // Its own reason, because nothing in the terminal caused it: the tiles
+      // around this one moved and every visible tile says its size again.
+      if (last) claimGrid(last.cols, last.rows, "visible-set");
     }, GRID_RECLAIM_MS);
   });
 
@@ -1606,6 +1675,13 @@ export const SessionView: Component<{
                 // A watch still takes the slot back if one ever resolves: both
                 // ride arg5 and asking for both throws.
                 preload: preloading() && !watch(),
+                // arg8, and the same string the grid claim puts in its body.
+                // devvm/tmux-attach.sh records this connection's pty under it
+                // before it execs, which is how a request that names no tmux
+                // client becomes one that does. STABLE across every rebuild of
+                // this expression, which is why it is minted at mount rather
+                // than here.
+                client: clientId,
               })}
               watch={watch}
               // The bridges are named globals, so a hidden session owning them
