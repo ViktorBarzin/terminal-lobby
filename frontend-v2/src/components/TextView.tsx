@@ -765,6 +765,7 @@ export const TextView: Component<{
         commands={commands()}
         commandsOk={catalogueOk()}
         session={props.session}
+        me={props.me}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
         register={(api) => {

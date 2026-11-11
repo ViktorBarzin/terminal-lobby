@@ -31,6 +31,12 @@ import type { CommandAvailability } from "../src/lib/new-commands";
 import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
 import { toasts } from "../src/store/toast";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
+import { TOKEN_ICON, TOKEN_TAIL } from "../src/lib/attachments";
+
+/** One attachment token, as the composer writes it: an invisible hole for the
+ *  picture, the label, an invisible tail. Built from the source's own pieces so
+ *  no test has to carry a figure space a reader cannot see. */
+const tok = (label: string): string => `${TOKEN_ICON}${label}${TOKEN_TAIL}`;
 
 class FakeApi implements LobbyApi {
   /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
@@ -955,7 +961,7 @@ describe("<NewSessionComposer> — attachments", () => {
     // then there is no file behind it.
     const saved = loadDraft(NEW_SESSION_DRAFT_KEY)!;
     expect(saved.attachments).toEqual([]);
-    expect(saved.text).toBe("what is wrong here? [img: shot.png]");
+    expect(saved.text).toBe(`what is wrong here? ${tok("shot.png")}`);
     expect(localStorage.getItem(DRAFTS_KEY)).not.toContain("held:");
     m.store.dispose();
   });
@@ -1124,7 +1130,7 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
 
     const e = dropFiles(aFile("shot.png"), aFile("notes.txt", "text/plain"));
     await waitFor(() =>
-      expect(chipText(m.container)).toEqual(["[img: shot.png]", "[file: notes.txt]"]),
+      expect(chipText(m.container)).toEqual([tok("shot.png"), tok("notes.txt")]),
     );
     // Without this the browser navigates away to the dropped file.
     expect(e.defaultPrevented).toBe(true);

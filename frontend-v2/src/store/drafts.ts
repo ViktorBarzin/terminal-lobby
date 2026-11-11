@@ -38,6 +38,17 @@ export interface DraftAttachment {
    * before attachments were anchored, which `anchorRestored` gives one to.
    */
   token?: string;
+  /**
+   * A URL the chip can draw as its thumbnail, for a file whose bytes cannot be
+   * fetched from `path` yet — a `blob:` for what the new-session composer is
+   * holding until Enter creates the session to upload into.
+   *
+   * TRANSIENT. `readAttachment` does not restore it, because a blob URL dies
+   * with the document that made it, so a chip drawn from a restored one would
+   * be a broken image. Everything else reaches its picture through
+   * `contentUrlFor(path)` and leaves this unset.
+   */
+  preview?: string;
 }
 
 export interface Draft {

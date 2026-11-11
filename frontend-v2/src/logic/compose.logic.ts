@@ -7,6 +7,8 @@
  * mid-word and an email address opens the file picker.
  */
 
+import { trimMessage } from "../lib/attachments";
+
 /**
  * The slash commands Claude Code BUILDS IN, with the descriptions the CLI's own
  * menu shows for them.
@@ -539,7 +541,9 @@ export function composeMessage(text: string, attachments: readonly ComposableAtt
     if (a.token && body.includes(a.token)) body = body.split(a.token).join(a.path);
     else loose.push(a.path);
   }
-  body = body.trim();
+  // Never `String.trim`: it eats the figure spaces a token is anchored by
+  // (lib/attachments.ts `trimMessage`).
+  body = trimMessage(body);
   if (loose.length === 0) return body;
   return [...loose, ...(body ? [body] : [])].join("\n");
 }

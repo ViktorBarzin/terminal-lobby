@@ -220,18 +220,37 @@ export function segmentMessage(text: string): Segment[] {
 
 // ---- inline attachment tokens -------------------------------------------
 //
-// An attached file is written into the message AS a token — `[img]`,
-// `[img: chart.png]`, `[file: report.pdf]` — standing exactly where the paste,
-// the drop or the picker put it, and swapped for the absolute path at send
-// time (logic/compose.logic.ts `composeMessage`). It replaces the tray that sat
-// above the field and put every path at the FRONT of the message, which is what
-// Viktor asked for on 2026-09-13: the file belongs where he wrote it.
+// An attached file is written into the message AS a token, standing exactly
+// where the paste, the drop or the picker put it, and swapped for the absolute
+// path at send time (logic/compose.logic.ts `composeMessage`). It replaces the
+// tray that sat above the field and put every path at the FRONT of the
+// message, which is what Viktor asked for on 2026-09-13: the file belongs
+// where he wrote it.
 //
-// A textarea can only hold characters, so the token has to BE readable text:
-// the chip look is painted behind it by a mirror layer the composer draws
+// A textarea can only hold characters, so the token has to BE characters. The
+// chip is painted behind them by a mirror layer the composer draws
 // (PromptField, `.tl-composer-mirror`), and the text alone is what survives if
-// that layer is ever wrong. No emoji, for the reason Icons.tsx gives — an
-// emoji-default codepoint renders in colour and at its own size on every OS.
+// that layer is ever wrong.
+//
+// THE SHAPE IS WHAT LETS THE CHIP CARRY A PICTURE. `<FIG><FIG>label<FIG>`:
+// two FIGURE SPACES, the label, one more. The leading pair is a hole in the
+// text that the mirror fills with the file's own thumbnail, or with a Lucide
+// glyph when there is nothing to draw — an icon inside a textarea is otherwise
+// impossible, and an emoji is not the answer for the reason Icons.tsx gives
+// (a colour codepoint renders at its own size on every OS). The trailing one
+// is the pill's right padding. U+2007 because it is NON-BREAKING, so the icon
+// can never wrap away from its label, and because its width is a digit's
+// rather than whatever the font gives a plain space. Both are invisible, so
+// the fallback reads as the file's name with a little space around it.
+//
+// It replaced `[img: chart.png]` on 2026-09-13, hours after that shipped —
+// Viktor: "the image can be a bit nicer - maybe some icon or thumbnail or
+// something that's more than just [img]".
+
+/** The hole the mirror paints the icon or the thumbnail into. */
+export const TOKEN_ICON = "\u2007\u2007";
+/** The pill's right-hand padding, and the token's closing anchor. */
+export const TOKEN_TAIL = "\u2007";
 
 /** Everything the token machinery needs to know about one attachment. */
 export interface TokenizedAttachment {
@@ -245,13 +264,11 @@ export interface TokenizedAttachment {
 /**
  * Every token SHAPE, for finding ones no attachment owns any more.
  *
- * Deliberately narrow: the two heads, an optional ` 2` disambiguator and an
- * optional `: label`. A markdown link whose text is exactly `img` or `file`
- * would match, which costs that link its brackets in a restored draft and
- * nothing else — the price of a pattern loose enough to catch the labels people
- * actually attach.
+ * Anchored on the figure spaces at both ends, which is why the brackets went:
+ * nothing a person types contains U+2007, so this cannot match prose the way a
+ * `[...]` pattern could match a markdown link.
  */
-const TOKEN_RE = /\[(?:img|file)(?:\s\d+)?(?::\s[^\][\n]{1,80})?\]/g;
+const TOKEN_RE = /\u2007\u2007[^\u2007\n]{0,80}\u2007/g;
 
 /** `file-<stamp>-<token>-` is stripped by storedDisplayName; these two prefixes
  *  are the store's own names for a pasted image and a `show-image` render, and
@@ -275,20 +292,44 @@ function tokenLabel(name: string): string | null {
  * The token for one attachment, unique among the ones already in the message.
  *
  * Uniqueness is what makes the swap at send time unambiguous, so a second
- * screenshot is `[img 2]` rather than a duplicate of the first.
+ * screenshot is `image 2` rather than a duplicate of the first. The kind is
+ * carried by the icon the mirror draws rather than by a word, which is what
+ * the `img:` / `file:` prefix used to do.
  */
 export function attachToken(
   name: string,
   kind: AttachmentKind,
   taken: ReadonlySet<string>,
 ): string {
-  const head = kind === "image" ? "img" : "file";
-  const label = tokenLabel(name);
+  const label = tokenLabel(name) ?? (kind === "image" ? "image" : "file");
   const body = (n: number): string =>
-    `[${head}${n > 1 ? ` ${n}` : ""}${label ? `: ${label}` : ""}]`;
+    `${TOKEN_ICON}${label}${n > 1 ? ` ${n}` : ""}${TOKEN_TAIL}`;
   let n = 1;
   while (taken.has(body(n))) n += 1;
   return body(n);
+}
+
+/**
+ * Trim what a person typed, and nothing a token is made of.
+ *
+ * `String.trim` removes every Unicode space, figure spaces included — so a
+ * message whose first or last character was a chip came out of it with that
+ * chip's anchor shaved off, the swap then missed, and the path went to the
+ * front of the message with the label left behind as prose. Measured the day
+ * the icon landed: "shot.png" sent as text with its path on the line above.
+ *
+ * So the only whitespace this touches is whitespace a keyboard produces.
+ */
+export function trimMessage(text: string): string {
+  return text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
+}
+
+/** The token split into the hole the icon goes in and the label that follows,
+ *  which is the only thing the mirror needs to draw one. */
+export function splitToken(token: string): { icon: string; label: string } {
+  return token.startsWith(TOKEN_ICON)
+    ? { icon: TOKEN_ICON, label: token.slice(TOKEN_ICON.length) }
+    : { icon: "", label: token };
 }
 
 /**
@@ -347,7 +388,8 @@ export function anchorRestored<T extends TokenizedAttachment>(
     if (kept.includes(item)) continue;
     const token = attachToken(item.name, item.kind, taken);
     taken.add(token);
-    out = out.trimEnd() ? `${out.trimEnd()} ${token}` : token;
+    const head = trimMessage(out);
+    out = head ? `${head} ${token}` : token;
     kept.push({ ...item, token });
   }
   return { text: out, items: kept };

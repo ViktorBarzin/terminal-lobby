@@ -26,8 +26,44 @@ import {
   saveDraft,
   type DraftAttachment,
 } from "../store/drafts";
-import { anchorRestored, attachToken, cutSpan } from "../lib/attachments";
+import {
+  anchorRestored,
+  attachToken,
+  contentUrlFor,
+  cutSpan,
+  splitToken,
+  trimMessage,
+} from "../lib/attachments";
 import { PaperclipIcon } from "./Icons";
+
+/**
+ * One run of the message as the chip layer draws it: prose, or a token.
+ *
+ * A token part carries its own hole — the two figure spaces the mirror paints
+ * the picture into — separately from the label, because they are ONE span in
+ * the field and must be two in the mirror: a background can only fill a box,
+ * and the box has to be exactly those two characters wide or the icon covers
+ * the name.
+ */
+interface MirrorPart {
+  text: string;
+  /** The token's leading figure spaces, on a token part. */
+  icon?: string;
+  kind?: DraftAttachment["kind"];
+  /** The file's own picture, when one can be fetched. */
+  thumb?: string | null;
+}
+
+/**
+ * What counts as already-separated when a chip is written in beside something.
+ *
+ * A REAL space, tab or newline, which is narrower than `\s`: that also matches
+ * the figure spaces a token is built from, and treating those as separation
+ * fused two adjacent chips into one word at send time — the tokens are swapped
+ * for paths, their figure spaces go with them, and `path1path2` came out the
+ * other side.
+ */
+const SEPARATED_RE = /[ \t\n]/;
 
 /**
  * The field a prompt is written in, and the bar under it.
@@ -105,6 +141,9 @@ export const PromptField: Component<{
    * nothing persists.
    */
   draftKey?: string;
+  /** Effective OS user, so a chip's thumbnail knows it may fetch its own
+   *  store. Without it every image chip falls back to the kind's glyph. */
+  me?: string;
   /**
    * Upload these files and return what became attachable. The uploader decides:
    * a document over the store cap stays an ephemeral /tmp transfer and comes back
@@ -429,9 +468,9 @@ export const PromptField: Component<{
     const before = ta.value.slice(0, at);
     const after = ta.value.slice(end);
     const body =
-      (pad && before && !/\s$/.test(before) ? " " : "") +
+      (pad && before && !SEPARATED_RE.test(before.slice(-1)) ? " " : "") +
       text +
-      (pad && after && !/^\s/.test(after) ? " " : "");
+      (pad && after && !SEPARATED_RE.test(after.slice(0, 1)) ? " " : "");
     ta.value = before + body + after;
     const pos = at + body.length;
     ta.setSelectionRange(pos, pos);
@@ -467,10 +506,10 @@ export const PromptField: Component<{
 
   /** The message split into runs of prose and the tokens standing in it, which
    *  is what the mirror layer paints chips from. */
-  const mirror = createMemo<{ text: string; kind?: DraftAttachment["kind"] }[]>(() => {
+  const mirror = createMemo<MirrorPart[]>(() => {
     const text = draft();
     const items = attached().filter((a) => !!a.token);
-    const parts: { text: string; kind?: DraftAttachment["kind"] }[] = [];
+    const parts: MirrorPart[] = [];
     let at = 0;
     for (;;) {
       let next = -1;
@@ -484,13 +523,26 @@ export const PromptField: Component<{
       }
       if (next < 0 || !hit) break;
       if (next > at) parts.push({ text: text.slice(at, next) });
-      parts.push({ text: hit.token!, kind: hit.kind });
+      const { icon, label } = splitToken(hit.token!);
+      parts.push({
+        text: label,
+        icon,
+        kind: hit.kind,
+        // The file's own picture where there is one to fetch, the kind's glyph
+        // where there is not: a document has no picture, a held file has no
+        // path to read yet (its blob URL is `preview`), and another user's
+        // store is not ours to ask for — `contentUrlFor` answers null for the
+        // last of those.
+        thumb:
+          hit.preview ??
+          (hit.kind === "image" ? contentUrlFor(hit.path, props.me ?? "") : null),
+      });
       at = next + hit.token!.length;
     }
     if (at < text.length) parts.push({ text: text.slice(at) });
     // A block drops its last line break, so without this the mirror is one line
     // shorter than the field and every chip below a trailing newline is off.
-    if (text.endsWith("\n")) parts.push({ text: " " });
+    if (text.endsWith("\n")) parts.push({ text: "\u00a0" });
     return parts;
   });
 
@@ -547,7 +599,7 @@ export const PromptField: Component<{
    * Off the `draft` signal rather than the textarea, because an element's
    * `value` is not reactive and the bar has to redraw as you type.
    */
-  const sendable = createMemo(() => draft().trim() !== "" || attached().length > 0);
+  const sendable = createMemo(() => trimMessage(draft()) !== "" || attached().length > 0);
 
   /**
    * Send the composed message.
@@ -562,7 +614,7 @@ export const PromptField: Component<{
     const held = attached();
     // The FILES count too: attachments with no prose is a valid message, so the
     // old `if (!t) return` would have swallowed a photo sent on its own.
-    const message = props.pendingAttachments ? raw.trim() : composeMessage(raw, held);
+    const message = props.pendingAttachments ? trimMessage(raw) : composeMessage(raw, held);
     if (!message && held.length === 0) return;
     clear();
     void props.onSend(message, held).then((ok) => {
@@ -798,14 +850,36 @@ export const PromptField: Component<{
               pill painted behind each token and every glyph transparent, so
               what the reader sees is the field's own text sitting on a chip.
               It owns no state and takes no clicks; if it were ever wrong the
-              message would still read correctly, which is why the token says
-              `[img: chart.png]` rather than relying on the paint. */}
+              message would still read the file's name, which is why the token
+              carries one rather than relying on the paint.
+
+              The PICTURE is the same trick one level down. Two figure spaces
+              open every token, and the span around just those two is a box the
+              width of two characters and the height of a line — so a
+              background drawn in it is an icon inside a textarea, which is
+              otherwise not a thing that exists. Splitting the token into two
+              spans costs no layout, because neither has a box of its own. */}
           <div class="tl-field">
             <div class="tl-composer-mirror" aria-hidden="true" ref={mirrorEl}>
               <For each={mirror()}>
                 {(part) => (
                   <Show when={part.kind} fallback={part.text}>
                     <span class="tl-inline-chip" data-kind={part.kind}>
+                      <span
+                        class="tl-chip-icon"
+                        data-kind={part.kind}
+                        // The thumbnail is the file itself. Without one the CSS
+                        // masks in the kind's Lucide glyph, which is what
+                        // `data-thumb` switches between — a marker rather than
+                        // "does it have a style attribute", so another inline
+                        // style could never silently turn the glyph back on.
+                        data-thumb={part.thumb ? "true" : undefined}
+                        style={
+                          part.thumb ? { "background-image": `url("${part.thumb}")` } : undefined
+                        }
+                      >
+                        {part.icon}
+                      </span>
                       {part.text}
                     </span>
                   </Show>

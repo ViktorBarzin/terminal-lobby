@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { completionFor, composeMessage, modeFromPane, modeLabel } from "../src/logic/compose.logic";
+import { TOKEN_ICON, TOKEN_TAIL } from "../src/lib/attachments";
+
+/** One attachment token, as the composer writes it: an invisible hole for the
+ *  picture, the label, an invisible tail. Built from the source's own pieces so
+ *  no test has to carry a figure space a reader cannot see. */
+const tok = (label: string): string => `${TOKEN_ICON}${label}${TOKEN_TAIL}`;
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 
@@ -139,26 +145,26 @@ describe("the mode chip's label", () => {
 describe("composeMessage", () => {
   const a = "/var/lib/clipboard-store/wizard/qa/pasted-20260817-a1.png";
   const b = "/var/lib/clipboard-store/wizard/qa/file-20260817-abcd-report.pdf";
-  const img = { path: a, token: "[img]" };
-  const pdf = { path: b, token: "[file: report.pdf]" };
+  const img = { path: a, token: tok("image") };
+  const pdf = { path: b, token: tok("report.pdf") };
 
   it("is just the text when nothing is attached", () => {
     expect(composeMessage("what's wrong here?", [])).toBe("what's wrong here?");
   });
 
   it("puts each path where its token stands", () => {
-    expect(composeMessage("what's wrong in [img], vs [file: report.pdf]?", [img, pdf])).toBe(
+    expect(composeMessage(`what's wrong in ${tok("image")}, vs ${tok("report.pdf")}?`, [img, pdf])).toBe(
       `what's wrong in ${a}, vs ${b}?`,
     );
   });
 
   it("sends the path alone when the token is the whole message", () => {
-    expect(composeMessage("[img]", [img])).toBe(a);
-    expect(composeMessage("  [img] ", [img])).toBe(a);
+    expect(composeMessage(tok("image"), [img])).toBe(a);
+    expect(composeMessage(`  ${tok("image")} `, [img])).toBe(a);
   });
 
   it("trims the prose but keeps its interior newlines", () => {
-    expect(composeMessage("  line one\n[img] line two  ", [img])).toBe(`line one\n${a} line two`);
+    expect(composeMessage(`  line one\n${tok("image")} line two  `, [img])).toBe(`line one\n${a} line two`);
   });
 
   it("has nothing to send when both halves are empty", () => {
@@ -167,7 +173,7 @@ describe("composeMessage", () => {
   });
 
   it("drops a duplicate path rather than asking Claude to read it twice", () => {
-    expect(composeMessage("look at [img]", [img, { ...img, token: "[img 2]" }])).toBe(
+    expect(composeMessage(`look at ${tok("image")}`, [img, { ...img, token: tok("image 2") }])).toBe(
       `look at ${a}`,
     );
   });
@@ -188,6 +194,6 @@ describe("composeMessage", () => {
   });
 
   it("places a token the writer copied twice at both of them", () => {
-    expect(composeMessage("[img] vs [img]", [img])).toBe(`${a} vs ${a}`);
+    expect(composeMessage(`${tok("image")} vs ${tok("image")}`, [img])).toBe(`${a} vs ${a}`);
   });
 });

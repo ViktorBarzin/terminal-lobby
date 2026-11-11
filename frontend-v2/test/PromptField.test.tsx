@@ -12,6 +12,12 @@ import { PromptField } from "../src/components/PromptField";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
+import { TOKEN_ICON, TOKEN_TAIL } from "../src/lib/attachments";
+
+/** One attachment token, as the composer writes it: an invisible hole for the
+ *  picture, the label, an invisible tail. Built from the source's own pieces so
+ *  no test has to carry a figure space a reader cannot see. */
+const tok = (label: string): string => `${TOKEN_ICON}${label}${TOKEN_TAIL}`;
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -179,7 +185,7 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
       ],
       at: 2,
     });
-    expect(field(container).value).toBe("look at this [img: a.png]");
+    expect(field(container).value).toBe(`look at this ${tok("a.png")}`);
     expect(container.querySelectorAll(".tl-inline-chip").length).toBe(1);
   });
 });

@@ -214,19 +214,41 @@ export const NewSessionComposer: Component<{
   // they left behind out of the restored text.
   const held = new Map<string, File>();
   let heldSeq = 0;
+  /** Blob URLs handed to the chips, so a held image still shows its own
+   *  picture. Revoked together when this composer goes. */
+  const previews: string[] = [];
+  /** A thumbnail is a nicety, and jsdom does not implement createObjectURL at
+   *  all — so a failure here costs the picture and never the attachment. */
+  const blobUrl = (f: File): string | undefined => {
+    try {
+      return URL.createObjectURL(f);
+    } catch {
+      return undefined;
+    }
+  };
   const holdFiles = (files: File[]): Promise<DraftAttachment[]> => {
     const chips: DraftAttachment[] = [];
     for (const f of files) {
       heldSeq += 1;
       const path = `${HELD_PATH_PREFIX}${heldSeq}/${f.name}`;
       held.set(path, f);
-      chips.push({ path, name: f.name, kind: attachmentKind(f.name) });
+      const kind = attachmentKind(f.name);
+      // A held file has no path anything can read, so the chip's thumbnail
+      // comes from the File itself. Images only: the browser cannot draw a PDF.
+      const preview = kind === "image" ? blobUrl(f) : undefined;
+      if (preview) previews.push(preview);
+      chips.push({ path, name: f.name, kind, ...(preview ? { preview } : {}) });
     }
     return Promise.resolve(chips);
   };
   // Leaving without creating takes the files with it — nothing was uploaded, so
-  // there is nothing to clean up anywhere else.
-  onCleanup(() => held.clear());
+  // there is nothing to clean up anywhere else. The blob URLs are the exception:
+  // they are document-scoped handles and leak until revoked.
+  onCleanup(() => {
+    held.clear();
+    for (const url of previews) URL.revokeObjectURL(url);
+    previews.length = 0;
+  });
 
   // ---- paste and drop, with no session to upload into ---------------------
   //

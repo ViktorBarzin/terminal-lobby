@@ -12,9 +12,16 @@ import {
   previewContentUrl,
   segmentMessage,
   storedDisplayName,
+  TOKEN_ICON,
+  TOKEN_TAIL,
   type Segment,
   type TokenizedAttachment,
 } from "../src/lib/attachments";
+
+/** One attachment token, as the composer writes it: an invisible hole for the
+ *  picture, the label, an invisible tail. Built from the source's own pieces so
+ *  no test has to carry a figure space a reader cannot see. */
+const tok = (label: string): string => `${TOKEN_ICON}${label}${TOKEN_TAIL}`;
 
 /**
  * The recognition rule and the backend resolver
@@ -255,83 +262,97 @@ describe("attachToken", () => {
   const none = new Set<string>();
 
   it("names the file when the name says something", () => {
-    expect(attachToken("chart.png", "image", none)).toBe("[img: chart.png]");
-    expect(attachToken("report.pdf", "doc", none)).toBe("[file: report.pdf]");
+    expect(attachToken("chart.png", "image", none)).toBe(tok("chart.png"));
+    expect(attachToken("report.pdf", "doc", none)).toBe(tok("report.pdf"));
   });
 
   it("recovers the name the writer chose from a stored one", () => {
     expect(attachToken("file-20260817-150232-c17e6008-report.pdf", "doc", none)).toBe(
-      "[file: report.pdf]",
+      tok("report.pdf"),
     );
   });
 
   it("says nothing more than the kind for a name only the store cares about", () => {
-    expect(attachToken("pasted-20260817-150232-a1.png", "image", none)).toBe("[img]");
-    expect(attachToken("displayed-20260817-150232-a1.png", "image", none)).toBe("[img]");
+    expect(attachToken("pasted-20260817-150232-a1.png", "image", none)).toBe(tok("image"));
+    expect(attachToken("displayed-20260817-150232-a1.png", "image", none)).toBe(tok("image"));
     // What Chrome calls a clipboard image.
-    expect(attachToken("image.png", "image", none)).toBe("[img]");
+    expect(attachToken("image.png", "image", none)).toBe(tok("image"));
   });
 
   it("numbers around the tokens already in the message", () => {
-    expect(attachToken("shot.png", "image", new Set(["[img: shot.png]"]))).toBe(
-      "[img 2: shot.png]",
+    expect(attachToken("shot.png", "image", new Set([tok("shot.png")]))).toBe(
+      tok("shot.png 2"),
     );
-    expect(attachToken("a.png", "image", new Set(["[img]"]))).toBe("[img: a.png]");
-    expect(attachToken("x.png", "image", new Set(["[img: x.png]", "[img 2: x.png]"]))).toBe(
-      "[img 3: x.png]",
+    expect(attachToken("a.png", "image", new Set([tok("image")]))).toBe(tok("a.png"));
+    expect(attachToken("x.png", "image", new Set([tok("x.png"), tok("x.png 2")]))).toBe(
+      tok("x.png 3"),
     );
   });
 
   it("cuts a long name short rather than filling the line with it", () => {
     const t = attachToken("a-very-long-screenshot-name-indeed.png", "image", none);
     expect(t.length).toBeLessThanOrEqual(30);
-    expect(t.endsWith("…]")).toBe(true);
+    expect(t.endsWith("…" + TOKEN_TAIL)).toBe(true);
+  });
+
+  // The shape itself, spelled out once: everything else in the suite builds a
+  // token from these two pieces, so this is where a change to them is caught.
+  it("opens with two figure spaces for the picture and closes with one", () => {
+    expect(TOKEN_ICON).toBe("\u2007\u2007");
+    expect(TOKEN_TAIL).toBe("\u2007");
+    // Invisible, and non-breaking so a chip can never wrap away from its icon.
+    expect(attachToken("chart.png", "image", none)).toBe("\u2007\u2007chart.png\u2007");
   });
 });
 
 describe("cutSpan and dropToken", () => {
   it("takes the space that separated the chip from its neighbour", () => {
-    expect(dropToken("look at [img] here", "[img]")).toBe("look at here");
-    expect(dropToken("look at [img]", "[img]")).toBe("look at");
-    expect(dropToken("[img] here", "[img]")).toBe("here");
+    expect(dropToken(`look at ${tok("image")} here`, tok("image"))).toBe("look at here");
+    expect(dropToken(`look at ${tok("image")}`, tok("image"))).toBe("look at");
+    expect(dropToken(`${tok("image")} here`, tok("image"))).toBe("here");
   });
 
   it("leaves a message that never had the token alone", () => {
-    expect(dropToken("nothing attached", "[img]")).toBe("nothing attached");
+    expect(dropToken("nothing attached", tok("image"))).toBe("nothing attached");
   });
 
   it("says where the caret lands", () => {
-    expect(cutSpan("look at [img] here", 8, 13)).toEqual({ text: "look at here", at: 8 });
+    const text = `look at ${tok("image")} here`;
+    const at = text.indexOf(TOKEN_ICON);
+    expect(cutSpan(text, at, at + tok("image").length)).toEqual({
+      text: "look at here",
+      at: 8,
+    });
   });
 });
 
 describe("anchorRestored", () => {
-  const img = { name: "chart.png", kind: "image" as const, token: "[img: chart.png]" };
+  const img = { name: "chart.png", kind: "image" as const, token: tok("chart.png") };
 
   it("keeps an attachment whose token is still in the text", () => {
-    const r = anchorRestored("what about [img: chart.png]?", [img]);
-    expect(r.text).toBe("what about [img: chart.png]?");
+    const r = anchorRestored(`what about ${tok("chart.png")}?`, [img]);
+    expect(r.text).toBe(`what about ${tok("chart.png")}?`);
     expect(r.items).toEqual([img]);
   });
 
   it("anchors one that has no token yet, at the end", () => {
     const loose: TokenizedAttachment = { name: "chart.png", kind: "image" };
     const r = anchorRestored("half written", [loose]);
-    expect(r.text).toBe("half written [img: chart.png]");
-    expect(r.items[0]!.token).toBe("[img: chart.png]");
+    expect(r.text).toBe(`half written ${tok("chart.png")}`);
+    expect(r.items[0]!.token).toBe(tok("chart.png"));
   });
 
   it("cuts out a token no attachment owns any more", () => {
     // The new-session composer holds Files, which cannot be persisted, so its
     // tokens outlive them by exactly one reload.
-    const r = anchorRestored("what is wrong here? [img: shot.png]", []);
+    const r = anchorRestored(`what is wrong here? ${tok("shot.png")}`, []);
     expect(r.text).toBe("what is wrong here?");
     expect(r.items).toEqual([]);
   });
 
   it("keeps the ones it owns while cutting the ones it does not", () => {
-    const r = anchorRestored("[img] and [img: chart.png] and [file: gone.pdf]", [img]);
-    expect(r.text).toBe("and [img: chart.png] and");
+    const r = anchorRestored(`${tok("image")} and ${tok("chart.png")} and ${tok("gone.pdf")}`, [img]);
+    expect(r.text).toBe(`and ${tok("chart.png")} and`);
     expect(r.items).toEqual([img]);
   });
 

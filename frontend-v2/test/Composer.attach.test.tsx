@@ -3,15 +3,22 @@ import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
 import { Composer } from "../src/components/Composer";
 import { DRAFTS_KEY, loadDraft, saveDraft } from "../src/store/drafts";
 import type { DraftAttachment } from "../src/store/drafts";
+import { TOKEN_ICON, TOKEN_TAIL } from "../src/lib/attachments";
+
+/** One attachment token, as the composer writes it: an invisible hole for the
+ *  picture, the label, an invisible tail. Built from the source's own pieces so
+ *  no test has to carry a figure space a reader cannot see. */
+const tok = (label: string): string => `${TOKEN_ICON}${label}${TOKEN_TAIL}`;
 
 /**
  * Attachments, inside the message.
  *
- * A file is a token in the text — `[img]`, `[file: report.pdf]` — standing
- * where the paste, the drop or the picker put it, and swapped for its absolute
- * path at send time. It replaced a tray above the field whose paths all went to
- * the FRONT of the message (Viktor, 2026-09-13), so what these tests pin is
- * WHERE the path comes out, and that deleting the chip takes the file with it.
+ * A file is a token in the text — `tok("image")`, `tok("report.pdf")` below —
+ * standing where the paste, the drop or the picker put it, and swapped for its
+ * absolute path at send time. It replaced a tray above the field whose paths
+ * all went to the FRONT of the message (Viktor, 2026-09-13), so what these
+ * tests pin is WHERE the path comes out, and that deleting the chip takes the
+ * file with it.
  *
  * The upload itself is somebody else's job — `onAttach` is the seam.
  */
@@ -30,6 +37,9 @@ const DOC: DraftAttachment = {
 interface Harness {
   onSend: ReturnType<typeof vi.fn>;
   onAttach: ReturnType<typeof vi.fn>;
+  /** Effective OS user. Absent by default, which is what a chip with no
+   *  thumbnail to fetch looks like. */
+  me: string;
 }
 
 function mount(over: Partial<Harness> = {}) {
@@ -40,6 +50,7 @@ function mount(over: Partial<Harness> = {}) {
       working={false}
       pending={[]}
       session="qa"
+      me={over.me}
       onSend={onSend}
       onStop={() => {}}
       onResolve={() => {}}
@@ -78,10 +89,10 @@ describe("attaching", () => {
 
     pick(container, file("a.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("[img]"));
+    await waitFor(() => expect(field.value).toBe(tok("image")));
     expect(onAttach).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(chips(container)).toHaveLength(1));
-    expect(chips(container)[0]!.textContent).toBe("[img]");
+    expect(chips(container)[0]!.textContent).toBe(tok("image"));
   });
 
   it("lands the chip at the caret, not at the front", async () => {
@@ -94,7 +105,7 @@ describe("attaching", () => {
 
     pick(container, file("a.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("what is wrong [img] here?"));
+    await waitFor(() => expect(field.value).toBe(`what is wrong ${tok("image")} here?`));
   });
 
   // An untouched textarea reports selectionStart 0, which is indistinguishable
@@ -109,15 +120,68 @@ describe("attaching", () => {
 
     pick(container, file("a.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("look at this [img]"));
+    await waitFor(() => expect(field.value).toBe(`look at this ${tok("image")}`));
   });
 
   it("names a document in its token", async () => {
     const onAttach = vi.fn().mockResolvedValue([DOC]);
     const { container, field } = mount({ onAttach });
     pick(container, file("report.pdf", "application/pdf"));
-    await waitFor(() => expect(field.value).toBe("[file: report.pdf]"));
+    await waitFor(() => expect(field.value).toBe(tok("report.pdf")));
     await waitFor(() => expect(chips(container)[0]!.getAttribute("data-kind")).toBe("doc"));
+  });
+
+  // --- the picture ------------------------------------------------------
+  // The token opens with two figure spaces that no glyph fills, and the mirror
+  // paints them: the file's own thumbnail when one can be fetched, the kind's
+  // Lucide glyph when it cannot. Without that hole there is nowhere to put a
+  // picture, because the chip's geometry is the field's text and nothing else.
+  it("gives the chip a hole the width of the token's two figure spaces", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container } = mount({ onAttach });
+    pick(container, file("a.png", "image/png"));
+
+    await waitFor(() => expect(container.querySelector(".tl-chip-icon")).not.toBeNull());
+    const icon = container.querySelector(".tl-chip-icon")!;
+    expect(icon.textContent).toBe(TOKEN_ICON);
+    // The label is beside the hole, never inside it — a background fills a box,
+    // so anything else in there would sit under the picture.
+    expect(chips(container)[0]!.textContent).toBe(tok("image"));
+  });
+
+  it("draws a stored image as its own thumbnail", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container } = mount({ onAttach, me: "wizard" });
+    pick(container, file("a.png", "image/png"));
+
+    await waitFor(() => expect(container.querySelector(".tl-chip-icon")).not.toBeNull());
+    const icon = container.querySelector<HTMLElement>(".tl-chip-icon")!;
+    expect(icon.getAttribute("data-thumb")).toBe("true");
+    expect(icon.style.backgroundImage).toContain("/clipboard/img/qa/");
+  });
+
+  // A PDF has no picture to draw, and neither does an image whose store
+  // belongs to somebody else — both fall to the glyph, which the CSS masks in
+  // for a chip with no `data-thumb`.
+  it("leaves a document to the glyph", async () => {
+    const onAttach = vi.fn().mockResolvedValue([DOC]);
+    const { container } = mount({ onAttach, me: "wizard" });
+    pick(container, file("report.pdf", "application/pdf"));
+
+    await waitFor(() => expect(container.querySelector(".tl-chip-icon")).not.toBeNull());
+    const icon = container.querySelector<HTMLElement>(".tl-chip-icon")!;
+    expect(icon.getAttribute("data-thumb")).toBeNull();
+    expect(icon.style.backgroundImage).toBe("");
+  });
+
+  it("leaves another user's image to the glyph rather than a 404", async () => {
+    const theirs = { ...IMG, path: IMG.path.replace("/wizard/", "/emo/") };
+    const onAttach = vi.fn().mockResolvedValue([theirs]);
+    const { container } = mount({ onAttach, me: "wizard" });
+    pick(container, file("a.png", "image/png"));
+
+    await waitFor(() => expect(container.querySelector(".tl-chip-icon")).not.toBeNull());
+    expect(container.querySelector(".tl-chip-icon")!.getAttribute("data-thumb")).toBeNull();
   });
 
   it("numbers a second unnamed image so the two tokens differ", async () => {
@@ -126,10 +190,10 @@ describe("attaching", () => {
     const { container, field } = mount({ onAttach });
 
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("[img]"));
+    await waitFor(() => expect(field.value).toBe(tok("image")));
     pick(container, file("b.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("[img] [img 2]"));
+    await waitFor(() => expect(field.value).toBe(`${tok("image")} ${tok("image 2")}`));
   });
 
   it("keeps a token from fusing with the word beside it", async () => {
@@ -138,7 +202,7 @@ describe("attaching", () => {
     fireEvent.input(field, { target: { value: "see" } });
     caretTo(field, 3);
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("see [img]"));
+    await waitFor(() => expect(field.value).toBe(`see ${tok("image")}`));
   });
 });
 
@@ -162,9 +226,10 @@ describe("removing", () => {
     fireEvent.input(field, { target: { value: "look" } });
     caretTo(field, 4);
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("look [img]"));
+    await waitFor(() => expect(field.value).toBe(`look ${tok("image")}`));
 
-    field.setSelectionRange(10, 10);
+    // At the very end of the message, which is just after the chip.
+    field.setSelectionRange(field.value.length, field.value.length);
     fireEvent.keyDown(field, { key: "Backspace" });
 
     await waitFor(() => expect(field.value).toBe("look"));
@@ -177,7 +242,7 @@ describe("removing", () => {
     const onAttach = vi.fn().mockResolvedValue([IMG]);
     const { container, field } = mount({ onAttach });
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("[img]"));
+    await waitFor(() => expect(field.value).toBe(tok("image")));
 
     field.setSelectionRange(0, 0);
     fireEvent.keyDown(field, { key: "Delete" });
@@ -204,10 +269,10 @@ describe("sending", () => {
     fireEvent.input(field, { target: { value: "what's wrong here, vs the pdf?" } });
     caretTo(field, 18); // "what's wrong here,| vs the pdf?"
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toContain("[img]"));
+    await waitFor(() => expect(field.value).toContain(tok("image")));
     caretTo(field, field.value.length);
     pick(container, file("report.pdf", "application/pdf"));
-    await waitFor(() => expect(field.value).toContain("[file: report.pdf]"));
+    await waitFor(() => expect(field.value).toContain(tok("report.pdf")));
 
     send();
 
@@ -215,8 +280,8 @@ describe("sending", () => {
     // ignores them, having already swapped the paths in, and the new-session
     // composer is the one that needs the parts (PromptField.pendingAttachments).
     expect(onSend).toHaveBeenCalledWith(`what's wrong here, ${IMG.path} vs the pdf? ${DOC.path}`, [
-      { ...IMG, token: "[img]" },
-      { ...DOC, token: "[file: report.pdf]" },
+      { ...IMG, token: tok("image") },
+      { ...DOC, token: tok("report.pdf") },
     ]);
   });
 
@@ -226,7 +291,7 @@ describe("sending", () => {
     pick(container, file("a.png", "image/png"));
     await waitFor(() => expect(onAttach).toHaveBeenCalled());
     send();
-    expect(onSend).toHaveBeenCalledWith(IMG.path, [{ ...IMG, token: "[img]" }]);
+    expect(onSend).toHaveBeenCalledWith(IMG.path, [{ ...IMG, token: tok("image") }]);
   });
 
   it("sends nothing when the message is empty", () => {
@@ -254,11 +319,11 @@ describe("sending", () => {
     fireEvent.input(field, { target: { value: "look" } });
     caretTo(field, 4);
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("look [img]"));
+    await waitFor(() => expect(field.value).toBe(`look ${tok("image")}`));
 
     send();
 
-    await waitFor(() => expect(field.value).toBe("look [img]"));
+    await waitFor(() => expect(field.value).toBe(`look ${tok("image")}`));
     expect(chips(container)).toHaveLength(1);
   });
 });
@@ -266,15 +331,15 @@ describe("sending", () => {
 describe("persistence", () => {
   it("restores the text and its chips", async () => {
     saveDraft("qa", {
-      text: "half written [img]",
-      attachments: [{ ...IMG, token: "[img]" }],
+      text: `half written ${tok("image")}`,
+      attachments: [{ ...IMG, token: tok("image") }],
       at: 1,
     });
     const { field, container, send, onSend } = mount();
     await waitFor(() => expect(chips(container)).toHaveLength(1));
-    expect(field.value).toBe("half written [img]");
+    expect(field.value).toBe(`half written ${tok("image")}`);
     send();
-    expect(onSend).toHaveBeenCalledWith(`half written ${IMG.path}`, [{ ...IMG, token: "[img]" }]);
+    expect(onSend).toHaveBeenCalledWith(`half written ${IMG.path}`, [{ ...IMG, token: tok("image") }]);
   });
 
   // Written before attachments were anchored: the record has no token, so the
@@ -283,15 +348,15 @@ describe("persistence", () => {
     saveDraft("qa", { text: "half written", attachments: [IMG], at: 1 });
     const { field, container } = mount();
     await waitFor(() => expect(chips(container)).toHaveLength(1));
-    expect(field.value).toBe("half written [img]");
+    expect(field.value).toBe(`half written ${tok("image")}`);
   });
 
   it("saves the token with the text, so the next mount pairs them", async () => {
     const onAttach = vi.fn().mockResolvedValue([IMG]);
     const { container } = mount({ onAttach });
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(loadDraft("qa")?.attachments[0]?.token).toBe("[img]"));
-    expect(loadDraft("qa")?.text).toBe("[img]");
+    await waitFor(() => expect(loadDraft("qa")?.attachments[0]?.token).toBe(tok("image")));
+    expect(loadDraft("qa")?.text).toBe(tok("image"));
   });
 
   it("keeps a corrupt store from breaking the composer", () => {
@@ -336,7 +401,7 @@ describe("register", () => {
     caretTo(field, 11);
     api().add([IMG]);
     await waitFor(() => expect(chips(container)).toHaveLength(1));
-    expect(field.value).toBe("have a look [img]");
+    expect(field.value).toBe(`have a look ${tok("image")}`);
   });
 
   it("inserts pasted text at the caret rather than replacing the message", async () => {

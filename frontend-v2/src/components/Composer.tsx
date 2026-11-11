@@ -92,6 +92,9 @@ export const Composer: Component<{
    * evicted phone tab does not lose a half-written message with a photo on it.
    */
   session?: string;
+  /** Effective OS user, so a chip's thumbnail knows it may fetch its own
+   *  store (lib/attachments.ts `contentUrlFor`). */
+  me?: string;
   /**
    * Upload these files and return what became attachable. The uploader decides:
    * a document over the store cap stays an ephemeral /tmp transfer and comes back
@@ -147,6 +150,7 @@ export const Composer: Component<{
         commands={props.commands}
         commandsOk={props.commandsOk}
         draftKey={props.session}
+        me={props.me}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
         onCycleMode={props.onCycleMode}

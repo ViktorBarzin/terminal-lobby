@@ -2060,6 +2060,50 @@ label.tl-set-row-label {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-muted) 24%, transparent);
   outline-color: color-mix(in srgb, var(--text-muted) 50%, transparent);
 }
+/* The picture, drawn into the hole the token opens for it.
+
+   This span wraps exactly the token's two leading FIGURE SPACES, so its box is
+   two characters wide and one line tall and it displaces nothing — the field's
+   own text is what sets the geometry, and this only fills it. A figure space
+   is the width of a digit, so the hole is about 1em wide however the font
+   renders, and the inline box's height is the font's content area, which makes
+   it near enough square to crop a screenshot into. */
+   Deliberately NOT inline-block: an inline-block has a height of its own and
+   can grow the line box, which would push every line below it out of step with
+   the field. A plain inline span cannot — its background fills the content
+   area and changes no geometry at all. */
+.tl-chip-icon {
+  border-radius: 3px;
+  /* The thumbnail, when the chip was given one (`background-image` inline). */
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+/* No thumbnail: the kind's Lucide glyph, MASKED rather than drawn, so it takes
+   the text colour and therefore every one of the nine themes. `currentColor`
+   in a data URI would be inert — a masked element paints its own background
+   through the shape, which is the only way an inline SVG follows the theme
+   here. The two glyphs are lucide `image` and `file-text`, the same set
+   Icons.tsx uses, so the composer and the chrome do not disagree about what an
+   image looks like. */
+.tl-chip-icon:not([data-thumb]) {
+  background-color: currentColor;
+  opacity: 0.75;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: 88% auto;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 88% auto;
+}
+.tl-chip-icon[data-kind="image"]:not([data-thumb]) {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='2' ry='2'/%3E%3Ccircle cx='9' cy='9' r='2'/%3E%3Cpath d='m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='2' ry='2'/%3E%3Ccircle cx='9' cy='9' r='2'/%3E%3Cpath d='m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21'/%3E%3C/svg%3E");
+}
+.tl-chip-icon[data-kind="doc"]:not([data-thumb]) {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M10 9H8'/%3E%3Cpath d='M16 13H8'/%3E%3Cpath d='M16 17H8'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M10 9H8'/%3E%3Cpath d='M16 13H8'/%3E%3Cpath d='M16 17H8'/%3E%3C/svg%3E");
+}
 .tl-attach-btn {
   flex: 0 0 auto;
   display: flex;
