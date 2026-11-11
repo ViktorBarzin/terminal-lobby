@@ -317,8 +317,16 @@ jobs:
         env:
           WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
           WOODPECKER_PIPELINE_URL: ${{ secrets.WOODPECKER_PIPELINE_URL }}
+        # Retries ride out a short forge outage: on 2026-10-03 GitHub's API
+        # answered 503 for ~30 minutes, Woodpecker passed that back, and the
+        # one-shot POST skipped the deploy (viktor/infra#110).
+        # --retry-all-errors retries HTTP 5xx too; 5 x 15s covers ~75s, and
+        # --max-time 60 per attempt sits under Woodpecker's 180s route timeout.
+        # A duplicate deploy from a retried POST is harmless: tl-reconcile
+        # converges on the version. --fail keeps a final failure red.
         run: |
-          curl -sSf -X POST \
+          curl -sS --fail --retry 5 --retry-all-errors --retry-delay 15 --max-time 60 \
+            -X POST \
             -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
             -H "Content-Type: application/json" \
             -d '{"branch":"master","variables":{"PIPELINE":"terminal-lobby-deploy","VERSION":"${{ steps.version.outputs.version }}"}}' \
