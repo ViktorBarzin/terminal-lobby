@@ -503,7 +503,7 @@ func main() {
 	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
 	timing.Metrics = metrics
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(http.DefaultServeMux))))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.RequestContext(telemetry.ReportPanics(http.DefaultServeMux)))))
 }
 
 // registerRoutes attaches every surface this service serves to mux. This is the
@@ -701,7 +701,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sessionsCacheInstance.invalidate(osUser)
-		emitRestored(osUser, "picker")
+		emitRestored(r.Context(), osUser, "picker")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		return
@@ -715,7 +715,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("restore for %s: %s", osUser, strings.TrimSpace(string(out)))
 	sessionsCacheInstance.invalidate(osUser)
-	emitRestored(osUser, "api")
+	emitRestored(r.Context(), osUser, "api")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

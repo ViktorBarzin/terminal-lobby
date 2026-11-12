@@ -36,6 +36,7 @@ import {
   NAME_RE,
 } from "../types/lobby";
 
+import { withVisitor } from "../telemetry/analytics";
 import { REQUEST_TIMEOUT_MS, withDeadline } from "./http";
 export { REQUEST_TIMEOUT_MS, withDeadline };
 
@@ -65,9 +66,10 @@ async function req(
 ): Promise<Response> {
   // `signal` after the spread on purpose: a caller's own signal is merged into
   // the deadline by withDeadline, never dropped by it.
-  const res = await fetch(apiUrl(path), {
+  const url = apiUrl(path);
+  const res = await fetch(url, {
     credentials: "same-origin",
-    ...init,
+    ...withVisitor(url, init),
     signal: withDeadline(timeoutMs, init?.signal),
   });
   // Which network this request went over, stamped by tmux-api on a response the
@@ -260,11 +262,15 @@ async function asRestoreSelection(res: Response): Promise<RestoreSelection | nul
  */
 export function killSessionKeepalive(name: string): void {
   try {
-    void fetch(apiUrl(`/sessions/${encodeURIComponent(name)}`), {
-      method: "DELETE",
-      credentials: "same-origin",
-      keepalive: true,
-    });
+    const url = apiUrl(`/sessions/${encodeURIComponent(name)}`);
+    void fetch(
+      url,
+      withVisitor(url, {
+        method: "DELETE",
+        credentials: "same-origin",
+        keepalive: true,
+      }),
+    );
   } catch {
     /* a browser that refuses the request on unload: see the header */
   }

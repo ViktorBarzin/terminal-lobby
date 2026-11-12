@@ -138,7 +138,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 		if res.Status == http.StatusOK {
 			// The same signal the inline path records, from the requested
 			// extension — the child never sees the telemetry pipe.
-			events.Emit("file.previewed", osUser, telemetry.Attrs{
+			events.EmitContext(r.Context(), "file.previewed", osUser, telemetry.Attrs{
 				"tl.kind": strings.ToLower(filepath.Ext(p)), "tl.client": "api",
 			})
 		}
@@ -203,7 +203,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// The extension is the useful signal: which KINDS of file get previewed
 	// (markdown, code, images) drives what the preview surface should do next.
-	events.Emit("file.previewed", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "file.previewed", osUser, telemetry.Attrs{
 		"tl.kind": strings.ToLower(filepath.Ext(resolved)), "tl.client": "api",
 	})
 	// ServeContent handles Range/If-Modified-Since and won't override the
@@ -248,7 +248,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		res := runPrivop(osUser, "write", body.Path, false,
 			[]byte(body.Content))
 		if res.Status == http.StatusOK {
-			events.Emit("file.saved", osUser, telemetry.Attrs{
+			events.EmitContext(r.Context(), "file.saved", osUser, telemetry.Attrs{
 				"tl.kind": strings.ToLower(filepath.Ext(body.Path)), "tl.client": "api",
 			})
 		}
@@ -279,7 +279,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		pathHTTPError(w, err)
 		return
 	}
-	events.Emit("file.saved", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "file.saved", osUser, telemetry.Attrs{
 		"tl.kind":  strings.ToLower(filepath.Ext(resolved)),
 		"tl.count": len(body.Content), "tl.client": "api",
 	})

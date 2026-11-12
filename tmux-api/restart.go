@@ -25,6 +25,7 @@ package main
 // waiting on and would never see finish.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -74,7 +75,7 @@ type restartResponse struct {
 //	500                     claude would not stop, or stopped and did not come
 //	                        back (the session is then left suspended, and
 //	                        opening it resumes it)
-func restartSession(w http.ResponseWriter, osUser, name string) {
+func restartSession(ctx context.Context, w http.ResponseWriter, osUser, name string) {
 	started := time.Now()
 	s, ok := sessionNamed(osUser, name)
 	if !ok {
@@ -125,7 +126,7 @@ func restartSession(w http.ResponseWriter, osUser, name string) {
 	}
 
 	ms := time.Since(started).Milliseconds()
-	events.Emit("session.restarted", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "session.restarted", osUser, telemetry.Attrs{
 		"tl.session":   name,
 		"tl.from":      from,
 		"tl.restartMs": ms,

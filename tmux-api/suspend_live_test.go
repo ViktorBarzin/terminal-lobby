@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -197,7 +198,7 @@ func TestSuspendAndResumeAgainstRealTmux(t *testing.T) {
 
 	// --- the resume -------------------------------------------------------
 	rec := httptest.NewRecorder()
-	resumeSession(rec, osSelf, name)
+	resumeSession(context.Background(), rec, osSelf, name)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("resume = %d, want 200: %s", rec.Code, rec.Body)
 	}
@@ -244,7 +245,7 @@ func TestSuspendAndResumeAgainstRealTmux(t *testing.T) {
 	// A second resume has nothing to do, and says so rather than respawning a
 	// live pane out from under whoever is now using it.
 	rec2 := httptest.NewRecorder()
-	resumeSession(rec2, osSelf, name)
+	resumeSession(context.Background(), rec2, osSelf, name)
 	if rec2.Code != http.StatusConflict {
 		t.Fatalf("a second resume = %d, want 409: %s", rec2.Code, rec2.Body)
 	}
@@ -306,7 +307,7 @@ func TestResumeRefusesALivePaneAgainstRealTmux(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	resumeSession(rec, osSelf, name)
+	resumeSession(context.Background(), rec, osSelf, name)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("resume of a live pane = %d, want 409: %s", rec.Code, rec.Body)
@@ -393,7 +394,7 @@ func TestResumeRespawnsARestoredSessionAgainstRealTmux(t *testing.T) {
 
 	// …and the click brings it back, over the surviving shell.
 	rec := httptest.NewRecorder()
-	resumeSession(rec, osSelf, name)
+	resumeSession(context.Background(), rec, osSelf, name)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("resume of a restored session = %d, want 200: %s", rec.Code, rec.Body)
 	}

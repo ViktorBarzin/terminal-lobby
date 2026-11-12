@@ -33,10 +33,12 @@ require terminal-lobby/clipstore v0.0.0
 
 replace terminal-lobby/clipstore => ../clipstore
 
-require terminal-lobby/t3client v0.0.0
+require (
+	github.com/ViktorBarzin/telemetry/go v0.2.0
+	terminal-lobby/t3client v0.0.0
+)
 
 require (
-	github.com/ViktorBarzin/telemetry/go v0.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/getsentry/sentry-go v0.50.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect

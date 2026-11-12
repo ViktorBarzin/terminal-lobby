@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -45,7 +46,7 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		killSession(w, osUser, name, guest)
+		killSession(r.Context(), w, osUser, name, guest)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "rename" {
@@ -101,7 +102,7 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		resumeSession(w, osUser, name)
+		resumeSession(r.Context(), w, osUser, name)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "restart" {
@@ -109,7 +110,7 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		restartSession(w, osUser, name)
+		restartSession(r.Context(), w, osUser, name)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "capture" {
@@ -145,7 +146,7 @@ type killResponse struct {
 
 // guest is the account that asked, when it is not the owner's own request
 // (guestTarget); the owner is then told who killed it.
-func killSession(w http.ResponseWriter, osUser, name, guest string) {
+func killSession(ctx context.Context, w http.ResponseWriter, osUser, name, guest string) {
 	// Ask tmux whether the session is even there, BEFORE anything privileged
 	// runs. The snapshot below is a root tmux-persist run that walks every
 	// mapped user (snapshots.go resurrectRecordFor), and taking it first meant
@@ -220,7 +221,7 @@ func killSession(w http.ResponseWriter, osUser, name, guest string) {
 		log.Printf("guest kill: %s killed %s/%s", guest, osUser, name)
 		pushGuestKilled(osUser, guest, name, title)
 	}
-	events.Emit("session.killed", osUser, killed)
+	events.EmitContext(ctx, "session.killed", osUser, killed)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	// The kill has already happened, so a body that does not reach the client
@@ -264,7 +265,7 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 	}
 	carryRenameAcrossStores(osUser, oldName, newName)
 	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("session.renamed", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "session.renamed", osUser, telemetry.Attrs{
 		"tl.from": oldName, "tl.to": newName, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -298,9 +299,9 @@ func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string
 	}
 	// After the stamp, never before: a rename that landed first would leave a
 	// session named for a title it does not carry if the stamp then failed.
-	name = renameToDerivedName(osUser, name, title, "api")
+	name = renameToDerivedName(r.Context(), osUser, name, title, "api")
 	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("session.retitled", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "session.retitled", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)

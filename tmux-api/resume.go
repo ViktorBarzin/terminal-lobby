@@ -18,6 +18,7 @@ package main
 // the seams this package's tests swap.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -197,7 +198,7 @@ type resumeResponse struct {
 //	200 {"resumed":true}         the respawn was issued
 //	404                          no such session
 //	409 {"error":"not suspended"} it is live
-func resumeSession(w http.ResponseWriter, osUser, name string) {
+func resumeSession(ctx context.Context, w http.ResponseWriter, osUser, name string) {
 	res, err := sessionio.Resume(liveResumeOps(), osUser, name)
 	switch {
 	case err == nil:
@@ -234,7 +235,7 @@ func resumeSession(w http.ResponseWriter, osUser, name string) {
 	}
 	sessionsCacheInstance.invalidate(osUser)
 
-	events.Emit("session.resumed", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "session.resumed", osUser, telemetry.Attrs{
 		"tl.session":          name,
 		"tl.suspendedSeconds": time.Now().Unix() - res.SuspendedAt,
 		// How long the respawn call itself took, which is the part this

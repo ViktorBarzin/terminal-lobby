@@ -3,11 +3,14 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
 	standard "github.com/ViktorBarzin/telemetry/go"
+	"github.com/segmentio/analytics-go/v3"
 )
 
 // sent is one call a fake sink saw, with the ids the library would read off
@@ -15,6 +18,7 @@ import (
 type sent struct {
 	kind, event, userID, anonymousID string
 	props                            map[string]any
+	req                              standard.Request
 }
 
 type fakeSink struct {
@@ -25,14 +29,14 @@ type fakeSink struct {
 func (f *fakeSink) Track(ctx context.Context, event string, props map[string]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, sent{"track", event, standard.Enduser(ctx), standard.AnonymousID(ctx), props})
+	f.calls = append(f.calls, sent{"track", event, standard.Enduser(ctx), standard.AnonymousID(ctx), props, standard.CurrentRequest(ctx)})
 	return nil
 }
 
 func (f *fakeSink) Identify(ctx context.Context, userID string, traits map[string]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, sent{"identify", "", userID, standard.AnonymousID(ctx), traits})
+	f.calls = append(f.calls, sent{"identify", "", userID, standard.AnonymousID(ctx), traits, standard.CurrentRequest(ctx)})
 	return nil
 }
 
@@ -47,6 +51,34 @@ func (f *fakeSink) of(p *Product, kind string) []sent {
 	for _, c := range f.calls {
 		if c.kind == kind {
 			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// fakeSegment stands in for analytics-go under the real library client, so a
+// test sees the message the pipeline would get.
+type fakeSegment struct {
+	mu   sync.Mutex
+	msgs []analytics.Message
+}
+
+func (f *fakeSegment) Enqueue(m analytics.Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.msgs = append(f.msgs, m)
+	return nil
+}
+
+func (f *fakeSegment) Close() error { return nil }
+
+func (f *fakeSegment) tracks() []analytics.Track {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []analytics.Track
+	for _, m := range f.msgs {
+		if t, ok := m.(analytics.Track); ok {
+			out = append(out, t)
 		}
 	}
 	return out
@@ -186,8 +218,8 @@ func TestEmitForwardsAPersonsActionUnderTheirPersonID(t *testing.T) {
 	if got.userID != uidWizard {
 		t.Errorf("userId = %q, want the learned Person id", got.userID)
 	}
-	if got.anonymousID != AnonymousFor("wizard") {
-		t.Errorf("anonymousId = %q, want the OS user's stable id", got.anonymousID)
+	if got.anonymousID != "" {
+		t.Errorf("anonymousId = %q, want none: the event has a userId and no visitor id", got.anonymousID)
 	}
 	if got.props["key"] != "session.new" || got.props["client"] != "lobby-v2" || got.props["service"] != "tmux-api" {
 		t.Errorf("properties = %v", got.props)
@@ -238,15 +270,137 @@ func TestLearnPersonIgnoresWhatIsNotAnID(t *testing.T) {
 	}
 }
 
-func TestTheBrowsersDeviceIDIsTheAnonymousID(t *testing.T) {
+// tl.device names a browser installation, which Rybbit knows nothing about.
+// Sent as the anonymousId it made a Rybbit user of its own, apart from the
+// pageviews of the same browser, so it is neither the id nor a property.
+func TestTheDeviceIDIsNotTheAnonymousID(t *testing.T) {
 	e, p, sink := newForwarding(t)
+	p.LearnPerson("wizard", uidWizard)
 	e.Emit("session.selected", "wizard", Attrs{"tl.device": "d-1f2e3c", "tl.session": "w1"})
 	tracks := sink.of(p, "track")
-	if len(tracks) != 1 || tracks[0].anonymousID != "d-1f2e3c" {
-		t.Fatalf("tracks = %+v", tracks)
+	if len(tracks) != 1 || tracks[0].anonymousID != "" {
+		t.Fatalf("tracks = %+v, want no explicit anonymousId", tracks)
 	}
 	if _, kept := tracks[0].props["device"]; kept {
-		t.Error("the device id rides as anonymousId and should not be repeated as a property")
+		t.Error("the device id is not a Product property")
+	}
+}
+
+var wizardBrowser = standard.Request{
+	VisitorID: "rv-8c2f4e1a9b",
+	ClientIP:  "203.0.113.7",
+	UserAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X)",
+}
+
+// An event sent while handling a browser's request carries who sent it: the
+// Rybbit visitor id, the IP and the User-Agent. The visitor id is left for the
+// library to send as the anonymousId, which an explicit one would override.
+func TestAnEventFromARequestCarriesTheBrowser(t *testing.T) {
+	e, p, sink := newForwarding(t)
+	ctx := standard.WithRequest(context.Background(), wizardBrowser)
+	e.EmitContext(ctx, "palette.opened", "wizard", Attrs{"tl.client": "lobby-v2"})
+
+	tracks := sink.of(p, "track")
+	if len(tracks) != 1 {
+		t.Fatalf("want 1 track, got %d", len(tracks))
+	}
+	if tracks[0].req != wizardBrowser {
+		t.Errorf("request = %+v, want %+v", tracks[0].req, wizardBrowser)
+	}
+	if tracks[0].anonymousID != "" {
+		t.Errorf("anonymousId = %q set explicitly, which would hide the visitor id", tracks[0].anonymousID)
+	}
+}
+
+// A request with no visitor id, before the Person is known, still needs a
+// stable id: the OS user's, which the identify sent on learning joins.
+func TestARequestWithoutAVisitorIDFallsBackToTheOSUsersID(t *testing.T) {
+	e, p, sink := newForwarding(t)
+	ctx := standard.WithRequest(context.Background(), standard.Request{ClientIP: "203.0.113.7"})
+	e.EmitContext(ctx, "palette.opened", "emo", nil)
+	tracks := sink.of(p, "track")
+	if len(tracks) != 1 || tracks[0].anonymousID != AnonymousFor("emo") || tracks[0].req.ClientIP != "203.0.113.7" {
+		t.Fatalf("tracks = %+v", tracks)
+	}
+}
+
+// What the pipeline receives, through the real library: the browser's visitor
+// id as anonymousId beside the Person, and the IP and agent in the context, so
+// Rybbit can give the event a country and a device. Never a random id.
+func TestThePipelineGetsTheVisitorIPAndAgent(t *testing.T) {
+	seg := &fakeSegment{}
+	client, err := standard.New(standard.Config{App: App, WriteKey: "k-0123456789", Environment: standard.Production},
+		standard.WithSegmentClient(seg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewProduct(client)
+	e := New("tmux-api", "v1", &capture{})
+	e.SetProduct(p)
+	p.LearnPerson("wizard", uidWizard)
+
+	e.EmitContext(standard.WithRequest(context.Background(), wizardBrowser), "palette.opened", "wizard", nil)
+	e.Emit("session.suspended", "wizard", Attrs{"tl.session": "w1"})
+	e.Emit("session.suspended", "emo", Attrs{"tl.session": "e1"})
+	p.drain()
+
+	tracks := seg.tracks()
+	if len(tracks) != 3 {
+		t.Fatalf("want 3 tracks, got %d", len(tracks))
+	}
+	browser, sweep, unknown := tracks[0], tracks[1], tracks[2]
+	if browser.AnonymousId != wizardBrowser.VisitorID || browser.UserId != uidWizard {
+		t.Errorf("browser event ids = %q / %q", browser.AnonymousId, browser.UserId)
+	}
+	if browser.Context == nil || browser.Context.IP.String() != wizardBrowser.ClientIP || browser.Context.UserAgent != wizardBrowser.UserAgent {
+		t.Errorf("browser event context = %+v", browser.Context)
+	}
+	if sweep.AnonymousId != "" || sweep.UserId != uidWizard {
+		t.Errorf("a known Person's sweep event = %q / %q, want no anonymousId", sweep.AnonymousId, sweep.UserId)
+	}
+	if sweep.Context != nil && (sweep.Context.IP != nil || sweep.Context.UserAgent != "") {
+		t.Errorf("an event from no request carries a browser: %+v", sweep.Context)
+	}
+	if unknown.AnonymousId != AnonymousFor("emo") || unknown.UserId != "" {
+		t.Errorf("an unknown Person's event = %q / %q, want the OS user's stable id", unknown.AnonymousId, unknown.UserId)
+	}
+}
+
+// RequestContext is what puts the browser on a request's context, from the
+// headers Traefik and the lobby page send.
+func TestRequestContextReadsTheBrowserOffTheRequest(t *testing.T) {
+	e, p, sink := newForwarding(t)
+	h := RequestContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		e.EmitContext(r.Context(), "palette.opened", "wizard", nil)
+	}))
+	r := httptest.NewRequest(http.MethodPost, "/telemetry", nil)
+	r.Header.Set(standard.VisitorHeader, wizardBrowser.VisitorID)
+	r.Header.Set("X-Real-Ip", wizardBrowser.ClientIP)
+	r.Header.Set("User-Agent", wizardBrowser.UserAgent)
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	tracks := sink.of(p, "track")
+	if len(tracks) != 1 || tracks[0].req != wizardBrowser {
+		t.Fatalf("tracks = %+v, want the request's browser", tracks)
+	}
+}
+
+// sendBeacon cannot set a header, so a batch the page sends as it hides
+// names its visitor id in the body. The header wins when both are there, and
+// a value that is not an id shape is ignored as the header's would be.
+func TestWithVisitorFillsInAMissingVisitorID(t *testing.T) {
+	base := standard.WithRequest(context.Background(), standard.Request{ClientIP: "203.0.113.7"})
+	if got := standard.CurrentRequest(WithVisitor(base, "rv-beacon")); got.VisitorID != "rv-beacon" || got.ClientIP != "203.0.113.7" {
+		t.Errorf("from the body: %+v", got)
+	}
+	withHeader := standard.WithRequest(context.Background(), wizardBrowser)
+	if got := standard.CurrentRequest(WithVisitor(withHeader, "rv-beacon")); got.VisitorID != wizardBrowser.VisitorID {
+		t.Errorf("the body replaced the header: %+v", got)
+	}
+	for _, bad := range []string{"", "a b", "x\ny", strings.Repeat("a", 200)} {
+		if got := standard.CurrentRequest(WithVisitor(base, bad)); got.VisitorID != "" {
+			t.Errorf("%q accepted as a visitor id", bad)
+		}
 	}
 }
 

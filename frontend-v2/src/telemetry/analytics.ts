@@ -16,6 +16,11 @@
  * different id on the same tab clears the previous one first. Custom browser
  * events are not sent from here: the page's usage events already reach the
  * pipeline through tmux-api's intake.
+ *
+ * The services send those events, so to join them to this browser's visits
+ * every same-origin API call names the Rybbit visitor id in X-Visitor-Id
+ * (withVisitor). The telemetry library's RequestMiddleware reads it and sends
+ * it as the event's anonymousId, beside the IP and User-Agent.
  */
 
 /** Hosts whose visits count. */
@@ -76,6 +81,43 @@ export function identifyPerson(id: string | undefined, win: AnalyticsWindow): vo
   } catch {
     /* analytics never breaks the page */
   }
+}
+
+/** localStorage key the Rybbit script keeps its visitor id under. */
+export const VISITOR_STORAGE_KEY = "rybbit-visitor-id";
+
+const VISITOR_HEADER = "X-Visitor-Id";
+
+/**
+ * The page's Rybbit visitor id, read now: the script writes it after the page
+ * has started, and only on the production host.
+ */
+export function visitorId(): string | undefined {
+  try {
+    return globalThis.localStorage?.getItem(VISITOR_STORAGE_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sameOrigin(url: string): boolean {
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * init with X-Visitor-Id added, for a call to this origin while the page has a
+ * visitor id. Otherwise init itself. A header the caller set is kept.
+ */
+export function withVisitor(url: string, init?: RequestInit): RequestInit | undefined {
+  const id = visitorId();
+  if (!id || !sameOrigin(url)) return init;
+  const headers = new Headers(init?.headers);
+  if (!headers.has(VISITOR_HEADER)) headers.set(VISITOR_HEADER, id);
+  return { ...init, headers };
 }
 
 /** Forget what this module has done. For tests. */

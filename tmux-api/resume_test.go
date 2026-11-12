@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -108,7 +109,7 @@ func TestResumeSessionRefusesWhenTheTranscriptIsGone(t *testing.T) {
 	withResumeStub(t, st)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), rec, "wizard", "k7m2q9x4tpz3")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500 when there is nothing to resume: %s", rec.Code, rec.Body)
@@ -132,7 +133,7 @@ func TestResumeSessionRefusesAnEmptyTranscript(t *testing.T) {
 	withResumeStub(t, st)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), rec, "wizard", "k7m2q9x4tpz3")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500 for an empty transcript: %s", rec.Code, rec.Body)
@@ -154,7 +155,7 @@ func TestResumeSessionRefusesAPaneWithAClaudeInIt(t *testing.T) {
 	withResumeStub(t, st)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), rec, "wizard", "k7m2q9x4tpz3")
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409 for a mark over a live conversation: %s", rec.Code, rec.Body)
@@ -180,7 +181,7 @@ func TestResumeSessionRespawnsALivePaneThatLostItsClaude(t *testing.T) {
 	withResumeStub(t, st)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), rec, "wizard", "k7m2q9x4tpz3")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 for a restored session whose shell survived: %s", rec.Code, rec.Body)
@@ -201,7 +202,7 @@ func TestResumeSessionRefusesWhenProcCannotSayWhatIsInThePane(t *testing.T) {
 	withResumeStub(t, st)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), rec, "wizard", "k7m2q9x4tpz3")
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503 when /proc will not say: %s", rec.Code, rec.Body)
@@ -219,7 +220,7 @@ func TestResumeSessionRespawnsTheStoredCommand(t *testing.T) {
 	withResumeStub(t, s)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), rec, "wizard", "k7m2q9x4tpz3")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body)
@@ -244,7 +245,7 @@ func TestResumeSessionAnswers404WhenTheSessionIsGone(t *testing.T) {
 	s := &resumeStub{readOK: false}
 	withResumeStub(t, s)
 	rec := httptest.NewRecorder()
-	resumeSession(rec, "wizard", "gone")
+	resumeSession(context.Background(), rec, "wizard", "gone")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rec.Code)
 	}
@@ -260,7 +261,7 @@ func TestResumeSessionAnswers409WhenTheSessionIsLive(t *testing.T) {
 	withResumeStub(t, s)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "live")
+	resumeSession(context.Background(), rec, "wizard", "live")
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409", rec.Code)
@@ -287,7 +288,7 @@ func TestResumeSessionRefusesAnUnreadableCommand(t *testing.T) {
 	withResumeStub(t, s)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "broken")
+	resumeSession(context.Background(), rec, "wizard", "broken")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500", rec.Code)
@@ -304,7 +305,7 @@ func TestResumeSessionKeepsTheMarksWhenTheRespawnFails(t *testing.T) {
 	withResumeStub(t, s)
 	rec := httptest.NewRecorder()
 
-	resumeSession(rec, "wizard", "x")
+	resumeSession(context.Background(), rec, "wizard", "x")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500", rec.Code)
@@ -320,7 +321,7 @@ func TestResumeSessionMapsAMissingTargetTo404(t *testing.T) {
 	s := &resumeStub{facts: suspendedSession(t), readOK: true, fail: fmt.Errorf("exit 1"), failOut: "can't find session: x"}
 	withResumeStub(t, s)
 	rec := httptest.NewRecorder()
-	resumeSession(rec, "wizard", "x")
+	resumeSession(context.Background(), rec, "wizard", "x")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rec.Code)
 	}
@@ -330,7 +331,7 @@ func TestResumeSessionEmitsTheEvent(t *testing.T) {
 	tel := withTelemetry(t)
 	s := &resumeStub{facts: suspendedSession(t), readOK: true}
 	withResumeStub(t, s)
-	resumeSession(httptest.NewRecorder(), "wizard", "k7m2q9x4tpz3")
+	resumeSession(context.Background(), httptest.NewRecorder(), "wizard", "k7m2q9x4tpz3")
 
 	if len(tel.lines) != 1 {
 		t.Fatalf("emitted %d lines, want 1: %v", len(tel.lines), tel.lines)

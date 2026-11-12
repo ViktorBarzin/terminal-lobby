@@ -23,6 +23,7 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"sort"
@@ -227,7 +228,18 @@ func (e *Emitter) callerOf(osUser string, attrs Attrs) string {
 // Emitter, an unknown event name, or a hostile attribute value is dropped or
 // neutered rather than failing the request that triggered it — telemetry is
 // never worth breaking the app over.
+//
+// Emit is for events no browser request caused: a sweep, a hook, a Claude's
+// mod. A handler uses EmitContext.
 func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
+	e.EmitContext(context.Background(), name, osUser, attrs)
+}
+
+// EmitContext is Emit for an event a request caused. ctx is the request's,
+// after RequestContext: the Product event it becomes carries the browser's
+// Rybbit visitor id, IP and User-Agent. The journal line is the same either
+// way.
+func (e *Emitter) EmitContext(ctx context.Context, name, osUser string, attrs Attrs) {
 	if e == nil || !e.known(name) {
 		return
 	}
@@ -268,7 +280,7 @@ func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
 	e.mu.RLock()
 	product := e.product
 	e.mu.RUnlock()
-	product.forward(e.service, name, osUser, bounded)
+	product.forward(ctx, e.service, name, osUser, bounded)
 }
 
 // bound truncates oversized strings and caps the attribute count, choosing

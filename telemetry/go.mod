@@ -3,7 +3,7 @@ module terminal-lobby/telemetry
 go 1.25.0
 
 require (
-	github.com/ViktorBarzin/telemetry/go v0.1.0
+	github.com/ViktorBarzin/telemetry/go v0.2.0
 	github.com/getsentry/sentry-go v0.50.0
 	github.com/segmentio/analytics-go/v3 v3.4.0
 )

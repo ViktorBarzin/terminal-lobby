@@ -98,5 +98,5 @@ func main() {
 	log.Printf("file-api listening on %s (homeBase=%s, selfUser=%s)",
 		addr, homeBase, selfUser)
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(http.DefaultServeMux))))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.RequestContext(telemetry.ReportPanics(http.DefaultServeMux)))))
 }

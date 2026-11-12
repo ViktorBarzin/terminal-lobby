@@ -15,10 +15,13 @@ describe("fetchWithDeadline", () => {
    * left mid-action with nothing to show.
    */
   it("aborts a request that never settles", async () => {
-    vi.stubGlobal("fetch", (_u: string, init: RequestInit) =>
-      new Promise((_res, rej) => {
-        init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
-      }));
+    vi.stubGlobal(
+      "fetch",
+      (_u: string, init: RequestInit) =>
+        new Promise((_res, rej) => {
+          init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        }),
+    );
     const p = fetchWithDeadline("/x");
     const settled = vi.fn();
     p.then(settled, settled);
@@ -60,10 +63,13 @@ describe("fetchWithDeadline", () => {
   });
 
   it("honours a longer deadline when the caller asks for one", async () => {
-    vi.stubGlobal("fetch", (_u: string, init: RequestInit) =>
-      new Promise((_res, rej) => {
-        init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
-      }));
+    vi.stubGlobal(
+      "fetch",
+      (_u: string, init: RequestInit) =>
+        new Promise((_res, rej) => {
+          init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        }),
+    );
     const settled = vi.fn();
     fetchWithDeadline("/x", {}, 30000).then(settled, settled);
     await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1000);
@@ -75,15 +81,37 @@ describe("fetchWithDeadline", () => {
   // A caller that already has its own AbortController must keep it: the deadline
   // is added to that signal, never substituted for it.
   it("still aborts on the caller's own signal", async () => {
-    vi.stubGlobal("fetch", (_u: string, init: RequestInit) =>
-      new Promise((_res, rej) => {
-        init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
-      }));
+    vi.stubGlobal(
+      "fetch",
+      (_u: string, init: RequestInit) =>
+        new Promise((_res, rej) => {
+          init.signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        }),
+    );
     const caller = new AbortController();
     const settled = vi.fn();
     fetchWithDeadline("/x", { signal: caller.signal }).then(settled, settled);
     caller.abort();
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toHaveBeenCalled();
+  });
+
+  it("names the page's Rybbit visitor on the call", async () => {
+    let seen: RequestInit | undefined;
+    vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
+      seen = init;
+      return new Response("ok");
+    });
+    localStorage.setItem("rybbit-visitor-id", "rv-http");
+    try {
+      await fetchWithDeadline("/api/sessions/layout", {
+        headers: { "Content-Type": "application/json" },
+      });
+    } finally {
+      localStorage.removeItem("rybbit-visitor-id");
+    }
+    const h = new Headers(seen?.headers);
+    expect(h.get("X-Visitor-Id")).toBe("rv-http");
+    expect(h.get("Content-Type")).toBe("application/json");
   });
 });

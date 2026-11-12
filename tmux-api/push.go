@@ -310,7 +310,7 @@ func handlePushSubscriptions(w http.ResponseWriter, r *http.Request) {
 			logAndFail(w, "push subs upsert for %s failed: %v", osUser, err)
 			return
 		}
-		events.Emit("notify.push_subscribed", osUser, telemetry.Attrs{"tl.client": "api"})
+		events.EmitContext(r.Context(), "notify.push_subscribed", osUser, telemetry.Attrs{"tl.client": "api"})
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
@@ -330,7 +330,7 @@ func handlePushSubscriptions(w http.ResponseWriter, r *http.Request) {
 			logAndFail(w, "push subs remove for %s failed: %v", osUser, err)
 			return
 		}
-		events.Emit("notify.push_unsubscribed", osUser, telemetry.Attrs{"tl.client": "api"})
+		events.EmitContext(r.Context(), "notify.push_unsubscribed", osUser, telemetry.Attrs{"tl.client": "api"})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

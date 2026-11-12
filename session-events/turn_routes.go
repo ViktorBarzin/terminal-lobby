@@ -253,7 +253,7 @@ func servePrompt(w http.ResponseWriter, r *http.Request, rg *registry, drv promp
 	if body.Tool != "" {
 		attrs["tl.tool"] = body.Tool
 	}
-	events.Emit("claude.prompt_sent", osUser, attrs)
+	events.EmitContext(r.Context(), "claude.prompt_sent", osUser, attrs)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -317,7 +317,7 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 	// Behind a running turn the prompt waits here rather than in Claude,
 	// where nothing could take it back to edit (held.go).
 	if c.hold(p.Text, p.Wait) {
-		events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "claude.prompt_sent", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.count": len(p.Text), "tl.client": "mod", "tl.held": true,
 		})
 		w.WriteHeader(http.StatusNoContent)
@@ -343,7 +343,7 @@ func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv
 	if fs := c.source(); fs != nil {
 		fs.QueueSent(ack.ID, p.Text)
 	}
-	events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "claude.prompt_sent", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.count": len(p.Text), "tl.client": "mod",
 	})
 	if p.SinceSendMs != nil {
@@ -483,7 +483,7 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 				http.Error(w, "the session's Claude did not stop the turn: "+ack.Error, http.StatusConflict)
 				return
 			}
-			events.Emit("claude.cancelled", osUser, telemetry.Attrs{"tl.session": session, "tl.client": "mod"})
+			events.EmitContext(r.Context(), "claude.cancelled", osUser, telemetry.Attrs{"tl.session": session, "tl.client": "mod"})
 			if len(took) > 0 {
 				events.Emit("claude.queue_taken", osUser, telemetry.Attrs{
 					"tl.session": session, "tl.count": len(took), "tl.via": "stop",
@@ -560,7 +560,7 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		if returned {
 			attrs["tl.returned"] = true
 		}
-		events.Emit("claude.cancelled", osUser, attrs)
+		events.EmitContext(r.Context(), "claude.cancelled", osUser, attrs)
 		if !restoring && !returning {
 			w.WriteHeader(http.StatusNoContent)
 			return

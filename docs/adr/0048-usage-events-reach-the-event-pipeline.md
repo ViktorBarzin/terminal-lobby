@@ -101,6 +101,25 @@ rollout step 5).
   under the hashed anonymousId until it does. The identify it sends then
   joins them, so they are attributed after a short delay rather than lost.
 
+## Request context, telemetry library v0.2.0 (2026-11-12)
+
+The first 721 forwarded events reached Rybbit with no browser, country or IP,
+because every event was sent with an empty context. The modules now require
+`github.com/ViktorBarzin/telemetry/go` v0.2.0, and each service's handler
+chain includes `telemetry.RequestContext` (the library's `RequestMiddleware`).
+A handler emits with `EmitContext(r.Context(), ...)`, so its Product event
+carries the page's Rybbit visitor id, which the page sends as `X-Visitor-Id`
+on every same-origin call (`withVisitor` in `frontend-v2/src/telemetry/analytics.ts`),
+plus `context.ip` from Traefik's `X-Real-Ip` and `context.userAgent`. The
+intake's sendBeacon batch names the visitor in its body, since a beacon
+cannot set headers. This replaces the anonymousId row above: the visitor id
+when the request has one, none when the Person is known, otherwise
+`AnonymousFor`. `tl.device` stays in the journal and is no longer sent as
+the anonymousId. It named a Rybbit user apart from the same browser's visits.
+Events no browser request causes (sweeps, the Claude mod's state changes,
+queued prompts the mod submits later, the service worker's taps) still go
+without a browser.
+
 ## Open questions
 
 - Session replay records what the page shows, with only password fields

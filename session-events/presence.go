@@ -450,7 +450,7 @@ func (h *presenceHub) recordingSenders(next http.Handler) http.Handler {
 		owner, session, real := osUserFrom(r.Context()), r.PathValue("session"), realOSUserFrom(r.Context())
 		h.recordSender(owner, session, body.Text, real, displayNameFrom(r.Context()))
 		if real != owner {
-			events.Emit("share.prompt_sent", real, telemetry.Attrs{
+			events.EmitContext(r.Context(), "share.prompt_sent", real, telemetry.Attrs{
 				"tl.to": owner, "tl.session": session, "tl.count": len(body.Text),
 			})
 		}

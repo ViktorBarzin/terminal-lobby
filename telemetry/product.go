@@ -142,7 +142,8 @@ func ProductName(name string) (string, bool) {
 }
 
 // DeviceAttr is the browser's per-installation id (frontend-v2/src/telemetry/
-// device.ts). It is sent as the event's anonymousId rather than a property.
+// device.ts). It stays in the journal and is not forwarded: Rybbit knows the
+// browser by its own visitor id, which arrives on the request (RequestContext).
 const DeviceAttr = "tl.device"
 
 // Per-value cap on a forwarded string. The journal allows MaxValueLen; the
@@ -209,10 +210,10 @@ func fits(props map[string]any) bool {
 	return err == nil && len(raw) <= standard.MaxPropertiesLength
 }
 
-// AnonymousFor is the anonymousId of a server-side event about osUser that
-// carries no browser device id. Stable, so the identify sent once the Person
-// is known joins every earlier event to them; a hash, so the id does not spell
-// out the account name.
+// AnonymousFor is the anonymousId of an event about osUser with neither a
+// browser visitor id nor a known Person. Stable, so the identify sent once the
+// Person is known joins every earlier event to them; a hash, so the id does
+// not spell out the account name.
 func AnonymousFor(osUser string) string {
 	sum := sha256.Sum256([]byte(App + "/" + osUser))
 	return "tl-" + hex.EncodeToString(sum[:16])
@@ -314,7 +315,7 @@ func (p *Product) personOf(osUser string) string {
 
 // forward sends one emitted event when it is a person's: on the list, and not
 // in a session a Caller made.
-func (p *Product) forward(service, name, osUser string, attrs Attrs) {
+func (p *Product) forward(ctx context.Context, service, name, osUser string, attrs Attrs) {
 	if p == nil {
 		return
 	}
@@ -328,18 +329,24 @@ func (p *Product) forward(service, name, osUser string, attrs Attrs) {
 	if skip := notAChange[name]; skip != nil && skip(attrs) {
 		return
 	}
-	anon, _ := attrs[DeviceAttr].(string)
-	if !personIDPattern.MatchString(anon) {
-		anon = AnonymousFor(osUser)
-	}
 	props := ProductProperties(attrs)
 	props["service"] = service
 	if !fits(props) {
 		delete(props, "service")
 	}
-	ctx := standard.WithAnonymousID(context.Background(), anon)
-	if person := p.personOf(osUser); person != "" {
+	// Only the request's sender is carried over, not the request's context,
+	// which is cancelled and holds the request once the handler returns.
+	from := standard.CurrentRequest(ctx)
+	ctx = standard.WithRequest(context.Background(), from)
+	person := p.personOf(osUser)
+	if person != "" {
 		ctx = standard.WithEnduser(ctx, person)
+	}
+	// The library sends the visitor id as the anonymousId, and none with a
+	// userId; an explicit id would override both. So one is set only when
+	// there is neither, and it is the OS user's stable id, never a new one.
+	if from.VisitorID == "" && person == "" {
+		ctx = standard.WithAnonymousID(ctx, AnonymousFor(osUser))
 	}
 	p.enqueue(func() { _ = p.sink.Track(ctx, event, props) })
 }

@@ -13,7 +13,7 @@ replace terminal-lobby/telemetry => ../telemetry
 require terminal-lobby/skillscan v0.0.0
 
 require (
-	github.com/ViktorBarzin/telemetry/go v0.1.0 // indirect
+	github.com/ViktorBarzin/telemetry/go v0.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/getsentry/sentry-go v0.50.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect

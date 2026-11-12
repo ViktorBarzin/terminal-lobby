@@ -178,7 +178,7 @@ func handleEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, res.Error, res.Status)
 		return
 	}
-	events.Emit("skill.edited", me, telemetry.Attrs{"tl.key": body.Name})
+	events.EmitContext(r.Context(), "skill.edited", me, telemetry.Attrs{"tl.key": body.Name})
 	log.Printf("edit: %s wrote %s (%d bytes)", me, body.Name, len(body.Content))
 	writeJSON(w, map[string]any{
 		"name": body.Name,
@@ -278,7 +278,7 @@ func handleInstall(w http.ResponseWriter, r *http.Request) {
 	if res.Backup != "" {
 		kind = "replace"
 	}
-	events.Emit("skill.installed", me, telemetry.Attrs{
+	events.EmitContext(r.Context(), "skill.installed", me, telemetry.Attrs{
 		"tl.key":  body.Name,
 		"tl.from": owner,
 		"tl.kind": kind,
@@ -317,7 +317,7 @@ func handleToggle(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled {
 		kind = "on"
 	}
-	events.Emit("skill.toggled", me, telemetry.Attrs{"tl.key": body.ID, "tl.kind": kind})
+	events.EmitContext(r.Context(), "skill.toggled", me, telemetry.Attrs{"tl.key": body.ID, "tl.kind": kind})
 	writeJSON(w, map[string]any{"id": body.ID, "enabled": body.Enabled})
 }
 
@@ -345,7 +345,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, res.Error, res.Status)
 		return
 	}
-	events.Emit("skill.removed", me, telemetry.Attrs{"tl.key": body.Name})
+	events.EmitContext(r.Context(), "skill.removed", me, telemetry.Attrs{"tl.key": body.Name})
 	log.Printf("remove: %s dropped %s (backup=%q)", me, body.Name, res.Backup)
 	writeJSON(w, map[string]any{"name": body.Name, "backup": res.Backup})
 }
@@ -423,7 +423,7 @@ func handleSourceInstall(w http.ResponseWriter, r *http.Request) {
 		event = "plugin.installed"
 	}
 	for _, n := range body.Names {
-		events.Emit(event, me, telemetry.Attrs{
+		events.EmitContext(r.Context(), event, me, telemetry.Attrs{
 			"tl.key":  n,
 			"tl.from": owner + "/" + repo,
 			"tl.kind": "source",
@@ -469,7 +469,7 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, res.Error, res.Status)
 		return
 	}
-	events.Emit("skill.deleted", me, telemetry.Attrs{"tl.key": body.Name})
+	events.EmitContext(r.Context(), "skill.deleted", me, telemetry.Attrs{"tl.key": body.Name})
 	log.Printf("delete: %s deleted %s permanently (%+v)", me, body.Name, res.Deleted)
 	writeJSON(w, map[string]any{"name": body.Name, "deleted": res.Deleted})
 }
@@ -498,7 +498,7 @@ func handlePluginUninstall(w http.ResponseWriter, r *http.Request) {
 		writeStatusJSON(w, res.Status, map[string]any{"plugin": body.Plugin, "error": res.Error, "output": res.Output})
 		return
 	}
-	events.Emit("plugin.uninstalled", me, telemetry.Attrs{"tl.key": body.Plugin})
+	events.EmitContext(r.Context(), "plugin.uninstalled", me, telemetry.Attrs{"tl.key": body.Plugin})
 	log.Printf("uninstall: %s removed plugin %s (%d bytes reclaimed)", me, body.Plugin, res.Freed)
 	writeJSON(w, map[string]any{"plugin": body.Plugin, "freed": res.Freed, "output": res.Output})
 }
@@ -528,7 +528,7 @@ func handlePluginUpdate(w http.ResponseWriter, r *http.Request) {
 		writeStatusJSON(w, res.Status, map[string]any{"plugin": body.Plugin, "error": res.Error, "output": res.Output})
 		return
 	}
-	events.Emit("plugin.updated", me, telemetry.Attrs{"tl.key": body.Plugin})
+	events.EmitContext(r.Context(), "plugin.updated", me, telemetry.Attrs{"tl.key": body.Plugin})
 	writeJSON(w, map[string]any{"plugin": body.Plugin, "output": res.Output})
 }
 

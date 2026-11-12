@@ -366,3 +366,31 @@ describe("prewarm", () => {
     expect((f.mock.calls[2] as FetchArgs)[1].method).toBe("DELETE");
   });
 });
+
+// Kills, restores and the rest become Product events in tmux-api, so the
+// lobby's own transport names the page's Rybbit visitor on each call.
+describe("lobby calls name the visitor", () => {
+  afterEach(() => {
+    localStorage.removeItem("rybbit-visitor-id");
+    vi.unstubAllGlobals();
+  });
+
+  it("on an ordinary call", async () => {
+    const f = vi.fn(async () => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    localStorage.setItem("rybbit-visitor-id", "rv-lobby");
+    await listSessions().catch(() => undefined);
+    const [, init] = f.mock.calls[0] as unknown as FetchArgs;
+    expect(new Headers(init.headers).get("X-Visitor-Id")).toBe("rv-lobby");
+  });
+
+  it("on the kill sent as the page goes away", () => {
+    const f = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", f);
+    localStorage.setItem("rybbit-visitor-id", "rv-lobby");
+    killSessionKeepalive("w1");
+    const [, init] = f.mock.calls[0] as unknown as FetchArgs;
+    expect(new Headers(init.headers).get("X-Visitor-Id")).toBe("rv-lobby");
+    expect(init.keepalive).toBe(true);
+  });
+});

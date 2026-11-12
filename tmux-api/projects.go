@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -413,7 +414,7 @@ func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	events.Emit("project.created", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "project.created", osUser, telemetry.Attrs{
 		"tl.project": p.Name, "tl.kind": dirKind(p.Dir), "tl.client": "api",
 	})
 	_ = json.NewEncoder(w).Encode(p)
@@ -485,7 +486,7 @@ func handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		case http.MethodPatch:
 			patchProject(w, r, osUser, id)
 		case http.MethodDelete:
-			deleteProject(w, osUser, id)
+			deleteProject(r.Context(), w, osUser, id)
 		default:
 			http.Error(w, "PATCH or DELETE only", http.StatusMethodNotAllowed)
 		}
@@ -508,7 +509,7 @@ func handleProjectMembers(w http.ResponseWriter, r *http.Request, osUser, id str
 	case len(rest) == 0 && r.Method == http.MethodPost:
 		addMember(w, r, osUser, id)
 	case len(rest) == 1 && r.Method == http.MethodDelete:
-		removeMember(w, osUser, id, rest[0])
+		removeMember(r.Context(), w, osUser, id, rest[0])
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -521,7 +522,7 @@ func handleProjectSessions(w http.ResponseWriter, r *http.Request, osUser, id st
 	case len(rest) == 0 && r.Method == http.MethodPost:
 		addSession(w, r, osUser, id)
 	case len(rest) == 2 && r.Method == http.MethodDelete:
-		removeSession(w, osUser, id, rest[0], rest[1])
+		removeSession(r.Context(), w, osUser, id, rest[0], rest[1])
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -581,7 +582,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 	if grant != nil {
 		runCoownAsync(*grant)
 	}
-	events.Emit("project.member_added", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "project.member_added", osUser, telemetry.Attrs{
 		"tl.project": id, "tl.to": body.OSUser, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -589,7 +590,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 
 // removeMember drops a member and their session refs from the project (any
 // member may, co-equal). If the last member leaves, the project dissolves.
-func removeMember(w http.ResponseWriter, osUser, id, target string) {
+func removeMember(ctx context.Context, w http.ResponseWriter, osUser, id, target string) {
 	var revoke *coownOp
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" && projectMember(p, target) {
@@ -621,7 +622,7 @@ func removeMember(w http.ResponseWriter, osUser, id, target string) {
 	if revoke != nil {
 		runCoownAsync(*revoke)
 	}
-	events.Emit("project.member_removed", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "project.member_removed", osUser, telemetry.Attrs{
 		"tl.project": id, "tl.to": target, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -668,7 +669,7 @@ func addSession(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		projectErrStatus(w, osUser, "assign session", err)
 		return
 	}
-	events.Emit("session.moved", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "session.moved", osUser, telemetry.Attrs{
 		"tl.session": ref.Name, "tl.to": id, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -676,7 +677,7 @@ func addSession(w http.ResponseWriter, r *http.Request, osUser, id string) {
 
 // removeSession unassigns a session (any member may). It never kills the tmux
 // session — only the grouping.
-func removeSession(w http.ResponseWriter, osUser, id, owner, name string) {
+func removeSession(ctx context.Context, w http.ResponseWriter, osUser, id, owner, name string) {
 	ref := SessionRef{Owner: owner, Name: name}
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		out := ps.Projects[i].Sessions[:0]
@@ -692,7 +693,7 @@ func removeSession(w http.ResponseWriter, osUser, id, owner, name string) {
 		projectErrStatus(w, osUser, "unassign session", err)
 		return
 	}
-	events.Emit("session.moved", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "session.moved", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.from": id, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -779,22 +780,22 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 	// One PATCH can carry several edits; each is its own event so a dashboard
 	// can count "renames" and "mode flips" separately.
 	if body.Name != nil {
-		events.Emit("project.renamed", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "project.renamed", osUser, telemetry.Attrs{
 			"tl.project": id, "tl.to": updated.Name, "tl.client": "api",
 		})
 	}
 	if body.Dir != nil {
-		events.Emit("project.dir_changed", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "project.dir_changed", osUser, telemetry.Attrs{
 			"tl.project": id, "tl.to": updated.Dir, "tl.client": "api",
 		})
 	}
 	if body.AttachMode != nil {
-		events.Emit("project.mode_changed", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "project.mode_changed", osUser, telemetry.Attrs{
 			"tl.project": id, "tl.kind": updated.AttachMode, "tl.client": "api",
 		})
 	}
 	if body.CoOwned != nil {
-		events.Emit("project.coown_changed", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "project.coown_changed", osUser, telemetry.Attrs{
 			"tl.project": id, "tl.to": updated.CoOwned, "tl.client": "api",
 		})
 	}
@@ -804,7 +805,7 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 
 // deleteProject removes the project (any member may, co-equal). It dissolves the
 // grouping only — sessions are tmux state and are never touched here.
-func deleteProject(w http.ResponseWriter, osUser, id string) {
+func deleteProject(ctx context.Context, w http.ResponseWriter, osUser, id string) {
 	var revoke *coownOp
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
@@ -820,7 +821,7 @@ func deleteProject(w http.ResponseWriter, osUser, id string) {
 	if revoke != nil {
 		runCoownAsync(*revoke)
 	}
-	events.Emit("project.deleted", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "project.deleted", osUser, telemetry.Attrs{
 		"tl.project": id, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)

@@ -128,7 +128,7 @@ func main() {
 	// The public-asset dispatcher rides ahead of the mux (see
 	// withPublicAssets); every existing route falls through untouched.
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(withPublicAssets(http.DefaultServeMux)))))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.RequestContext(telemetry.ReportPanics(withPublicAssets(http.DefaultServeMux))))))
 }
 
 // actAsGate resolves every request: the proxy secret, the identity header, the
@@ -233,7 +233,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("Saved attachment: %s (%d bytes)", path, header.Size)
-			events.Emit("file.attached", osUser, telemetry.Attrs{
+			events.EmitContext(r.Context(), "file.attached", osUser, telemetry.Attrs{
 				"tl.session": session, "tl.count": header.Size, "tl.client": "api",
 			})
 			writeUpload(w, path, true)
@@ -246,7 +246,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Saved dropped file: %s (%d bytes)", path, header.Size)
-		events.Emit("file.transferred", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "file.transferred", osUser, telemetry.Attrs{
 			"tl.count": header.Size, "tl.client": "api",
 		})
 		writeUpload(w, path, false)
@@ -297,7 +297,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Saved clipboard image: %s (%s, %d bytes)", path, ct, header.Size)
-	events.Emit("image.uploaded", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "image.uploaded", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.kind": ct, "tl.count": header.Size, "tl.client": "api",
 	})
 	// An image always reaches the store — that is the whole image branch — so
@@ -528,7 +528,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	// pastes immediately.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	events.Emit("gallery.opened", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "gallery.opened", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.count": len(images), "tl.client": "api",
 	})
 	json.NewEncoder(w).Encode(images)

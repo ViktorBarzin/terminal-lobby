@@ -20,6 +20,7 @@
 
 import { apiUrl } from "../lib/config";
 import { BUILD_ID } from "../lib/config";
+import { visitorId, withVisitor } from "./analytics";
 import { DEVICE_ATTR, deviceId, mirrorDeviceId } from "./device";
 
 export type TlEvent =
@@ -186,6 +187,8 @@ export interface TrackerOptions {
   /** This installation's id. Injected in tests so a batch is comparable; the
    *  default is the localStorage-backed one from ./device. */
   deviceId?: () => string;
+  /** The page's Rybbit visitor id, read at each send. Injected in tests. */
+  visitorId?: () => string | undefined;
 }
 
 export interface Tracker {
@@ -203,21 +206,26 @@ const TELEMETRY_TIMEOUT_MS = 8000;
 export function createTracker(opts: TrackerOptions = {}): Tracker {
   const flushMs = opts.flushMs ?? DEFAULT_FLUSH_MS;
   const readDeviceId = opts.deviceId ?? deviceId;
+  const readVisitorId = opts.visitorId ?? visitorId;
   const post =
     opts.post ??
     (async (batch: unknown) => {
-      await fetch(apiUrl(INTAKE), {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batch),
-        // A beacon that never settles is a beacon that leaks: the batch is
-        // already dropped from the buffer, so a hung POST holds a connection
-        // (and, before it stopped being tracked, a sticky slow-request toast)
-        // for as long as the tab lives. Nothing here is worth retrying, so the
-        // deadline just lets it go.
-        signal: AbortSignal.timeout(TELEMETRY_TIMEOUT_MS),
-      });
+      const url = apiUrl(INTAKE);
+      await fetch(
+        url,
+        withVisitor(url, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(batch),
+          // A beacon that never settles is a beacon that leaks: the batch is
+          // already dropped from the buffer, so a hung POST holds a connection
+          // (and, before it stopped being tracked, a sticky slow-request toast)
+          // for as long as the tab lives. Nothing here is worth retrying, so the
+          // deadline just lets it go.
+          signal: AbortSignal.timeout(TELEMETRY_TIMEOUT_MS),
+        }),
+      );
     });
   const beacon =
     opts.beacon ??
@@ -270,7 +278,15 @@ export function createTracker(opts: TrackerOptions = {}): Tracker {
 
   function flushSync(): void {
     if (disposed || buffer.length === 0) return;
-    const body = JSON.stringify(batchOf(buffer));
+    // sendBeacon cannot set the X-Visitor-Id header, so this batch names the
+    // visitor in its body, which the intake reads when the header is absent.
+    let visitor: string | undefined;
+    try {
+      visitor = readVisitorId();
+    } catch {
+      /* the batch still goes */
+    }
+    const body = JSON.stringify(visitor ? { ...batchOf(buffer), visitor } : batchOf(buffer));
     buffer = [];
     try {
       beacon(apiUrl(INTAKE), body);

@@ -187,7 +187,7 @@ func setSessionState(w http.ResponseWriter, r *http.Request, osUser, name string
 	// (ADR-0001), and the two streams are not two writers of one fact: this
 	// one says a PERSON decided, which is the thing worth being able to count
 	// separately when the dots are wrong often enough for anybody to use it.
-	events.Emit("claude.state_set", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "claude.state_set", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.to": state, "tl.from": marks.state, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)

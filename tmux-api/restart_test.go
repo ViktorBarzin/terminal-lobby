@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,7 +74,7 @@ func TestRestartAgainstRealTmux(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	restartSession(w, osSelf, name)
+	restartSession(context.Background(), w, osSelf, name)
 	if w.Code != http.StatusOK {
 		t.Fatalf("restart = %d, want 200: %s", w.Code, w.Body)
 	}
@@ -140,7 +141,7 @@ func TestRestartRefusalsAgainstRealTmux(t *testing.T) {
 
 	t.Run("no such session", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		restartSession(w, osSelf, "nosuchsession")
+		restartSession(context.Background(), w, osSelf, "nosuchsession")
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("restart = %d, want 404: %s", w.Code, w.Body)
 		}
@@ -152,7 +153,7 @@ func TestRestartRefusalsAgainstRealTmux(t *testing.T) {
 			t.Fatalf("new-session: %v: %s", err, out)
 		}
 		w := httptest.NewRecorder()
-		restartSession(w, osSelf, name)
+		restartSession(context.Background(), w, osSelf, name)
 		if w.Code != http.StatusConflict {
 			t.Fatalf("restart = %d, want 409: %s", w.Code, w.Body)
 		}
@@ -171,7 +172,7 @@ func TestRestartRefusalsAgainstRealTmux(t *testing.T) {
 		}, "the fake claude never appeared under the pane")
 		pid := mustPanePID(t, osSelf, name)
 		w := httptest.NewRecorder()
-		restartSession(w, osSelf, name)
+		restartSession(context.Background(), w, osSelf, name)
 		if w.Code != http.StatusConflict {
 			t.Fatalf("restart = %d, want 409: %s", w.Code, w.Body)
 		}

@@ -105,5 +105,5 @@ func main() {
 	}
 	log.Printf("skills-api listening on %s (homeBase=%s, selfUser=%s)", addr, homeBase, selfUser)
 	go timing.Run(nil)
-	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.ReportPanics(mux))))
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(telemetry.RequestContext(telemetry.ReportPanics(mux)))))
 }

@@ -194,3 +194,52 @@ describe("notify.tap", () => {
     t.dispose();
   });
 });
+
+/**
+ * The intake forwards a person's events to the Event pipeline, which joins
+ * them to the browser's Rybbit visits by the visitor id. A normal flush says
+ * it in the X-Visitor-Id header; sendBeacon cannot set headers, so the batch
+ * the page sends as it hides names it in the body.
+ */
+describe("createTracker names the visitor", () => {
+  it("in the body of the beacon batch", () => {
+    const beacon = vi.fn(() => true);
+    const t = createTracker({ autoFlush: false, beacon, visitorId: () => "rv-beacon" });
+    t.track("palette.opened", {});
+    t.flushSync();
+    const [, body] = beacon.mock.calls[0] as unknown as [string, string];
+    expect(JSON.parse(body).visitor).toBe("rv-beacon");
+    t.dispose();
+  });
+
+  it("not at all when the page has none", () => {
+    const beacon = vi.fn(() => true);
+    const t = createTracker({ autoFlush: false, beacon, visitorId: () => undefined });
+    t.track("palette.opened", {});
+    t.flushSync();
+    const [, body] = beacon.mock.calls[0] as unknown as [string, string];
+    expect("visitor" in JSON.parse(body)).toBe(false);
+    t.dispose();
+  });
+
+  it("in the header of a normal flush", async () => {
+    let seen: RequestInit | undefined;
+    vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
+      seen = init;
+      return new Response(null, { status: 204 });
+    });
+    localStorage.setItem("rybbit-visitor-id", "rv-flush");
+    try {
+      const t = createTracker({ autoFlush: false });
+      t.track("palette.opened", {});
+      await t.flush();
+      t.dispose();
+    } finally {
+      localStorage.removeItem("rybbit-visitor-id");
+      vi.unstubAllGlobals();
+    }
+    const h = new Headers(seen?.headers);
+    expect(h.get("X-Visitor-Id")).toBe("rv-flush");
+    expect(h.get("Content-Type")).toBe("application/json");
+  });
+});

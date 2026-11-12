@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -175,7 +176,7 @@ func (rg *registry) handleInternalAnswer() http.HandlerFunc {
 		resp.Action = sessionio.AnswerAction(req)
 		emitAnswer(osUser, session, known, resp, resp.Action, "agent-api")
 		if resp.Applied {
-			emitAnswered(osUser, session, req)
+			emitAnswered(context.Background(), osUser, session, req)
 		}
 		writeJSON(w, resp)
 	}

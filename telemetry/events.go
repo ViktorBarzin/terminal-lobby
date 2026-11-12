@@ -11,7 +11,9 @@ package telemetry
 // Adding an event = add it here, in the same commit as the call site, and to
 // the catalog table in docs/adr/0006-usage-telemetry.md. If a person causes it,
 // add it to productNames in product.go too, so it also reaches the Event
-// pipeline (docs/adr/0048-usage-events-reach-the-event-pipeline.md).
+// pipeline (docs/adr/0048-usage-events-reach-the-event-pipeline.md), and emit
+// it from a handler with EmitContext(r.Context(), ...) so it carries the
+// browser that asked.
 //
 // Attribute conventions: tl.session, tl.project, tl.from, tl.to, tl.key,
 // tl.kind, tl.count, tl.ms, tl.reason, tl.client, tl.device, and tl.caller,

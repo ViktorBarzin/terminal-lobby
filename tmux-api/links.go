@@ -485,7 +485,7 @@ func createLink(w http.ResponseWriter, r *http.Request, osUser string) {
 		return
 	}
 	log.Printf("link: %s created link %s to %s (%s), expires %d", osUser, l.ID, s.Name, s.ID, l.ExpiresAt)
-	events.Emit("link.created", osUser, telemetry.Attrs{"tl.session": s.Name, "tl.kind": ttl})
+	events.EmitContext(r.Context(), "link.created", osUser, telemetry.Attrs{"tl.session": s.Name, "tl.kind": ttl})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(struct {
@@ -520,7 +520,7 @@ func handleLinkByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such link", http.StatusNotFound)
 		return
 	}
-	events.Emit("link.revoked", osUser, telemetry.Attrs{"tl.kind": "one"})
+	events.EmitContext(r.Context(), "link.revoked", osUser, telemetry.Attrs{"tl.kind": "one"})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -547,7 +547,7 @@ func revokeSessionLinks(w http.ResponseWriter, r *http.Request, osUser string) {
 		logAndFail(w, "link revoke for %s failed: %v", osUser, err)
 		return
 	}
-	events.Emit("link.revoked", osUser, telemetry.Attrs{"tl.session": s.Name, "tl.kind": "session"})
+	events.EmitContext(r.Context(), "link.revoked", osUser, telemetry.Attrs{"tl.session": s.Name, "tl.kind": "session"})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]int{"revoked": n})
 }

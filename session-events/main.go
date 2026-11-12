@@ -277,7 +277,7 @@ func main() {
 		}
 		// The same event the keys route emits: from the session's point of view
 		// this IS answering, and the text itself is never recorded.
-		events.Emit("claude.answered", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "claude.answered", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.count": len(body.Text), "tl.client": "api-text",
 		})
 		w.WriteHeader(http.StatusNoContent)
@@ -337,7 +337,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		events.Emit("claude.answered", osUser, telemetry.Attrs{
+		events.EmitContext(r.Context(), "claude.answered", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.count": len(body.Keys), "tl.client": "api",
 		})
 		w.WriteHeader(http.StatusNoContent)
@@ -440,7 +440,7 @@ func main() {
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	go timing.Run(ctx.Done())
-	srv := &http.Server{Handler: timing.Wrap(telemetry.ReportPanics(root))}
+	srv := &http.Server{Handler: timing.Wrap(telemetry.RequestContext(telemetry.ReportPanics(root)))}
 	log.Printf("session-events listening on %s (%s; usermap=%s, homeBase=%s)", ln.Addr(), from, *mapPath, *homeBase)
 	if err := serveUntil(ctx, srv, ln, shutdownGrace); err != nil {
 		log.Fatal(err)
@@ -671,7 +671,7 @@ func handleAnswer(rg *registry) http.HandlerFunc {
 		resp.Action = sessionio.AnswerAction(req)
 		emitAnswer(osUser, session, held, resp, resp.Action, "api-answer")
 		if resp.Applied {
-			emitAnswered(osUser, session, req)
+			emitAnswered(r.Context(), osUser, session, req)
 		}
 		writeJSON(w, resp)
 	}
@@ -721,7 +721,7 @@ func handleAnswer(rg *registry) http.HandlerFunc {
 // (since 2026-09-27) is free text the same way; a permission row picked by its
 // number is one digit, as an approve option is (through this route since
 // 2026-09-28, through POST /keys before).
-func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
+func emitAnswered(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {
 	case req.Chat != nil:
@@ -731,7 +731,7 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	case req.Permission != nil && req.Permission.Decline != "":
 		client, count = "api-text", len(req.Permission.Decline)
 	}
-	events.Emit("claude.answered", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "claude.answered", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.count": count, "tl.client": client,
 	})
 }

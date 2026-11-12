@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -110,4 +111,29 @@ func Start(service, release string, usage *Emitter) (*Product, func()) {
 // Sentry configured it only passes the request through.
 func ReportPanics(h http.Handler) http.Handler {
 	return sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle(h)
+}
+
+// RequestContext puts each request's sender on its context: the browser's
+// Rybbit visitor id (X-Visitor-Id), its IP (X-Real-Ip, which Traefik sets)
+// and its User-Agent. Product events a handler emits with EmitContext and
+// the request's context carry them, so Rybbit joins the event to the
+// browser's visits and gives it a country and a device.
+func RequestContext(h http.Handler) http.Handler {
+	return standard.RequestMiddleware(nil)(h)
+}
+
+// WithVisitor fills in the visitor id when the request's header had none.
+// sendBeacon cannot set headers, so the page's last batch before it hides
+// names its visitor in the body instead. A value the header would not have
+// passed is ignored.
+func WithVisitor(ctx context.Context, visitorID string) context.Context {
+	req := standard.CurrentRequest(ctx)
+	if req.VisitorID != "" {
+		return ctx
+	}
+	// Through RequestFrom, so the body's value meets the header's rules.
+	h := http.Header{}
+	h.Set(standard.VisitorHeader, visitorID)
+	req.VisitorID = standard.RequestFrom(&http.Request{Header: h}).VisitorID
+	return standard.WithRequest(ctx, req)
 }

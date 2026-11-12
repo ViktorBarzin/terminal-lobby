@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   PRODUCTION_HOSTS,
   SCRIPT_SRC,
+  VISITOR_STORAGE_KEY,
   identifyPerson,
   loadAnalytics,
   resetAnalytics,
+  visitorId,
+  withVisitor,
   type AnalyticsWindow,
 } from "../src/telemetry/analytics";
 
@@ -85,5 +88,67 @@ describe("identifyPerson", () => {
     identifyPerson("uid-3", win);
     expect(r.clearUserId).toHaveBeenCalledTimes(1);
     expect(r.identify).toHaveBeenLastCalledWith("uid-3");
+  });
+});
+
+/**
+ * The page's Rybbit visitor id rides on same-origin API calls as X-Visitor-Id,
+ * so the services' Product events join the same Rybbit user as the visits
+ * (the telemetry library's RequestMiddleware reads it).
+ */
+describe("the visitor id", () => {
+  afterEach(() => {
+    localStorage.removeItem(VISITOR_STORAGE_KEY);
+    vi.restoreAllMocks();
+  });
+
+  it("is what the Rybbit script keeps in localStorage", () => {
+    expect(VISITOR_STORAGE_KEY).toBe("rybbit-visitor-id");
+    expect(visitorId()).toBeUndefined();
+    localStorage.setItem(VISITOR_STORAGE_KEY, "rv-1");
+    expect(visitorId()).toBe("rv-1");
+  });
+
+  // The script writes the id after the page has started, so it is read at
+  // each call rather than once.
+  it("is read at the call, not when the module loaded", () => {
+    const before = withVisitor("/api/sessions/telemetry", { method: "POST" });
+    localStorage.setItem(VISITOR_STORAGE_KEY, "rv-late");
+    const after = withVisitor("/api/sessions/telemetry", { method: "POST" });
+    expect(new Headers(before?.headers).has("X-Visitor-Id")).toBe(false);
+    expect(new Headers(after?.headers).get("X-Visitor-Id")).toBe("rv-late");
+  });
+
+  it("joins the caller's headers without replacing them", () => {
+    localStorage.setItem(VISITOR_STORAGE_KEY, "rv-1");
+    const init = withVisitor("/api/sessions/layout", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+    });
+    const h = new Headers(init?.headers);
+    expect(h.get("Content-Type")).toBe("application/json");
+    expect(h.get("X-Visitor-Id")).toBe("rv-1");
+    expect(init?.method).toBe("PUT");
+  });
+
+  it("leaves the request untouched when there is none", () => {
+    const init = { method: "POST", headers: { "Content-Type": "application/json" } };
+    expect(withVisitor("/api/sessions/telemetry", init)).toBe(init);
+    expect(withVisitor("/api/sessions/telemetry")).toBeUndefined();
+  });
+
+  it("goes to this origin only", () => {
+    localStorage.setItem(VISITOR_STORAGE_KEY, "rv-1");
+    const init = { method: "GET" };
+    expect(withVisitor("https://devvm.example.com/api/sessions/whoami", init)).toBe(init);
+  });
+
+  it("costs the header, never the request, when storage refuses", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(visitorId()).toBeUndefined();
+    const init = { method: "POST" };
+    expect(withVisitor("/api/sessions/telemetry", init)).toBe(init);
   });
 });

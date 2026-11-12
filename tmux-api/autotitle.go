@@ -28,6 +28,7 @@ package main
 // reported as titled_late.
 
 import (
+	"context"
 	"log"
 	"strings"
 	"sync"
@@ -460,7 +461,7 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 			// `live` is this poll's name set, passed in rather than looked up:
 			// reading the session list from here would re-enter it. Deriving is
 			// a fixed point, so the next poll asks for nothing.
-			s.Name = renameToDerivedNameAmong(osUser, origin, summary, "autotitle", live)
+			s.Name = renameToDerivedNameAmong(context.Background(), osUser, origin, summary, "autotitle", live)
 			if s.Name != origin {
 				delete(live, origin)
 				live[s.Name] = true

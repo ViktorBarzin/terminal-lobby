@@ -434,7 +434,7 @@ func handleLayout(w http.ResponseWriter, r *http.Request) {
 	// /sessions bodies embed the project field — a layout change makes the
 	// cached copy stale.
 	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("layout.reordered", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "layout.reordered", osUser, telemetry.Attrs{
 		"tl.count": len(l.Projects), "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)

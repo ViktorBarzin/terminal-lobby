@@ -250,7 +250,7 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 	// Both lists change: the owner's row is now shared, the guest has a new one.
 	sessionsCacheInstance.invalidate(osUser)
 	sessionsCacheInstance.invalidate(guest)
-	events.Emit("share.granted", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "share.granted", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.to": guest, "tl.kind": mode, "tl.client": "api",
 	})
 	// Only a new grant pushes. Changing watch to drive is not a second invite.
@@ -310,7 +310,7 @@ func handleShareByPath(w http.ResponseWriter, r *http.Request) {
 			log.Printf("detach-client %s on %s after revoke: %v: %s", removedTty, owner, derr, strings.TrimSpace(string(out)))
 		}
 	}
-	events.Emit("share.revoked", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "share.revoked", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.to": guest, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)

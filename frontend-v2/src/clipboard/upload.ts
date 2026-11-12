@@ -1,4 +1,5 @@
 import { clipboardUrl } from "../lib/config";
+import { withVisitor } from "../telemetry/analytics";
 
 /**
  * Clipboard-upload client (feature-inventory Cat.8 "Drag-and-drop file upload"
@@ -15,9 +16,7 @@ import { clipboardUrl } from "../lib/config";
  * decision point.
  */
 export function uploadField(mime: string | null | undefined): "image" | "file" {
-  return typeof mime === "string" && mime.startsWith("image/")
-    ? "image"
-    : "file";
+  return typeof mime === "string" && mime.startsWith("image/") ? "image" : "file";
 }
 
 /**
@@ -46,21 +45,22 @@ export interface UploadOptions {
  * non-2xx response (message = the server's body, or `HTTP <status>`) so callers
  * can surface the failure as a toast — mirroring the vanilla upload flow.
  */
-export async function uploadBlob(
-  blob: Blob,
-  opts: UploadOptions,
-): Promise<UploadResult> {
+export async function uploadBlob(blob: Blob, opts: UploadOptions): Promise<UploadResult> {
   const fd = new FormData();
   if (opts.filename) fd.append(opts.field, blob, opts.filename);
   else fd.append(opts.field, blob);
   fd.append("session", opts.session);
 
   const doFetch = opts.fetchImpl ?? fetch;
-  const resp = await doFetch(clipboardUrl("/upload"), {
-    method: "POST",
-    body: fd,
-    credentials: "same-origin",
-  });
+  const url = clipboardUrl("/upload");
+  const resp = await doFetch(
+    url,
+    withVisitor(url, {
+      method: "POST",
+      body: fd,
+      credentials: "same-origin",
+    }),
+  );
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(text || `HTTP ${resp.status}`);

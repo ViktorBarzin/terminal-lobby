@@ -672,7 +672,11 @@ describe("telemetry — an event name that is emitted is a name the catalog carr
    * (`emitter.Emit(ev.Name, ...)`, telemetry.go:204) passes a field rather than
    * a name and carries no assignment for either half to find, which is correct
    * since the names it forwards are the browser's and the union covers them.
+   *
+   * A handler emits with `EmitContext(r.Context(), "...", ...)` (ADR-0048), so
+   * the name is the first argument after an optional context.
    */
+  const EMIT_CALL = String.raw`\bEmit(?:\(|Context\(\s*[A-Za-z_][A-Za-z0-9_.]*(?:\(\))?\s*,)\s*`;
   const emitted = ((): Emitted[] => {
     const out: Emitted[] = [];
     for (const entry of readdirSync(REPO("."))) {
@@ -682,10 +686,10 @@ describe("telemetry — an event name that is emitted is a name the catalog carr
         if (!file.endsWith(".go") || file.endsWith("_test.go")) continue;
         const src = readFileSync(join(dir, file), "utf8");
         const from = `${entry}/${file}`;
-        for (const name of captures(/\bEmit\(\s*"([a-z][a-z0-9_.]*)"/g, src)) {
+        for (const name of captures(new RegExp(`${EMIT_CALL}"([a-z][a-z0-9_.]*)"`, "g"), src)) {
           out.push({ name, from });
         }
-        if (/\bEmit\(\s*[A-Za-z_][A-Za-z0-9_.]*\s*,/.test(src)) {
+        if (new RegExp(`${EMIT_CALL}[A-Za-z_][A-Za-z0-9_.]*\\s*,`).test(src)) {
           for (const name of captures(/\bevent\s*:?=\s*"([a-z][a-z0-9_.]*)"/g, src)) {
             out.push({ name, from });
           }

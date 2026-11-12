@@ -56,7 +56,7 @@ func (rg *registry) handleSteer() http.HandlerFunc {
 		ack, err := c.send(r.Context(), modCommand{Op: "steer", AgentID: agent, Text: body.Text})
 		result := "sent"
 		defer func() {
-			events.Emit("agents.steer_sent", osUser, telemetry.Attrs{
+			events.EmitContext(r.Context(), "agents.steer_sent", osUser, telemetry.Attrs{
 				"tl.session": session, "tl.count": len(body.Text), "tl.result": result,
 			})
 		}()

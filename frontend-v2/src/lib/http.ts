@@ -8,6 +8,8 @@
  * good — the caller's catch never running, the UI stuck mid-action.
  */
 
+import { withVisitor } from "../telemetry/analytics";
+
 /**
  * How long any tmux-api call may take before it is abandoned.
  *
@@ -44,7 +46,8 @@ export function withDeadline(ms: number, caller?: AbortSignal | null): AbortSign
 }
 
 /**
- * fetch with a deadline and same-origin credentials.
+ * fetch with a deadline and same-origin credentials, naming the page's Rybbit
+ * visitor (withVisitor) so a Product event the call leads to joins its visits.
  *
  * `signal` goes after the caller's init on purpose: a caller's own signal is
  * merged into the deadline by withDeadline, never dropped by it. `credentials`
@@ -57,7 +60,7 @@ export function fetchWithDeadline(
 ): Promise<Response> {
   return fetch(input, {
     credentials: "same-origin",
-    ...init,
+    ...withVisitor(input, init),
     signal: withDeadline(timeoutMs, init?.signal),
   });
 }

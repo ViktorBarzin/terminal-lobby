@@ -502,7 +502,7 @@ func handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 			largest = n
 		}
 	}
-	events.Emit("workspace.arranged", osUser, telemetry.Attrs{
+	events.EmitContext(r.Context(), "workspace.arranged", osUser, telemetry.Attrs{
 		"tl.count": len(ws.Workspaces), "tl.tiles": tiles, "tl.max": largest,
 		"tl.client": "api",
 	})

@@ -273,10 +273,14 @@ type intakeBatch struct {
 	// Kind selects the channel: "diag" for health records, anything else
 	// (including absent) for usage. Absent means usage on purpose — a client
 	// that predates diagnostics keeps working with no lockstep deploy.
-	Kind   string        `json:"kind"`
-	Client string        `json:"client"`
-	Build  string        `json:"build"`
-	Events []intakeEvent `json:"events"`
+	Kind   string `json:"kind"`
+	Client string `json:"client"`
+	Build  string `json:"build"`
+	// Visitor is the page's Rybbit visitor id, for the batch sendBeacon
+	// sends as the page hides: a beacon cannot set the X-Visitor-Id header
+	// every other call carries. The header wins when both are present.
+	Visitor string        `json:"visitor"`
+	Events  []intakeEvent `json:"events"`
 }
 
 // traceAllowed lists the records that may carry the flight recorder. A trace
@@ -324,6 +328,7 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := telemetry.WithVisitor(r.Context(), batch.Visitor)
 	client := batch.Client
 	if !clientKinds[client] {
 		client = "unknown"
@@ -348,7 +353,7 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		if batch.Build != "" {
 			attrs["tl.build"] = clip(batch.Build, 40)
 		}
-		emitter.Emit(ev.Name, osUser, attrs)
+		emitter.EmitContext(ctx, ev.Name, osUser, attrs)
 		// perf.rollup already carries the echo latency the browser measured.
 		// Copy it into Prometheus as well as Loki: the alert threshold will be
 		// set against a couple of weeks of the real distribution, and

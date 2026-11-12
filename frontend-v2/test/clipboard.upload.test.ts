@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { uploadBlob } from "../src/clipboard/upload";
 
-const blob = (): Blob =>
-  new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+const blob = (): Blob => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
 
 const okResp = (path: unknown, stored?: unknown): Response =>
   ({
@@ -105,5 +104,25 @@ describe("uploadBlob — stored", () => {
     const f = capturingFetch(okResp("/store/u/s/pasted-1.png"));
     const got = await uploadBlob(blob(), { session: "s", field: "image", fetchImpl: f.fetchImpl });
     expect(got.stored).toBe(false);
+  });
+});
+
+// An upload becomes an image.uploaded or file.attached Product event, so it
+// names the page's Rybbit visitor like every other lobby call.
+describe("uploadBlob names the visitor", () => {
+  it("in the X-Visitor-Id header", async () => {
+    let seen: RequestInit | undefined;
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen = init;
+      return okResp("/store/u/s/pasted-1.png", true);
+    }) as typeof fetch;
+    localStorage.setItem("rybbit-visitor-id", "rv-upload");
+    try {
+      await uploadBlob(blob(), { session: "sess", field: "image", fetchImpl });
+    } finally {
+      localStorage.removeItem("rybbit-visitor-id");
+    }
+    expect(new Headers(seen?.headers).get("X-Visitor-Id")).toBe("rv-upload");
+    expect(seen?.body).toBeInstanceOf(FormData);
   });
 });

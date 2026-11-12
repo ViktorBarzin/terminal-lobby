@@ -1,7 +1,7 @@
 github.com/SherClockHolmes/webpush-go v1.4.0 h1:ocnzNKWN23T9nvHi6IfyrQjkIc0oJWv1B1pULsf9i3s=
 github.com/SherClockHolmes/webpush-go v1.4.0/go.mod h1:XSq8pKX11vNV8MJEMwjrlTkxhAj1zKfxmyhdV7Pd6UA=
-github.com/ViktorBarzin/telemetry/go v0.1.0 h1:5oRYJPcmvUsgX3bi/PRRgRsSF5evtUl0Y9tLD0KAtwU=
-github.com/ViktorBarzin/telemetry/go v0.1.0/go.mod h1:x2V+E1bBye3MmhUmgSB29B8v0hQfijOCneSgIg85+00=
+github.com/ViktorBarzin/telemetry/go v0.2.0 h1:oOJ6OnjEVmdPlO2epQRMAOfjBeaqpNvNz8+ez1xqxZU=
+github.com/ViktorBarzin/telemetry/go v0.2.0/go.mod h1:x2V+E1bBye3MmhUmgSB29B8v0hQfijOCneSgIg85+00=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/getsentry/sentry-go v0.50.0 h1:gkO59rn/i0RCAXUUTflC5QVbTQGPXbaFabs2olVzc9g=

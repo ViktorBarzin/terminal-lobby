@@ -533,6 +533,6 @@ func snapshotRowsFor(osUser, ts string) []SnapshotRow {
 
 // emitRestored records a restore for the usage telemetry, tagged with whether
 // it came from the picker or the plain button.
-func emitRestored(osUser, client string) {
-	events.Emit("session.restored", osUser, telemetry.Attrs{"tl.client": client})
+func emitRestored(ctx context.Context, osUser, client string) {
+	events.EmitContext(ctx, "session.restored", osUser, telemetry.Attrs{"tl.client": client})
 }

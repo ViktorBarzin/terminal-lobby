@@ -30,6 +30,7 @@ package main
 // reconnect happens.
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -100,8 +101,8 @@ func isDerivedFrom(name, base string) bool {
 // NOT for a caller already inside the listing: userSessions runs the auto-title
 // pass, so calling it from there re-enters. Those callers hold the names
 // already and pass them to renameToDerivedNameAmong.
-func renameToDerivedName(osUser, name, title, client string) string {
-	return renameToDerivedNameAmong(osUser, name, title, client, liveNames(osUser))
+func renameToDerivedName(ctx context.Context, osUser, name, title, client string) string {
+	return renameToDerivedNameAmong(ctx, osUser, name, title, client, liveNames(osUser))
 }
 
 // renameToDerivedNameAmong renames a session to match its title and carries the
@@ -112,7 +113,7 @@ func renameToDerivedName(osUser, name, title, client string) string {
 // landed, so a rename that will not happen costs a readable `tmux ls` and
 // nothing else. `client` names the path for the telemetry, matching the values
 // session.renamed already carries.
-func renameToDerivedNameAmong(osUser, name, title, client string, taken map[string]bool) string {
+func renameToDerivedNameAmong(ctx context.Context, osUser, name, title, client string, taken map[string]bool) string {
 	newName, ok := derivedNameFor(name, title, taken)
 	if !ok {
 		return name
@@ -139,7 +140,7 @@ func renameToDerivedNameAmong(osUser, name, title, client string, taken map[stri
 	}
 	carryRenameAcrossStores(osUser, name, newName)
 	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("session.renamed", osUser, telemetry.Attrs{
+	events.EmitContext(ctx, "session.renamed", osUser, telemetry.Attrs{
 		"tl.from": name, "tl.to": newName, "tl.client": client,
 	})
 	return newName
@@ -203,7 +204,7 @@ func backfillDerivedNames(osUser string, sessions []Session) {
 			continue
 		}
 		origin := s.Name
-		s.Name = renameToDerivedNameAmong(osUser, origin, s.Title, "backfill", taken)
+		s.Name = renameToDerivedNameAmong(context.Background(), osUser, origin, s.Title, "backfill", taken)
 		if s.Name != origin {
 			delete(taken, origin)
 			taken[s.Name] = true
