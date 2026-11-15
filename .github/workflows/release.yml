@@ -155,8 +155,9 @@ jobs:
       # The session browser's host (ADR-0035), a Node program outside the
       # frontend's workspace, so its tests are a step of their own. The Go half,
       # tl-browser, is in the module loop above. integration.test.mjs drives
-      # real headless Chrome and skips itself where there is none; the hosted
-      # runner image carries Google Chrome, so here it runs.
+      # real Chrome and skips itself where there is none; the hosted runner
+      # image carries Google Chrome, so here it runs. It runs headed on Xvfb
+      # where Xvfb exists and headless where it does not.
       - name: test (browser host)
         run: |
           set -euo pipefail

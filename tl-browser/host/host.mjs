@@ -15,6 +15,9 @@
 //                                 for none (default ~/.cache/playwright-shared-storage-state.json)
 //   TL_BROWSER_NO_SANDBOX         "1" runs Chrome without its sandbox, for a
 //                                 container without the setuid helper (default: sandboxed)
+//   TL_BROWSER_HEADLESS           "1" runs Chrome headless instead of headed on the
+//                                 host's own Xvfb (default: headed; headless anyway
+//                                 when Xvfb is missing). Headless fails Cloudflare Turnstile.
 //   TL_BROWSER_IDLE_FREEZE_MS     idle time before Frozen (default 10 min)
 //   TL_BROWSER_FROZEN_CLOSE_MS    frozen time before the host closes (default 2 h)
 //   TL_BROWSER_CONTROL_LAPSE_MS   time without input before control lapses (default 10 min)
@@ -28,6 +31,7 @@ import { BrowserSession, sandboxed, storageStatePath, VIEWPORT } from "./lib/bro
 import { Control } from "./lib/control.mjs";
 import { CookiePusher } from "./lib/cookiepush.mjs";
 import { CursorBoard } from "./lib/cursor.mjs";
+import { headlessForced, SCREEN, startDisplay } from "./lib/display.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
 import { checkChoice, dialogText, PopupBoard, selectOpens } from "./lib/popups.mjs";
@@ -79,6 +83,11 @@ const TICK_MS = Math.min(
 const PAGE_COPY_POLL_MS = 500;
 /** A lapse moved by more than this since the last report is reported again. */
 const LAPSE_REPORT_MS = 60_000;
+/**
+ * Longest an agent's tool call waits behind a Cloudflare checkbox the host is
+ * pressing: the solver gives up after 30 s waiting and 15 s settling.
+ */
+const CLOUDFLARE_HOLD_MS = 50_000;
 /** Longest MCP message read from Claude. */
 const MAX_MCP_LINE = 64_000_000;
 
@@ -217,6 +226,10 @@ async function serve() {
       viewers.broadcast(lastActivity);
     },
     onClose: () => void shutdown(0),
+    hold: () => {
+      const solving = session?.cloudflarePending();
+      return solving ? within(solving, CLOUDFLARE_HOLD_MS) : null;
+    },
   });
 
   const server = await createConnection(mcpConfig, () => {
@@ -281,13 +294,16 @@ async function serve() {
 
   /** @returns {Promise<import("playwright-core").BrowserContext>} */
   async function launch() {
+    const display = headlessForced(env) ? null : await startDisplay(SCREEN, { log });
     const s = await BrowserSession.launch(
       {
         channel: mcpConfig.browser.launchOptions.channel,
         sandbox: sandboxed(env),
         storageState: storageStatePath(env, os.homedir()),
+        display,
       },
       {
+        onLog: log,
         onTabs: () => {
           if (!session) return;
           const tabs = session.tabs.snapshot();

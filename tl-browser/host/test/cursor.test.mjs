@@ -26,7 +26,12 @@ function fakeWindow(shape = {}) {
       return timers.length;
     },
     performance: { now: () => clock.t },
-    __cursor: (/** @type {object} */ p) => calls.push(p),
+    // A CDP binding (Runtime.addBinding) takes one string, so reports arrive
+    // as JSON text.
+    __cursor: (/** @type {string} */ p) => {
+      assert.equal(typeof p, "string", "the report is a string, as a CDP binding needs");
+      calls.push(JSON.parse(p));
+    },
     ...shape,
   };
   if (!("top" in shape)) win.top = win;

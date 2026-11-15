@@ -120,6 +120,8 @@ check "the per-browser memory cap ships" \
   "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/systemd/user/tl-browser-\.scope\.d/60-tl-browser-cap\.conf$' || true)" 1
 check "the browser's runtime is recommended" \
   "$(dpkg-deb -f "$DEB" Recommends | grep -c 'nodejs' || true)" 1
+check "the browser's virtual screen is recommended" \
+  "$(dpkg-deb -f "$DEB" Recommends | grep -c '\bxvfb\b' || true)" 1
 
 # The T3 view sidecar and its upstream check were retired by ADR-0046. The
 # manifest's Retire list stops their units on upgraded boxes; nothing of

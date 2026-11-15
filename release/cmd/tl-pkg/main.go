@@ -103,7 +103,9 @@ func control(version, commit string) string {
 		// them, only the browser does not, and neither is in Ubuntu's own
 		// archive at a version that would do, so a hard dependency would make
 		// the package uninstallable on a box without those vendor sources.
-		"Recommends: nodejs (>= 24), google-chrome-stable",
+		// Chrome runs headed on its own Xvfb so Cloudflare Turnstile passes;
+		// without xvfb the host falls back to headless, which Turnstile fails.
+		"Recommends: nodejs (>= 24), google-chrome-stable, xvfb",
 		"Description: Terminal Lobby - web tmux sessions for the devvm workstation",
 		" The lobby UI, its Go backends, the systemd units and the devvm helper",
 		" scripts, at one version. Built from commit " + commit + ".",

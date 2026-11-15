@@ -17,6 +17,7 @@ import {
 } from "./popups.mjs";
 import { childPids, treePids } from "./proctree.mjs";
 import { TabRegistry } from "./tabs.mjs";
+import { watchTurnstile } from "./turnstile.mjs";
 
 /**
  * @typedef {import("playwright-core").Browser} Browser
@@ -31,6 +32,7 @@ import { TabRegistry } from "./tabs.mjs";
  * @typedef {{ handle: SelectHandle, options: SelectOption[], multiple: boolean, rect: Rect }} FocusedSelect
  * @typedef {import("./protocol.mjs").ViewerMessage} ViewerMessage
  * @typedef {{ jpeg: string, w: number, h: number }} Frame
+ * @typedef {import("./display.mjs").Display} Display
  */
 
 export const VIEWPORT = { width: 1280, height: 800 };
@@ -66,13 +68,21 @@ export function sandboxed(env) {
  * Playwright adds --no-sandbox unless chromiumSandbox is true, and
  * playwright-mcp's own default for channel "chrome" never applies here
  * because the host launches Chrome itself.
- * @param {{ channel: string, sandbox: boolean }} opts
+ *
+ * Given a display, Chrome runs headed on it (display.mjs says why). Either
+ * way it drops Playwright's --enable-automation, which sets
+ * navigator.webdriver, and Blink's AutomationControlled feature: Cloudflare
+ * Turnstile fails a browser that reports either (turnstile.mjs).
+ * @param {{ channel: string, sandbox: boolean, display?: string }} opts
  * @returns {import("playwright-core").LaunchOptions}
  */
-export function chromeLaunchOptions({ channel, sandbox }) {
+export function chromeLaunchOptions({ channel, sandbox, display }) {
   return {
     channel,
-    headless: true,
+    headless: !display,
+    ...(display ? { env: { ...process.env, DISPLAY: display } } : {}),
+    ignoreDefaultArgs: ["--enable-automation"],
+    args: ["--disable-blink-features=AutomationControlled"],
     chromiumSandbox: sandbox,
     // The host handles its own signals so it can clear tmux and the socket
     // before Chrome goes.
@@ -111,6 +121,10 @@ export class BrowserSession {
   #queue = Promise.resolve();
   #tabsQueued = false;
   #closing = false;
+  /** @type {Display | null} the Xvfb Chrome draws on; null when headless */
+  #display = null;
+  /** @type {ReturnType<typeof watchTurnstile> | null} */
+  #turnstile = null;
   #o;
 
   /**
@@ -124,6 +138,7 @@ export class BrowserSession {
    *   onFileChooser: (tab: string, page: Page, chooser: FileChooser) => void,
    *   onCursor: (tab: string, report: unknown) => void,
    *   onDisconnected: () => void,
+   *   onLog?: (msg: string) => void,
    * }} opts onCursor gets what a page's cursor script reported, unchecked
    */
   constructor(browser, context, roots, opts) {
@@ -140,16 +155,28 @@ export class BrowserSession {
   }
 
   /**
-   * @param {{ channel: string, sandbox: boolean, storageState: string | undefined }} opts
+   * @param {{ channel: string, sandbox: boolean, storageState: string | undefined,
+   *   display: Display | null }} opts display: run headed on it; stopped with the session
    * @param {ConstructorParameters<typeof BrowserSession>[3]} hooks
    */
-  static async launch({ channel, sandbox, storageState }, hooks) {
+  static async launch({ channel, sandbox, storageState, display }, hooks) {
     const before = new Set(childPids(process.pid));
-    const browser = await chromium.launch(chromeLaunchOptions({ channel, sandbox }));
+    let browser;
+    try {
+      browser = await chromium.launch(
+        chromeLaunchOptions({ channel, sandbox, display: display?.display }),
+      );
+    } catch (err) {
+      display?.stop();
+      throw err;
+    }
     try {
       const context = await browser.newContext({ viewport: VIEWPORT, storageState });
       const roots = childPids(process.pid).filter((pid) => !before.has(pid));
       const session = new BrowserSession(browser, context, roots, hooks);
+      session.#display = display;
+      // Before any page exists, so the agent's first page is watched too.
+      session.#turnstile = watchTurnstile(context, hooks.onLog ?? (() => {}));
       // Before any page exists, so every page and frame has the script.
       await session.#trackCursor();
       // The agent's first page, opened before playwright-mcp sees the context.
@@ -162,12 +189,20 @@ export class BrowserSession {
       return session;
     } catch (err) {
       await browser.close().catch(() => {});
+      display?.stop();
       throw err;
     }
   }
 
   get context() {
     return this.#context;
+  }
+
+  /** The Cloudflare checkbox solve running on the agent's tab, else null. */
+  cloudflarePending() {
+    const id = this.tabs.agentTab;
+    const page = id === null ? undefined : this.tabs.pageOf(id);
+    return page ? (this.#turnstile?.pending(page) ?? null) : null;
   }
 
   /** @returns {number[]} */
@@ -178,10 +213,24 @@ export class BrowserSession {
   /** Stops Chrome and every helper it started: no CPU, pages kept. */
   freeze() {
     this.#signal("SIGSTOP");
+    // Xvfb last and thawed first, so Chrome never runs against a stopped screen.
+    this.#signalDisplay("SIGSTOP");
   }
 
   thaw() {
+    this.#signalDisplay("SIGCONT");
     this.#signal("SIGCONT");
+  }
+
+  /** @param {NodeJS.Signals} sig */
+  #signalDisplay(sig) {
+    const pid = this.#display?.pid;
+    if (!pid) return;
+    try {
+      process.kill(pid, sig);
+    } catch {
+      // Gone already: -terminate ends it with its last client.
+    }
   }
 
   /**
@@ -353,9 +402,11 @@ export class BrowserSession {
   /** Closes Chrome; anything still running after the timeout is killed. */
   async close() {
     this.#closing = true;
+    this.#turnstile?.stop();
     this.thaw();
     await within(this.#browser.close(), CLOSE_TIMEOUT_MS).catch(() => {});
     this.#signal("SIGKILL");
+    this.#display?.stop();
   }
 
   /**
@@ -473,10 +524,6 @@ export class BrowserSession {
    * a binding (cursor.mjs).
    */
   async #trackCursor() {
-    await this.#context.exposeBinding(CURSOR_BINDING, (source, report) => {
-      const id = this.tabs.idOf(source.page);
-      if (id !== null) this.#o.onCursor(id, report);
-    });
     await this.#context.addInitScript(cursorInPage, {
       binding: CURSOR_BINDING,
       intervalMs: MOVE_INTERVAL_MS,
@@ -486,6 +533,7 @@ export class BrowserSession {
   /** @param {Page} page */
   #addPage(page) {
     this.tabs.add(page);
+    void this.#bindCursor(page);
     this.tabs.update(page, { url: page.url() });
     this.#tabsChanged();
     const refreshTitle = () => {
@@ -533,6 +581,36 @@ export class BrowserSession {
       this.#tabsQueued = false;
       this.#o.onTabs();
     });
+  }
+
+  /**
+   * The cursor script's binding, on this page's own session (cursor.mjs says
+   * why not exposeBinding). A page that closes first simply has none.
+   * @param {Page} page
+   */
+  async #bindCursor(page) {
+    try {
+      const cdp = await this.#session(page);
+      cdp.on("Runtime.bindingCalled", ({ name, payload }) => {
+        if (name !== CURSOR_BINDING) return;
+        const id = this.tabs.idOf(page);
+        if (id === null) return;
+        let report;
+        try {
+          report = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        this.#o.onCursor(id, report);
+      });
+      // Without Runtime enabled on this session the binding lands in no
+      // context at all (measured on Chrome 148). Playwright enables it on its
+      // own sessions already, so this tells a page nothing new.
+      await cdp.send("Runtime.enable");
+      await cdp.send("Runtime.addBinding", { name: CURSOR_BINDING });
+    } catch {
+      // The page closed before its session opened.
+    }
   }
 
   /**

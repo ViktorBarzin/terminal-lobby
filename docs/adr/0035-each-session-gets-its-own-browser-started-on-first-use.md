@@ -39,5 +39,7 @@ Design: [See the browser a session is driving](../plans/2026-10-01-session-brows
   and Chrome until the agent calls `browser_close` or the browser has been
   frozen for 2 hours.
 - The `homelab browser` pool stays the escalation for sites that block headless
-  Chrome, not every session's default: it has 6 workers for the cluster and a
+  Chrome, not every session's default (ADR-0049 made the session browser
+  headed so Turnstile checkboxes pass; the full-page "Just a moment..." check
+  still needs the pool): it has 6 workers for the cluster and a
   1-hour limit per pod. Its runs are not shown in the lobby for now.

@@ -7,6 +7,13 @@
 // for those in the capture phase and reports them to the host through a
 // binding, and one pipeline gives one cursor whoever drives.
 //
+// The binding is a CDP Runtime.addBinding on each page's own session, not
+// Playwright's exposeBinding: that one installs into every frame, the
+// cross-origin ones included, and Cloudflare Turnstile fails with error
+// 600010 when its challenge frame carries it (measured 2026-11-15). A page's
+// session reaches its own process and no cross-origin frame, which is all the
+// cursor needs, since those frames are not reported anyway (below).
+//
 // A frame reports positions in the top page's CSS pixels, the space the
 // screencast and the viewer's mouse messages use: the top frame as is, a
 // same-origin iframe by adding each frame element's offset on the way up. A
@@ -89,7 +96,7 @@ export function cursorInPage(opts, win = window) {
         const call = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (win))[
           opts.binding
         ];
-        if (typeof call === "function") call({ kind, x, y });
+        if (typeof call === "function") call(JSON.stringify({ kind, x, y }));
       } catch {
         // The page replaced or broke the binding: no cursor, page unharmed.
       }

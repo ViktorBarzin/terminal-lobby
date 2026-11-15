@@ -48,6 +48,9 @@ export class McpGate {
   #closeIds = new Set();
   /** @type {Set<JsonRpcId>} */
   #calls = new Set();
+  /** Messages waiting behind a held tool call, kept in order. */
+  #queue = Promise.resolve();
+  #queued = 0;
   #o;
 
   /**
@@ -58,19 +61,44 @@ export class McpGate {
    *   browserStarted: () => boolean,
    *   onCall: (name: string, args: Record<string, unknown>) => void,
    *   onClose: () => void,
-   * }} opts
+   *   hold?: () => Promise<unknown> | null,
+   * }} opts hold: a promise while the host is busy with the browser (a
+   *   Cloudflare checkbox it is pressing); tool calls wait for it, and
+   *   browser_close never does
    */
   constructor(opts) {
     this.#o = opts;
   }
 
-  /** Tool calls forwarded and not yet answered. */
+  /** Tool calls forwarded or waiting, and not yet answered. */
   get inFlight() {
-    return this.#calls.size;
+    return this.#calls.size + this.#queued;
   }
 
   /** @param {JsonRpcMessage} msg */
   fromClient(msg) {
+    const held =
+      msg.id !== undefined &&
+      msg.method === "tools/call" &&
+      msg.params?.name !== "browser_close" &&
+      this.#queued === 0
+        ? (this.#o.hold?.() ?? null)
+        : null;
+    if (held === null && this.#queued === 0) {
+      this.#handle(msg);
+      return;
+    }
+    this.#queued++;
+    this.#queue = this.#queue
+      .then(() => held?.catch(() => {}))
+      .then(() => this.#handle(msg))
+      .finally(() => {
+        this.#queued--;
+      });
+  }
+
+  /** @param {JsonRpcMessage} msg */
+  #handle(msg) {
     const id = msg.id;
     if (id !== undefined && msg.method === "initialize") this.#initIds.add(id);
     if (id !== undefined && msg.method === "tools/list") this.#listIds.add(id);
