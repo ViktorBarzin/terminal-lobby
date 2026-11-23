@@ -245,6 +245,26 @@ describe("the phone list's rows", () => {
     expect(sh.querySelector(".tl-card-time")).toBeNull();
   });
 
+  it("mark a T3 thread on the title line, beside the chip, not on a line of its own", async () => {
+    asPhone();
+    const api = sampleApi();
+    api.sessionsVal = [
+      ...api.sessionsVal,
+      sess("t3_ab12", { title: "Energy switch", backend: "t3", lastPrompt: now() - 7200 }),
+    ];
+    api.layoutVal = { ...api.layoutVal, ungrouped: ["sh", "t3_ab12"] };
+    const { container, store } = mount(api);
+    await loaded(container, store, 4);
+
+    const t3 = card(container, "t3_ab12");
+    expect(t3.querySelector(".tl-card-sub")).toBeNull();
+    const side = t3.querySelector(".tl-card-side");
+    expect(side?.querySelector(".tl-card-side-t3 svg")).not.toBeNull();
+    expect(side?.querySelector(".tl-card-chip")?.textContent).toBe("2h");
+    // A row that is not T3 has no mark.
+    expect(card(container, "sh").querySelector(".tl-card-side-t3")).toBeNull();
+  });
+
   it("draw the swipe's action under the row while it trails", async () => {
     asPhone();
     const { container, store } = mount(sampleApi());

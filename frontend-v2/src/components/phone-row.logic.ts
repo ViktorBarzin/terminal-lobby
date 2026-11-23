@@ -8,7 +8,8 @@ import { TOOL_LABELS } from "./ToolIcon";
  *
  * T3 Code's mobile home screen gives each thread two lines: the title, then a
  * line of what it is and what it is doing, with ONE thing on the right — a
- * status chip or a time. The lobby's desktop row says the same facts with a
+ * status chip or a time. A T3 thread's mark sits beside that chip, on the
+ * title line, so it costs no line of its own. The lobby's desktop row says the same facts with a
  * dot, a tool mark, a T3 glyph and a string of badges on one line, which is
  * what a 390px screen cannot fit. These functions are that row's text, kept
  * pure so its wording is pinned by test/phone-row.logic.test.ts.
@@ -66,8 +67,9 @@ export function phoneMeta(
   } else if (s.state === SUSPENDED) {
     parts.push("suspended, tap to resume");
   }
-  if (isT3Session(s)) parts.push("T3");
-  else if (s.tool && s.tool !== "claude") parts.push(TOOL_LABELS[s.tool]);
+  // A T3 thread is marked by the glyph on the title line instead: the word
+  // alone gave an idle T3 row a whole second line (Viktor, 2026-11-23).
+  if (!isT3Session(s) && s.tool && s.tool !== "claude") parts.push(TOOL_LABELS[s.tool]);
   if (opts.foreign && s.owner) {
     parts.push(`${s.owner}'s`);
     if (s.access !== "rw") parts.push("read-only");

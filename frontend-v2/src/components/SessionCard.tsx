@@ -1202,12 +1202,24 @@ export const SessionCard: Component<{
       <Show
         when={!phone()}
         fallback={
-          <Show when={chip()}>
-            {(c) => (
-              <span class="tl-card-chip" data-kind={c().kind}>
-                {c().text}
-              </span>
-            )}
+          // The title line's right side: a T3 thread's mark, then the chip.
+          // The mark lives here, not on the second line, so an idle T3 row
+          // stays one line tall. A close's countdown takes this cell instead.
+          <Show when={!killing() && (t3() || chip())}>
+            <span class="tl-card-side">
+              <Show when={t3()}>
+                <span class="tl-card-side-t3" title="In T3 Code: opens in T3" aria-hidden="true">
+                  <T3Glyph />
+                </span>
+              </Show>
+              <Show when={chip()}>
+                {(c) => (
+                  <span class="tl-card-chip" data-kind={c().kind}>
+                    {c().text}
+                  </span>
+                )}
+              </Show>
+            </span>
           </Show>
         }
       >

@@ -284,10 +284,11 @@ a session count, then a search box. The box matches titles, tmux names and
 projects, and shows its results as one list, each row naming its project. It
 does not search what was said in a session. Each row has two lines: the
 title, then what the session is doing ("working", "waiting for you",
-"suspended", the tool when it is not Claude, `T3` for a T3 thread, whose it
-is when it is shared). On the right is one chip: **Needs you**, a live
+"suspended", the tool when it is not Claude, whose it is when it is
+shared). On the right of the title is one chip: **Needs you**, a live
 timer, **Done** for work you have not opened, or how long ago you last wrote
-to it. A row swiped right shows a red **Close** under it and a row swiped
+to it. A T3 thread has the T3 mark beside that chip, so an idle T3 row is
+one line. A row swiped right shows a red **Close** under it and a row swiped
 left shows **Open**; a close also offers **Undo** in a toast for its eight
 seconds. Press and hold a row for its full menu. The desktop sidebar is
 unchanged.

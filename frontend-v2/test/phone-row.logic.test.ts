@@ -70,10 +70,11 @@ describe("phoneMeta", () => {
     expect(phoneMeta(sess({ state: "running", bg: { agents: 2 } }))).toBe("working · 2 agents");
   });
 
-  it("names the tool when it is not Claude, and T3 for a T3 thread", () => {
+  it("names the tool when it is not Claude, but leaves T3 to the title line's mark", () => {
     expect(phoneMeta(sess({ tool: "shell" }))).toBe("shell");
     expect(phoneMeta(sess({ tool: "codex", state: "running" }))).toBe("working · codex");
-    expect(phoneMeta(sess({ tool: "claude", backend: "t3" }))).toBe("T3");
+    expect(phoneMeta(sess({ tool: "claude", backend: "t3" }))).toBe("");
+    expect(phoneMeta(sess({ tool: "claude", backend: "t3", state: "running" }))).toBe("working");
     expect(phoneMeta(sess({ tool: "claude", state: "done" }))).toBe("");
   });
 
