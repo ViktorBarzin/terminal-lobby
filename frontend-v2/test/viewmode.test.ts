@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createRoot } from "solid-js";
+import { createRoot, createSignal } from "solid-js";
 
 vi.mock("../src/telemetry/track", () => ({ track: () => {} }));
 
@@ -36,5 +36,69 @@ describe("view mode: a value the lobby no longer offers", () => {
     carryViewMode("824smya2cmz5", "beads");
     expect(localStorage.getItem("tl:viewmode:v1:beads")).toBeNull();
     expect(loadMode("beads")).toBe("text");
+  });
+});
+
+/**
+ * A session with no Claude in it opens in the Terminal (Viktor, 2026-11-23).
+ * Its Text view had nothing to show but a note pointing at the Terminal, twice.
+ * The caller says which default applies, and a choice the person made still
+ * wins in both directions.
+ */
+describe("view mode: a session with no Claude", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("opens in the terminal when the caller's default says so", () => {
+    createRoot((dispose) => {
+      const [mode] = createViewMode(
+        () => "shell1",
+        () => "terminal",
+      );
+      expect(mode()).toBe("terminal");
+      dispose();
+    });
+  });
+
+  it("follows the default when it changes, as Claude exiting does", () => {
+    // Outside the root's own body, so its effects are running by then.
+    const [noClaude, setNoClaude] = createSignal(false);
+    const { mode, dispose } = createRoot((dispose) => {
+      const [mode] = createViewMode(
+        () => "s",
+        () => (noClaude() ? "terminal" : "text"),
+      );
+      return { mode, dispose };
+    });
+    expect(mode()).toBe("text");
+    setNoClaude(true);
+    expect(mode()).toBe("terminal");
+    dispose();
+  });
+
+  it("keeps the Text view for a person who picked it on a Claude-less session", () => {
+    createRoot((dispose) => {
+      const [mode, setMode] = createViewMode(
+        () => "shell2",
+        () => "terminal",
+      );
+      setMode("text");
+      expect(localStorage.getItem("tl:viewmode:v1:shell2")).toBe("text");
+      expect(loadMode("shell2", "terminal")).toBe("text");
+      expect(mode()).toBe("text");
+      dispose();
+    });
+  });
+
+  it("still prunes a choice that matches the default in force", () => {
+    createRoot((dispose) => {
+      const [, setMode] = createViewMode(
+        () => "shell3",
+        () => "terminal",
+      );
+      setMode("text");
+      setMode("terminal");
+      expect(localStorage.getItem("tl:viewmode:v1:shell3")).toBeNull();
+      dispose();
+    });
   });
 });

@@ -37,15 +37,29 @@ export function defaultMode(): ViewMode {
   return "text";
 }
 
-export function loadMode(session: string): ViewMode {
+/**
+ * The view a session opens in: what this device stored for it, or `fallback`.
+ *
+ * `fallback` is the default in force for THIS session, which is not always the
+ * global one: a session with no Claude in it opens in the Terminal (Viktor,
+ * 2026-11-23), because its Text view has nothing to show but a note pointing
+ * there. SessionView decides which sessions those are.
+ */
+export function loadMode(session: string, fallback: ViewMode = defaultMode()): ViewMode {
   const stored = lsGet(KEY_PREFIX + session);
-  return isMode(stored) ? stored : defaultMode();
+  return isMode(stored) ? stored : fallback;
 }
 
-export function saveMode(session: string, mode: ViewMode): void {
+export function saveMode(
+  session: string,
+  mode: ViewMode,
+  fallback: ViewMode = defaultMode(),
+): void {
   track("view.switched", { "tl.to": mode, "tl.session": session });
   // Prune the default so storage only records deviations (T3 partialize idea).
-  lsSet(KEY_PREFIX + session, mode === defaultMode() ? null : mode);
+  // The default in force for this session, so picking the Text view on a
+  // session that defaults to the Terminal is remembered.
+  lsSet(KEY_PREFIX + session, mode === fallback ? null : mode);
 }
 
 /**
@@ -69,14 +83,19 @@ export function carryViewMode(from: string, to: string): void {
 
 export function createViewMode(
   session: Accessor<string>,
+  /** This session's default view; the global one when absent. Read reactively,
+   *  so a session whose Claude exits moves to the Terminal unless the person
+   *  chose a view for it. */
+  fallback: Accessor<ViewMode> = defaultMode,
 ): [Accessor<ViewMode>, (m: ViewMode) => void, () => void] {
-  const [mode, setMode] = createSignal<ViewMode>(loadMode(session()));
-  // Re-hydrate when the session changes (each session has its own last view).
-  createEffect(() => setMode(loadMode(session())));
+  const [mode, setMode] = createSignal<ViewMode>(loadMode(session(), fallback()));
+  // Re-hydrate when the session changes (each session has its own last view),
+  // and when its default does.
+  createEffect(() => setMode(loadMode(session(), fallback())));
 
   const set = (m: ViewMode) => {
     setMode(m);
-    saveMode(session(), m);
+    saveMode(session(), m, fallback());
   };
   const toggle = () => set(mode() === "text" ? "terminal" : "text");
   return [mode, set, toggle];

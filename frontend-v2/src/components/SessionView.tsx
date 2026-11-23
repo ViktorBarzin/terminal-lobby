@@ -22,7 +22,7 @@ import {
 } from "../store/session";
 import type { SseStatus } from "../sse/client";
 import { gridCramped, type SessionGrid } from "../terminal/fit";
-import { createViewMode } from "../store/viewmode";
+import { createViewMode, defaultMode, type ViewMode } from "../store/viewmode";
 import { atListTarget } from "../lib/at-path";
 import {
   createWatchMode,
@@ -359,7 +359,19 @@ export const SessionView: Component<{
     autoStart: false,
     owner: foreignOwner,
   });
-  const [mode, setMode, toggleMode] = createViewMode(session);
+  /**
+   * A session with no Claude in it opens in the Terminal (Viktor, 2026-11-23):
+   * its Text view had only a note pointing at the Terminal, twice. Both signals
+   * are session-events' own reading, which already tells a Claude still
+   * starting from one that is not there, so a new session does not flash
+   * through the Terminal while its login shell execs Claude. Not a suspended
+   * session, whose Claude was only put away and comes back on opening.
+   */
+  const viewDefault = (): ViewMode =>
+    (store.claudeExited() || store.status() === "no-transcript") && !props.suspended?.()
+      ? "terminal"
+      : defaultMode();
+  const [mode, setMode, toggleMode] = createViewMode(session, viewDefault);
   /**
    * Put this session on a model or an effort level.
    *
