@@ -24,6 +24,20 @@ export const Toaster: Component<{ controller: ToastController }> = (props) => {
                 <pre class="tl-toast-detail">{t.detail}</pre>
               </Show>
             </div>
+            <Show when={t.action}>
+              {(a) => (
+                <button
+                  type="button"
+                  class="tl-toast-action"
+                  onClick={() => {
+                    props.controller.dismiss(t.id);
+                    a().run();
+                  }}
+                >
+                  {a().label}
+                </button>
+              )}
+            </Show>
             <button
               type="button"
               class="tl-toast-close"

@@ -1099,6 +1099,21 @@ label.tl-set-row-label {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* A toast's one action (the phone's Undo after a swipe closes a session): a
+   text button in the accent, tall enough for a thumb. */
+.tl-toast-action {
+  flex: none;
+  align-self: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
 .tl-toast-message {
   color: var(--text-primary);
   word-break: break-word;

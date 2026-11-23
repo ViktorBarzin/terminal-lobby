@@ -23,6 +23,14 @@ export interface Toast {
   detail?: string;
   /** sticky toasts never auto-dismiss (loading + the slow-request toast). */
   sticky: boolean;
+  /** One button beside the message, such as the phone's Undo after a swipe
+   *  closes a session. Pressing it runs `run` and dismisses the toast. */
+  action?: ToastAction;
+}
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
 }
 
 export interface PushToast {
@@ -32,6 +40,7 @@ export interface PushToast {
   /** ms before auto-dismiss; 0 or undefined+sticky = never. */
   timeoutMs?: number;
   sticky?: boolean;
+  action?: ToastAction;
 }
 
 export const SLOW_THRESHOLD_MS = 15000;
@@ -56,9 +65,7 @@ export interface ToastControllerOptions {
   slowThresholdMs?: number;
 }
 
-export function createToastController(
-  opts: ToastControllerOptions = {},
-): ToastController {
+export function createToastController(opts: ToastControllerOptions = {}): ToastController {
   const slowMs = opts.slowThresholdMs ?? SLOW_THRESHOLD_MS;
   const [toasts, setToasts] = createSignal<Toast[]>([]);
   const timers = new Map<number, ReturnType<typeof setTimeout>>();
@@ -78,9 +85,7 @@ export function createToastController(
   }
 
   function update(id: number, patch: Partial<Omit<Toast, "id">>): void {
-    setToasts((list) =>
-      list.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-    );
+    setToasts((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
 
   function push(t: PushToast): number {
@@ -97,13 +102,13 @@ export function createToastController(
       message: t.message,
       detail: t.detail,
       sticky,
+      ...(t.action ? { action: t.action } : {}),
     };
     setToasts((list) => {
       let next = [...list, toast];
       // MAX_STACK: drop the oldest AUTO-dismiss toast first (then oldest of all).
       while (next.length > MAX_STACK) {
-        const victim =
-          next.find((x) => !x.sticky)?.id ?? next[0]?.id;
+        const victim = next.find((x) => !x.sticky)?.id ?? next[0]?.id;
         if (victim === undefined) break;
         clearTimer(victim);
         next = next.filter((x) => x.id !== victim);
@@ -111,8 +116,7 @@ export function createToastController(
       return next;
     });
     const timeoutMs =
-      t.timeoutMs ??
-      (sticky ? 0 : t.kind === "error" ? ERROR_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
+      t.timeoutMs ?? (sticky ? 0 : t.kind === "error" ? ERROR_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
     if (timeoutMs > 0) {
       timers.set(
         id,
@@ -197,11 +201,7 @@ export function createToastController(
 export const toasts: ToastController = createToastController();
 
 /** Convenience wrapper mirroring the vanilla showToast(msg, type). */
-export function showToast(
-  message: string,
-  kind: ToastKind = "info",
-  timeoutMs?: number,
-): number {
+export function showToast(message: string, kind: ToastKind = "info", timeoutMs?: number): number {
   return toasts.push({ kind, message, timeoutMs });
 }
 
@@ -212,9 +212,7 @@ export function showToast(
  * semantics intact); the long-lived SSE stream uses EventSource, not fetch, so
  * it is never tracked. Idempotent. Call once at boot (never from tests).
  */
-export function installSlowRequestTracking(
-  controller: ToastController = toasts,
-): void {
+export function installSlowRequestTracking(controller: ToastController = toasts): void {
   if (typeof window === "undefined" || typeof window.fetch !== "function") return;
   const w = window as Window & { __tlFetchTracked?: boolean };
   if (w.__tlFetchTracked) return;
@@ -227,10 +225,7 @@ export function installSlowRequestTracking(
   // beacon raised a sticky "Some requests are slow" warning listing
   // POST /api/sessions/telemetry, over a session that was working fine.
   const NEVER_TRACK_RE = /\/telemetry$/;
-  window.fetch = function (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> {
+  window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     let path = "";
     let method = "GET";
     try {
