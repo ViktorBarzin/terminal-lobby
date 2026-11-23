@@ -240,7 +240,8 @@ On a phone the rail becomes a row of chips above the page.
 sidebar footer, following whatever the attached session runs. A Claude Code
 session shows today's dollars, a Codex session shows how much of its tighter
 limit is gone, and a plain shell or nothing attached shows no figure at all.
-Clicking it opens the page. A section on the page is drawn only for a tool that
+Clicking it opens the page. On a phone the footer is gone and the page is the
+**Agent spend** row of the session list's `⋯` menu. A section on the page is drawn only for a tool that
 has reported something, so a box that only runs Claude sees one section and a
 box that has run neither sees a line saying nothing has reported yet.
 
@@ -273,6 +274,29 @@ The lobby works on phones and tablets. The viewport meta declares
 `viewport-fit=cover` + `interactive-widget=resizes-content` so the
 soft keyboard pushes the layout up instead of overlaying it, and the
 xterm pane refits whenever `visualViewport` reports a size change.
+
+**Session list.** On a phone the list is drawn the way T3 Code's mobile
+home screen is (2026-11-23). The header is a **Sessions** title with a `⋯`
+menu and a round compose button. The menu holds what the desktop header and
+footer carry: the order, New project, Restore closed, Skills, notifications,
+Agent spend, Reload and Settings. Under the title is the connection dot and
+a session count, then a search box. The box matches titles, tmux names and
+projects, and shows its results as one list, each row naming its project. It
+does not search what was said in a session. Each row has two lines: the
+title, then what the session is doing ("working", "waiting for you",
+"suspended", the tool when it is not Claude, `T3` for a T3 thread, whose it
+is when it is shared). On the right is one chip: **Needs you**, a live
+timer, **Done** for work you have not opened, or how long ago you last wrote
+to it. A row swiped right shows a red **Close** under it and a row swiped
+left shows **Open**; a close also offers **Undo** in a toast for its eight
+seconds. Press and hold a row for its full menu. The desktop sidebar is
+unchanged.
+
+**A session with no Claude opens in the Terminal**, on every device: a plain
+shell, a Codex session, and one whose Claude has exited. Their Text view had
+nothing to show but a note pointing at the Terminal. A suspended session
+still opens in the Text view, since opening it brings its Claude back. If
+you pick the Text view for such a session, that choice is kept.
 
 **Soft-key row.** On any device that reports `pointer: coarse`, a
 docked row appears above the soft keyboard in the terminal view, with

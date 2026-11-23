@@ -2013,3 +2013,262 @@
   border-radius: 50%;
   background: var(--tl-who, var(--state-done));
 }
+
+/* ---- A swipe's action, under the trailing row ---------------------------- */
+/* SessionCard draws this in the gap a sideways swipe opens, the way T3 Code's
+   list shows its swipe actions: Close on the left for a rightward swipe, Open
+   on the right for a leftward one. Positioned outside the card's own box, so
+   it sits in the gap and the card's translate carries everything else. Any
+   touch screen, since that is where a row swipes at all. */
+.tl-swipe-act {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.tl-swipe-act[data-act="close"] {
+  right: 100%;
+}
+.tl-swipe-act[data-act="open"] {
+  left: 100%;
+}
+.tl-swipe-dot {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.tl-swipe-act[data-act="close"] .tl-swipe-dot {
+  background: var(--danger);
+}
+.tl-swipe-act[data-act="open"] .tl-swipe-dot {
+  background: var(--accent);
+}
+
+/* ---- Phone list, T3 pass (2026-11-23) ------------------------------------ */
+/* The list screen drawn the way T3 Code's mobile home screen is: a title
+   header with a ⋯ menu and a round compose button, a search box, and two-line
+   rows with one chip on the right, at T3's sizes (16px-class titles, 20px
+   side padding). Same query as the block above; the desktop sidebar has none
+   of these classes (Sidebar.tsx and SessionCard.tsx only draw them when the
+   flip holds). */
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  .tl-phone-head {
+    flex: none;
+    padding: 6px 12px 2px 16px;
+  }
+  .tl-phone-head-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tl-phone-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+  }
+  .tl-phone-more {
+    position: relative;
+    flex: none;
+  }
+  .tl-phone-round {
+    width: 40px;
+    height: 40px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .tl-phone-compose {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .tl-phone-more-menu {
+    top: calc(100% + 6px);
+    min-width: 230px;
+    border-radius: calc(var(--radius) + 6px);
+    overflow: hidden;
+  }
+  .tl-menu-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--border);
+  }
+  .tl-phone-sub {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 22px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  /* The dot keeps its tap target and gives back the space it pads with, so
+     it lines up under the title. */
+  .tl-phone-sub .tl-sidebar-status {
+    margin: 0 -10px 0 -12px;
+  }
+  .tl-phone-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0 4px;
+  }
+  /* 16px, or iOS Safari zooms the page on focus and leaves it zoomed. */
+  .tl-phone-search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 16px;
+  }
+  /* Cancel clears the box; the browser's own clear button would be a second
+     one. */
+  .tl-phone-search-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .tl-phone-search-input::placeholder {
+    color: var(--text-muted);
+  }
+  .tl-phone-search-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .tl-phone-search-cancel {
+    flex: none;
+    min-height: 38px;
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .tl-search-count {
+    margin: 8px 12px 2px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* Group headers at T3's shelf size: a quieter label over the rows. The
+     header keeps the touch block's 40px target. */
+  .tl-group-title {
+    font-size: 11px;
+  }
+
+  /* The two-line row. Title over a line of what the session is doing, with
+     the chip (or a kill's countdown) and the undo arrow in their own columns
+     on the right. What the desktop row says with marks (state dot, tool, T3
+     glyph, owner, guests, watch, background work) is in the second line's
+     words instead. */
+  .tl-card.tl-card-phone {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name chip undo"
+      "sub chip undo";
+    column-gap: 10px;
+    row-gap: 2px;
+    align-items: center;
+    min-height: 56px;
+    padding: 9px 12px;
+  }
+  .tl-card-phone > .tl-state-dot,
+  .tl-card-phone > .tl-tool,
+  .tl-card-phone > .tl-card-t3,
+  .tl-card-phone > .tl-card-owner,
+  .tl-card-phone > .tl-card-guests,
+  .tl-card-phone > .tl-card-watch,
+  .tl-card-phone > .tl-card-bg,
+  .tl-card-phone > .tl-kb-badge {
+    display: none;
+  }
+  .tl-card-phone .tl-card-name {
+    grid-area: name;
+    font-size: 15.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .tl-card-phone .tl-card-rename {
+    grid-area: name;
+  }
+  .tl-card-sub {
+    grid-area: sub;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--text-muted);
+  }
+  .tl-card-chip,
+  .tl-card-phone .tl-card-countdown {
+    grid-area: chip;
+    align-self: start;
+    padding-top: 2px;
+    white-space: nowrap;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .tl-card-phone .tl-card-undo {
+    grid-area: undo;
+  }
+  .tl-card-chip[data-kind="need"] {
+    color: var(--state-awaiting);
+    font-weight: 700;
+  }
+  .tl-card-chip[data-kind="done"] {
+    color: var(--state-done);
+    font-weight: 700;
+  }
+  /* The mono face for the timer, so a ticking m:ss does not shift sideways
+     every second. T3 reaches for fixed-width figures here too. The system face
+     is the Text view's alone (textview.column.css.test.ts). */
+  .tl-card-chip[data-kind="run"] {
+    color: var(--state-running);
+    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  /* A row that is working reads a step quieter, as T3's does, so the rows
+     waiting on you stand out. */
+  .tl-card-phone:has(.tl-card-chip[data-kind="run"]) .tl-card-name {
+    font-weight: 400;
+    color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+  }
+}

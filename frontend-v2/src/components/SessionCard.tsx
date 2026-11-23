@@ -51,6 +51,8 @@ import { openShare } from "../store/share-dialog";
 import { openInApp, openInBrowser, openT3 } from "../lib/t3-open";
 import { lastActiveAt } from "../logic/order.logic";
 import { T3Glyph } from "./Icons";
+import { phoneChip, phoneMeta } from "./phone-row.logic";
+import { GRACE_MS } from "../store/lobby";
 
 /**
  * The hover seam, as little of `store/preload.ts` as a card needs.
@@ -119,6 +121,16 @@ export interface SidebarWorkspaces {
 export const SidebarWorkspacesContext = createContext<SidebarWorkspaces>();
 
 /**
+ * Is the sidebar drawing the PHONE list (mobile/pointer.ts FLIP_QUERY)?
+ *
+ * There the row has two lines and one chip, the way T3 Code's mobile home
+ * screen draws a thread (2026-11-23), and a close offers Undo in a toast.
+ * Provided by `Sidebar`, which reads the query once for the whole list, for
+ * the reason `SidebarWorkspacesContext` gives. Absent means the desktop row.
+ */
+export const SidebarPhoneContext = createContext<Accessor<boolean>>();
+
+/**
  * Does this pointer HOVER at all?
  *
  * A finger fires `pointerenter` on the way to a tap, and a phone that preloaded
@@ -156,8 +168,14 @@ export const SessionCard: Component<{
    *  direction for a setting that is off by default, so a call site that
    *  forgets to pass it errs towards showing less rather than more. */
   showLastActive?: Accessor<boolean>;
+  /** The row is a search result on the phone, outside any group, so its second
+   *  line leads with the project the group header would have named. */
+  searchProject?: string;
 }> = (props) => {
   const s = () => props.session;
+  const phoneCtx = useContext(SidebarPhoneContext);
+  /** Drawing the phone's two-line row (see SidebarPhoneContext). */
+  const phone = (): boolean => phoneCtx?.() ?? false;
   /**
    * A thread in the user's own T3 rather than a tmux session (ADR-0046). It
    * opens in T3, so everything about a terminal is off: no preload, no
@@ -474,6 +492,26 @@ export const SessionCard: Component<{
     return s().lastPrompt || s().lastDrive ? relativeTime(at) : "";
   };
 
+  /** The phone row's second line, and the one chip on its right. The chip
+   *  reads the 1Hz tick because both a working timer and an age move. */
+  const meta = (): string =>
+    phone()
+      ? phoneMeta(s(), {
+          project: props.searchProject,
+          foreign: foreign(),
+          watching: !t3() && willWatch(),
+        })
+      : "";
+  const chip = () => {
+    if (!phone() || killing()) return null;
+    props.tick();
+    return phoneChip(s(), {
+      unseen: unseen(),
+      now: Date.now(),
+      workingSince: props.store.workingSince(s().name),
+    });
+  };
+
   // ---- activation ----
   /**
    * Open this session — the one thing all three ways in do.
@@ -635,8 +673,39 @@ export const SessionCard: Component<{
   // same store call and gets the same window.
   const kill = async () => {
     menu.close();
-    await props.store.kill(s().name);
+    const name = s().name;
+    const title = label();
+    await props.store.kill(name);
+    if (phone() && props.store.killing(name)) offerUndo(name, title);
   };
+  /**
+   * The phone's Undo, in a toast as T3 Code's list offers it, for as long as
+   * the kill's grace window runs. The row's own arrow stays: a toast is easy to
+   * miss, and either one takes the kill back. Pressing the arrow takes the
+   * toast away too, so the two never disagree about what is pending.
+   */
+  let undoToast: number | undefined;
+  const offerUndo = (name: string, title: string) => {
+    undoToast = toasts.push({
+      kind: "info",
+      message: `Closed “${title}”`,
+      timeoutMs: GRACE_MS,
+      action: {
+        label: "Undo",
+        run: () => {
+          undoToast = undefined;
+          void props.store.takeBackKill(name).then((r) => {
+            if (!r.ok && r.reason) showToast(`Can't undo: ${r.reason}`, "warning");
+          });
+        },
+      },
+    });
+  };
+  createEffect(() => {
+    if (killing() || undoToast === undefined) return;
+    toasts.dismiss(undoToast);
+    undoToast = undefined;
+  });
   /** Close a T3 row: archive its thread, which T3 keeps in its archive. */
   const archive = async () => {
     menu.close();
@@ -1013,6 +1082,8 @@ export const SessionCard: Component<{
         // disabled: this row is the only way back into the session, so
         // sidebar.css stops well short of the 0.45 a dying row drops to.
         "tl-card-suspended": suspended(),
+        // The two-line row (sidebar.css, phone block).
+        "tl-card-phone": phone(),
       }}
       role="button"
       tabindex={0}
@@ -1075,6 +1146,7 @@ export const SessionCard: Component<{
           {label()}
         </span>
       </Show>
+      <Show when={meta()}>{(m) => <span class="tl-card-sub">{m()}</span>}</Show>
 
       <Show when={foreign()}>
         <span
@@ -1127,15 +1199,55 @@ export const SessionCard: Component<{
       {/* Omitted entirely rather than rendered empty: the row is a flex
           container with a gap, so an empty span would leave a hole where the
           time used to be. */}
-      <Show when={rightText()}>
-        {(text) => (
-          <span
-            class="tl-card-time"
-            classList={{ "tl-card-time-running": s().state === "running" }}
-          >
-            {text()}
+      <Show
+        when={!phone()}
+        fallback={
+          <Show when={chip()}>
+            {(c) => (
+              <span class="tl-card-chip" data-kind={c().kind}>
+                {c().text}
+              </span>
+            )}
+          </Show>
+        }
+      >
+        <Show when={rightText()}>
+          {(text) => (
+            <span
+              class="tl-card-time"
+              classList={{ "tl-card-time-running": s().state === "running" }}
+            >
+              {text()}
+            </span>
+          )}
+        </Show>
+      </Show>
+
+      {/* What letting go does, drawn in the gap the trailing row opens: Close
+          on the left for a rightward swipe, Open on the right for a leftward
+          one. T3 Code's list shows its swipe actions the same way; the
+          directions stay the lobby's (Viktor, 2026-11-23). */}
+      <Show when={swipeDx() !== 0}>
+        <span
+          class="tl-swipe-act"
+          data-act={swipeDx() > 0 ? "close" : "open"}
+          aria-hidden="true"
+          style={{ width: `${Math.abs(swipeDx())}px` }}
+        >
+          <span class="tl-swipe-dot">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                d={swipeDx() > 0 ? "M6 6l12 12M18 6L6 18" : "M9 5l7 7-7 7"}
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
           </span>
-        )}
+          <span class="tl-swipe-label">{swipeDx() > 0 ? "Close" : "Open"}</span>
+        </span>
       </Show>
 
       {/* Nothing in the menu applies to a session that is leaving: Rename, the

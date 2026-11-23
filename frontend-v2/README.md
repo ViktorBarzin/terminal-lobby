@@ -771,8 +771,8 @@ src/
                          sidebar header the four a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
-    SpendFigure.tsx      What the ATTACHED session has consumed, in the sidebar
-                         footer beside the gear: today's dollars for Claude
+    SpendFigure.tsx      What the ATTACHED session has consumed, in the desktop
+                         sidebar's footer: today's dollars for Claude
                          Code, the tighter of the two limits for Codex, nothing
                          for a shell. Follows the same `tool` the card's mark
                          does, reads GET /agent-spend on the sidebar's own
@@ -801,6 +801,9 @@ src/
                          float's close on a press outside it or on Escape
                          (`dismissFloat`); the arrow keys through a float's rows
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
+    phone-row.logic.ts   PURE words of the phone's two-line session row: the
+                         right-hand chip, the second line, and what the list's
+                         search box matches (titles, tmux names, projects)
     WorkspaceCanvas.tsx  The dividers of a Workspace and nothing else: nested
                          @corvu/resizable nodes with no session content in them,
                          transparent, stacked above the terminals, handing the

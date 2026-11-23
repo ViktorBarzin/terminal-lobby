@@ -192,16 +192,16 @@ describe("Sidebar — the Settings route the phone needs", () => {
     expect(container.querySelector(".tl-foot-settings")).toBeNull();
   });
 
-  it("shows a gear when the shell bar is folded away, and it opens Settings", () => {
+  // Since the T3 pass on the phone list (2026-11-23) the route is the header's
+  // ⋯ menu, which took over the footer row the gear used to sit in.
+  it("offers Settings in the header's ⋯ menu when the shell bar is folded away", () => {
     stubViewport({ width: 390, height: 844, coarse: true });
     const onOpenSettings = vi.fn();
-    const { container } = render(() => (
+    const { getByRole } = render(() => (
       <Sidebar store={mkStore()} prefs={createPrefsStore()} onOpenSettings={onOpenSettings} />
     ));
-    const gear = container.querySelector<HTMLButtonElement>(".tl-foot-settings");
-    expect(gear).not.toBeNull();
-    expect(gear!.getAttribute("aria-label")).toBe("Settings");
-    gear!.click();
+    getByRole("button", { name: "More" }).click();
+    getByRole("menuitem", { name: "Settings" }).click();
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 });
@@ -288,29 +288,23 @@ describe("Sidebar — the Skills route the phone needs", () => {
     expect(container.querySelector(".tl-foot-skills")).toBeNull();
   });
 
-  it("shows one when the shell bar is folded away, and it opens the panel", () => {
+  it("offers it in the header's ⋯ menu when the shell bar is folded away", () => {
     // The shell-bar Skills button is not rendered on a phone, and the session-bar
     // menu that also carries it only exists once a session is open — so without
     // this the panel is unreachable from the list screen. It was, for a few hours.
     stubViewport({ width: 390, height: 844, coarse: true });
     const onOpenSkills = vi.fn();
-    const { container } = render(() => (
+    const { getByRole } = render(() => (
       <Sidebar store={mkStore()} prefs={createPrefsStore()} onOpenSkills={onOpenSkills} />
     ));
-    const btn = container.querySelector<HTMLButtonElement>(".tl-foot-skills");
-    expect(btn).not.toBeNull();
-    expect(btn!.getAttribute("aria-label")).toBe("Skills");
-    // An SVG, not a glyph: emoji render in colour and at a different size on
-    // every OS, and the ⌘ this replaced reads as the Mac command key on iOS.
-    expect(btn!.querySelector("svg")).not.toBeNull();
-    expect(btn!.textContent).toBe("");
-    btn!.click();
+    getByRole("button", { name: "More" }).click();
+    getByRole("menuitem", { name: "Skills" }).click();
     expect(onOpenSkills).toHaveBeenCalledTimes(1);
   });
 
-  it("sits beside the gear, so both routes are in one place", () => {
+  it("sits beside Settings in that menu, so both routes are in one place", () => {
     stubViewport({ width: 390, height: 844, coarse: true });
-    const { container } = render(() => (
+    const { getByRole } = render(() => (
       <Sidebar
         store={mkStore()}
         prefs={createPrefsStore()}
@@ -318,8 +312,11 @@ describe("Sidebar — the Skills route the phone needs", () => {
         onOpenSettings={() => {}}
       />
     ));
-    const foot = container.querySelector(".tl-sidebar-foot")!;
-    expect(foot.querySelector(".tl-foot-skills")).not.toBeNull();
-    expect(foot.querySelector(".tl-foot-settings")).not.toBeNull();
+    getByRole("button", { name: "More" }).click();
+    const menu = getByRole("menu");
+    expect(menu.querySelector('[role="menuitem"]')).not.toBeNull();
+    const names = [...menu.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent);
+    expect(names).toContain("Skills");
+    expect(names).toContain("Settings");
   });
 });
