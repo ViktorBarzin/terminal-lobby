@@ -616,12 +616,20 @@ func fromLobby(origin json.RawMessage) bool {
 	return json.Unmarshal(origin, &o) == nil && o.Kind == "plugin" && o.Name == lobbyPlugin
 }
 
-// PersonOrigin reports whether a prompt row's origin is a person's: none, for
-// one typed in the terminal, or the lobby's mod, which submits what a person
-// sent from a browser (asUser) and the slash commands they pick there. A
-// background task's notification and anything another plugin submits are not.
+// PersonOrigin reports whether a prompt row's origin is a person's: one typed
+// in the terminal, which older builds sent with no origin and newer ones as
+// composer (Claude Code 2.1.331, seen 2026-11-25), one sent through Remote
+// Control (bridge), or the lobby's mod, which submits what a person sent from
+// a browser (asUser) and the slash commands they pick there. A background
+// task's notification and anything another plugin submits are not.
 func PersonOrigin(origin json.RawMessage) bool {
-	return len(origin) == 0 || fromLobby(origin)
+	if len(origin) == 0 || fromLobby(origin) {
+		return true
+	}
+	var o struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(origin, &o) == nil && (o.Kind == "composer" || o.Kind == "bridge")
 }
 
 // LastPromptAt is the time, in ms, of the newest main-thread prompt in the log

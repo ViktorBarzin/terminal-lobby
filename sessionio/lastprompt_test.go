@@ -5,17 +5,23 @@ import (
 	"testing"
 )
 
-// A person's prompt is one typed in the terminal, which carries no origin, or
-// one sent from the lobby, a slash command included. A background task's
+// A person's prompt is one typed in the terminal, which older builds sent with
+// no origin and newer ones as composer, one sent through Remote Control, or one
+// sent from the lobby, a slash command included. A background task's
 // notification is the harness talking to itself.
 func TestPersonOrigin(t *testing.T) {
 	for origin, want := range map[string]bool{
-		``: true,
+		``:                    true,
+		`{"kind":"composer"}`: true,
+		`{"kind":"bridge"}`:   true,
 		`{"kind":"plugin","name":"terminal-lobby","asUser":true}`: true,
 		`{"kind":"plugin","name":"terminal-lobby"}`:               true,
 		`{"kind":"task-notification","producer":"session-task"}`:  false,
 		`{"kind":"plugin","name":"someone-else"}`:                 false,
 		`{"kind":"auto-continuation"}`:                            false,
+		`{"kind":"scheduled-trigger"}`:                            false,
+		`{"kind":"peer"}`:                                         false,
+		`{"kind":"unclassified"}`:                                 false,
 		`not json`:                                                false,
 	} {
 		if got := PersonOrigin(json.RawMessage(origin)); got != want {
