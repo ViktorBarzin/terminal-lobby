@@ -7,24 +7,12 @@
 name: release
 
 on:
-  push:
-    branches: [master]
-    # Skipping paths that cannot change the artefact avoids releasing a version
-    # for a typo fix. Anything that reaches this workflow is a code change and
-    # gets a version, since the version step passes --always.
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - '.github/workflows/ttyd.yml'
-      - '.github/workflows/viu.yml'
-      # The container image is built by container.yml out of its own inputs,
-      # and packaging/build-deb.sh reads none of them. A push touching only
-      # these was cutting a .deb version whose contents had not moved.
-      - 'Dockerfile'
-      - 'docker/**'
-      - '.github/workflows/container.yml'
-      - 'scripts/devserve/**'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner label. Woodpecker's ci-route sets it (infra ci/route).
+        type: string
+        default: ubuntu-latest
 
 permissions:
   contents: write
@@ -40,7 +28,7 @@ jobs:
     # The box's release, not ubuntu-latest: the live tmux tests encode tmux 3.4's
     # behaviour, and the binaries have to run on the box's glibc. ubuntu-latest
     # moved to 26.04 on 2026-10-28 and failed TestTmuxEscapesControlCharactersButNotTab.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
         with:

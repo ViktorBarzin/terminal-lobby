@@ -8,38 +8,12 @@ name: container
 # Woodpecker is deploy-only.
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - "Dockerfile"
-      - "docker/**"
-      - "frontend/**"
-      - "frontend-v2/**"
-      - "tmux-api/**"
-      - "file-api/**"
-      - "session-events/**"
-      - "skills-api/**"
-      - "clipboard-upload/**"
-      # clipboard-upload replaces terminal-lobby/clipstore, the store's naming
-      # and write rules it shares with agent-api.
-      - "clipstore/**"
-      - "authuser/**"
-      - "sessionio/**"
-      # session-events writes the spend store and tmux-api reads it, so a
-      # change to either side has to rebuild the image.
-      - "spendstore/**"
-      # skills-api replaces terminal-lobby/skillscan, tmux-api replaces
-      # terminal-lobby/slug — both are bundled, so a fix there must rebuild.
-      - "skillscan/**"
-      - "slug/**"
-      # tmux-api replaces terminal-lobby/t3client, which reads each user's T3
-      # threads into the session list.
-      - "t3client/**"
-      - "telemetry/**"
-      - "devvm/tmux-attach.sh"
-      - "devvm/tmux-user-attach"
-      - ".github/workflows/container.yml"
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner label. Woodpecker's ci-route sets it (infra ci/route).
+        type: string
+        default: ubuntu-latest
 
 concurrency:
   group: container-${{ github.ref }}
@@ -47,7 +21,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
